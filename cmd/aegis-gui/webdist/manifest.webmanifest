@@ -1,0 +1,25 @@
+{
+  "id": "/",
+  "name": "AegisROM v0.5.4 (Beta) — Консольный Лаунчер и Менеджер Ромов",
+  "short_name": "AegisROM",
+  "description": "Единый центр управления ретро- и современными играми: Библиотека, Инструменты (XML + Комбайн 1G1R), Сборки и Среда эмуляторов.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

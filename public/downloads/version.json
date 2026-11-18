@@ -1,0 +1,18 @@
+{
+  "appName": "AegisROM",
+  "version": "0.5.4",
+  "releaseDate": "2026-11-18",
+  "defaultInstallDir": "C:\\Program Files\\AegisROM",
+  "setupExecutable": "AegisROM-Setup-v0.5.4-Win11-x64.exe",
+  "zipPackage": "AegisROM-v0.5.4-Win11-x64.zip",
+  "portableExecutable": "AegisROM-Portable-Win11-x64.exe",
+  "features": [
+    "100% pure Win32 GUI Setup EXE with embedded compressed payload (zero .bat / zero .ps1)",
+    "Deep multi-location discovery & cleanup across Program Files, AppData\\Local\\Programs, AppData\\Local, Registry & shortcuts",
+    "Safe user database/config migration to %APPDATA%\\AegisROM",
+    "Full-height sidebar category tree without duplicate DB footer, direct .ZIP & Setup.EXE downloads without stale cache",
+    "Clean Library view + '+' Add-to-Build modal, 3-tab Tools (Library, SD/Folder, Combine), Multi-OS SD repair & mass operations",
+    "Smart ~1.5 KB placeholder media audit scraper + streaming/native fast sorting & XML rename",
+    "9-language auto-detected UI (EN, DE, ES, JA, ZH, RU, SR Latin, FR, IT)"
+  ]
+}

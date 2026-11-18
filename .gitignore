@@ -1,0 +1,14 @@
+node_modules/
+build/
+dist/
+coverage/
+.aistudio/
+.DS_Store
+Thumbs.db
+*.log
+.env*
+!.env.example
+
+# Temporary build & runtime caches
+WebViewProfile*/
+*.tmp
