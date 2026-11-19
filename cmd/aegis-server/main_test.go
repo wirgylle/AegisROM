@@ -98,3 +98,42 @@ func TestRunRejectsNonLoopback(t *testing.T) {
 		t.Fatal("ожидалась ошибка для не-loopback адреса")
 	}
 }
+
+func TestServerDatImportAndLookup(t *testing.T) {
+	ts, data := newTestServer(t)
+	defer ts.Close()
+
+	const nes = `<?xml version="1.0"?><datafile><header><name>Nintendo - Nintendo Entertainment System (Headered)</name><homepage>No-Intro</homepage></header>
+<game name="Super Mario Bros. (World)"><rom name="smb.nes" size="40976" crc="3337EC46"/></game></datafile>`
+
+	if code, _ := do(t, ts, "POST", "/api/dat/import?name=../evil.txt", nes, true); code != http.StatusBadRequest {
+		t.Fatalf("bad ext: %d", code)
+	}
+	if code, _ := do(t, ts, "POST", "/api/dat/import?name=junk.dat", "hello", true); code != http.StatusBadRequest {
+		t.Fatalf("junk DAT: %d", code)
+	}
+	code, body := do(t, ts, "POST", "/api/dat/import?name=..%2F..%2Fnes.dat", nes, true)
+	if code != 200 || !strings.Contains(body, `"games":1`) {
+		t.Fatalf("import: %d %s", code, body)
+	}
+	if _, err := os.Stat(filepath.Join(data, "dats", "nes.dat")); err != nil {
+		t.Fatalf("DAT not stored in dats/: %v", err)
+	}
+
+	code, body = do(t, ts, "POST", "/api/dat/lookup", `{"items":[{"id":"a","crc32":"3337ec46","size":40976},{"id":"b","crc32":"00000000","size":1}]}`, true)
+	var out struct {
+		Results []struct {
+			ID, Name, Source, Reason string
+			Matched                  bool
+		}
+	}
+	if code != 200 || json.Unmarshal([]byte(body), &out) != nil || len(out.Results) != 2 {
+		t.Fatalf("lookup: %d %s", code, body)
+	}
+	if !out.Results[0].Matched || out.Results[0].Name != "Super Mario Bros. (World)" || out.Results[0].Source != "no-intro" {
+		t.Fatalf("hit: %+v", out.Results[0])
+	}
+	if out.Results[1].Matched || out.Results[1].Reason == "" {
+		t.Fatalf("miss: %+v", out.Results[1])
+	}
+}

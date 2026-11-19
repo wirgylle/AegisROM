@@ -8,8 +8,9 @@
 │   ├── gamelist.go               # gamelist.xml: устойчивый разбор, запись, сопоставление 000001 -> название
 │   ├── media.go                  # Медиа, обложки, «фантомные» папки
 │   ├── scraper.go                # Индексы Libretro thumbnails / Archive.org, скачивание
-│   └── disc.go                   # Образы дисков: BIN 2352 -> ISO, MDF/IMG -> CUE+BIN
-├── aegisapi/             # HTTP-слой без привязки к ОС: guard локального API, /api/db/*, PortMaster, скрапер, раздача UI
+│   ├── disc.go                   # Образы дисков: BIN 2352 -> ISO, MDF/IMG -> CUE+BIN
+│   └── dat/                      # DAT No-Intro/Redump (Logiqx XML, clrmamepro, ZIP): индекс и поиск по хешу/серийнику
+├── aegisapi/             # HTTP-слой без привязки к ОС: guard локального API, /api/db/*, /api/dat/*, PortMaster, скрапер, раздача UI
 ├── cmd/
 │   ├── aegis-server/     # Кроссплатформенный Go-сервер: aegisapi + dist/ (dev и будущий Docker/NAS)
 │   ├── aegis-gui/        # Нативное Windows-приложение: Win32 окно + локальный HTTP API + встроенный фронтенд
