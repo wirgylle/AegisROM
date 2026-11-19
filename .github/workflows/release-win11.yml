@@ -5,10 +5,14 @@ name: Release (Windows 11 x64)
 #   git tag v0.5.5 && git push origin v0.5.5
 # Версия в теге должна совпадать с "version" в package.json.
 
+# Каждый push в dev тоже собирает exe: тестовая сборка в Actions → Artifacts (без публикации).
+
 on:
   push:
     tags:
       - 'v*'
+    branches:
+      - dev
   workflow_dispatch:
 
 permissions:
@@ -61,7 +65,8 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: AegisROM-Win11-x64-Package
+          name: AegisROM-Win11-x64-${{ github.ref_name }}-${{ github.sha }}
+          retention-days: 14
           path: |
             public/downloads/AegisROM-Setup-v*-Win11-x64.exe
             public/downloads/AegisROM-Portable-Win11-x64.exe
