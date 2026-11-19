@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-const AppVersion = "0.5.4"
+const AppVersion = "0.5.5"
 
 type FoundInstallation struct {
 	Dir              string `json:"dir"`
