@@ -11,6 +11,10 @@
 - `src/version.ts`
 - `cmd/winsetup/discovery.go` → константа `AppVersion`
 
+## Тестовая сборка из dev
+
+Каждый push в `dev` (то есть каждый смерженный PR) запускает workflow **Release (Windows 11 x64)** без публикации. Готовые `Setup.exe`, `Portable.exe` и `.zip` лежат в Actions → нужный запуск → блок **Artifacts** (нужно войти в GitHub, хранятся 14 дней). Вручную: Actions → Release (Windows 11 x64) → Run workflow → ветка `dev`.
+
 ## Как выпустить релиз
 
 Бинарники в git не хранятся. Их собирает GitHub Actions (`.github/workflows/release-win11.yml`) и прикладывает к странице **Releases**.
