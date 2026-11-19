@@ -1967,9 +1967,12 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
               )}
 
               {/* CLEAN DATABASE FILE BAR (Switch DB + Open .json + Save .json ONLY) */}
-              <div className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 rounded-xl p-2.5 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-2 min-w-0 flex-1">
-                  <span className="text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 shrink-0">
+              {/* Narrow: label/select stacked on the left, Open/Save stacked on the right, row by row.
+                  Wide: everything on one line. See .aegis-dbbar in index.css. */}
+              <div className="aegis-dbbar-wrap bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 rounded-xl p-2.5">
+               <div className="aegis-dbbar">
+                <div className="contents">
+                  <span className="aegis-dbbar-label text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 shrink-0">
                     <Database className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                     <span>{t('lib.activeDb')}</span>
                   </span>
@@ -1994,7 +1997,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         void hydrateDbRowsMedia(found.id, found.rows, found.pathHint);
                       }
                     }}
-                    className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 h-8 text-xs font-semibold text-slate-900 dark:text-slate-100 min-w-0 w-full sm:w-auto sm:flex-1 max-w-md"
+                    className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 h-8 text-xs font-semibold text-slate-900 dark:text-slate-100 aegis-dbbar-select min-w-0 w-full"
                   >
                     {savedDatabases.map((db) => {
                       const displayName =
@@ -2012,11 +2015,11 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   </select>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-1.5">
+                <div className="contents">
                   <button
                     onClick={() => openDbFileInputRef.current?.click()}
                     disabled={activeRunning}
-                    className="h-8 px-2.5 rounded-lg bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition disabled:opacity-50"
+                    className="aegis-dbbar-open h-8 px-2.5 rounded-lg bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition disabled:opacity-50"
                   >
                     <FolderOpen className="w-3.5 h-3.5 shrink-0" />
                     <span>{t('lib.openDb')}</span>
@@ -2025,12 +2028,13 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   <button
                     onClick={handleSaveDatabaseToFile}
                     disabled={activeRunning}
-                    className="h-8 px-2.5 rounded-lg bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition disabled:opacity-50"
+                    className="aegis-dbbar-save h-8 px-2.5 rounded-lg bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition disabled:opacity-50"
                   >
                     <Download className="w-3.5 h-3.5 shrink-0" />
                     <span>{t('lib.saveDb')}</span>
                   </button>
                 </div>
+               </div>
               </div>
 
               {/* VIRTUALIZED + BUFFERED VIEWS WITH «+» ADD-TO-BUILD BUTTON */}
