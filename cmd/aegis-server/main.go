@@ -33,14 +33,15 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:38471", "адрес сервера (только loopback)")
 	distDir := flag.String("dist", "dist", "папка собранного фронтенда (vite build)")
 	dataDir := flag.String("data", defaultDataDir(), "папка базы, сборок и кэша")
+	devPickDir := flag.String("dev-pick-dir", "", "для тестов: папка, которую «выбирает» диалог /api/native/vfs/pick (включает файлы через Go во фронтенде)")
 	flag.Parse()
 
-	if err := run(*addr, *distDir, *dataDir); err != nil {
+	if err := run(*addr, *distDir, *dataDir, *devPickDir); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(addr, distDir, dataDir string) error {
+func run(addr, distDir, dataDir, devPickDir string) error {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return fmt.Errorf("неверный -addr: %w", err)
@@ -56,6 +57,14 @@ func run(addr, distDir, dataDir string) error {
 	mux := http.NewServeMux()
 	aegisapi.RegisterLibraryRoutes(mux, dataDir, nil)
 	aegisapi.RegisterStorageRoutes(mux, dataDir, nil)
+	// Диалогов у сервера нет; -dev-pick-dir подменяет диалог в тестах.
+	// The server has no dialogs; -dev-pick-dir stands in for one in tests.
+	vfsOpts := aegisapi.VFSOptions{}
+	if devPickDir != "" {
+		vfsOpts.PreferNative = true
+		vfsOpts.PickFolder = func(string) (string, error) { return filepath.Abs(devPickDir) }
+	}
+	aegisapi.RegisterVFSRoutes(mux, dataDir, nil, vfsOpts)
 
 	if index, err := os.ReadFile(filepath.Join(distDir, "index.html")); err == nil {
 		mux.Handle("/", aegisapi.SPAHandler(os.DirFS(distDir), index, nil))

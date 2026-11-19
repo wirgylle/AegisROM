@@ -50,6 +50,14 @@
 
 Пока это опция, по умолчанию открывается Edge. Включить: запустить `AegisROM.exe --native-window` или создать пустой файл `use-native-window` в папке данных (`%APPDATA%\AegisROM`, путь виден в `/api/native/status` → `appDir`). Вернуть Edge: `--legacy-window` или удалить файл. Профиль окна хранится в `<appDir>\WebView2`. При первом запуске, если на диске ещё нет настроек, на несколько секунд за экраном открывается старое окно Edge и выгружает их.
 
+### Файлы через Go (этап 3)
+
+`aegisapi/vfs.go` даёт `/api/native/vfs/*`: `pick`, `roots`, `list`, `stat`, `read` (с Range), `write`, `mkdir`, `remove`, `move`, `copy`. Пути принимаются только внутри папок, выбранных в нативном диалоге (`appDir/vfs-roots.json`), удалить саму выбранную папку нельзя. `read` отдаёт только медиа-типы, с `nosniff` и `CSP sandbox`.
+
+`src/utils/nativeFs.ts` подменяет `showDirectoryPicker` и возвращает объекты с интерфейсом `FileSystemDirectoryHandle`/`FileSystemFileHandle`. Файлы до 32 МБ приходят как настоящий `File`, крупнее — как `LazyFile` (чтение кусками по Range). Для `LazyFile` `URL.createObjectURL` выдаёт адрес `read`, а `FormData` передаёт ссылку на путь, и Go кладёт сам файл (для chdman). Handle'ы сохраняются в IndexedDB как пути и восстанавливаются после перезапуска без запросов разрешений.
+
+Включается в нативном окне (`--native-window`) и там, где у WebView нет `showDirectoryPicker` (macOS). В окне Edge остаётся API браузера. Для тестов: `aegis-server -dev-pick-dir <папка>`.
+
 ### Gatekeeper без подписи
 
 Без аккаунта Apple Developer macOS помечает скачанное приложение как непроверенное. Обход для README:
@@ -111,6 +119,14 @@ Each stage is a separate PR into `dev`; after testing it ships to `main` in a re
 ### Trying the native window (stage 2)
 
 Opt-in for now; Edge opens by default. To enable: run `AegisROM.exe --native-window` or create an empty `use-native-window` file in the data folder (`%APPDATA%\AegisROM`; `/api/native/status` → `appDir` shows the path). Back to Edge: `--legacy-window` or delete the file. The window profile lives in `<appDir>\WebView2`. On first launch, if no settings are on disk yet, the old Edge window opens off-screen for a few seconds and uploads them.
+
+### Files via Go (stage 3)
+
+`aegisapi/vfs.go` serves `/api/native/vfs/*`: `pick`, `roots`, `list`, `stat`, `read` (with Range), `write`, `mkdir`, `remove`, `move`, `copy`. Paths are accepted only inside folders picked in the native dialog (`appDir/vfs-roots.json`); a picked folder itself cannot be removed. `read` serves media types only, with `nosniff` and `CSP sandbox`.
+
+`src/utils/nativeFs.ts` replaces `showDirectoryPicker` and returns objects implementing `FileSystemDirectoryHandle`/`FileSystemFileHandle`. Files up to 32 MB come back as a real `File`, larger ones as a `LazyFile` (read in Range chunks). For a `LazyFile`, `URL.createObjectURL` returns the `read` URL, and `FormData` sends a path reference that Go replaces with the file itself (for chdman). Handles are stored in IndexedDB as paths and come back after a restart without permission prompts.
+
+Enabled in the native window (`--native-window`) and wherever the WebView has no `showDirectoryPicker` (macOS). The Edge window keeps the browser API. For tests: `aegis-server -dev-pick-dir <folder>`.
 
 ### Gatekeeper without signing
 
