@@ -9,6 +9,7 @@ export const SR: TranslationDict = {
   'header.appSubtitle': 'Organizator i menadžer retro kolekcija',
   'header.view.a': 'Prezentacioni',
   'header.view.b': 'Kompaktni',
+  'header.viewLabel': 'Prikaz',
   'header.view.c': 'Uređivač',
   'header.journal': 'Dnevnik',
   'header.setupExe': 'Setup .EXE',

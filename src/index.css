@@ -9,3 +9,77 @@
     font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   }
 }
+
+/* ===================================================================== */
+/* Design tokens — direction A «Workbench»                               */
+/* ===================================================================== */
+@theme {
+  --color-accent: #2f5bd3;
+  --color-accent-hover: #264bb0;
+  --color-accent-soft: #e8eefc;
+  --color-accent-dark: #6f8ff0;
+  --color-accent-soft-dark: #1c2640;
+}
+
+/* ===================================================================== */
+/* App shell: fixed-width side panels, only the centre column stretches. */
+/*  ≥1280  nav 220 · main · inspector 340                                 */
+/*  1024–1279  nav rail 64 · main · inspector 320                         */
+/*  760–1023   nav rail 64 · main; inspector slides over from the right   */
+/*  <760   nav as top tabs · main; inspector slides over                  */
+/* ===================================================================== */
+.aegis-shell {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 320px;
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+@media (min-width: 1280px) {
+  .aegis-shell { grid-template-columns: 220px minmax(0, 1fr) 340px; }
+}
+@media (max-width: 1279.98px) {
+  .aegis-shell .aegis-nav { padding-left: 8px; padding-right: 8px; align-items: center; }
+  .aegis-shell .aegis-nav-label,
+  .aegis-shell .aegis-nav-count,
+  .aegis-shell .aegis-nav-heading,
+  .aegis-shell .aegis-nav-cats { display: none; }
+  .aegis-shell .aegis-nav-item { justify-content: center; width: 44px; padding-left: 0; padding-right: 0; }
+}
+@media (max-width: 1023.98px) {
+  .aegis-shell { grid-template-columns: 64px minmax(0, 1fr); }
+  .aegis-shell .aegis-insp {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(360px, 92%);
+    z-index: 40;
+    box-shadow: -16px 0 40px rgb(15 23 42 / 0.22);
+    transform: translateX(105%);
+    transition: transform 180ms ease;
+  }
+  .aegis-shell .aegis-insp[data-open='true'] { transform: none; }
+  .aegis-shell .aegis-insp-backdrop[data-open='true'] { display: block; }
+}
+@media (max-width: 759.98px) {
+  .aegis-shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .aegis-shell .aegis-nav {
+    flex-direction: row;
+    justify-content: flex-start;
+    padding: 6px 8px;
+    border-right: 0;
+    border-bottom-width: 1px;
+    overflow-x: auto;
+  }
+  .aegis-shell .aegis-nav-sections { display: flex; gap: 4px; }
+  .aegis-shell .aegis-nav-sections > nav { display: flex; gap: 4px; }
+  .aegis-shell .aegis-nav-sections > nav > * { margin: 0 !important; }
+  .aegis-shell .aegis-nav-item { width: auto; padding-left: 12px; padding-right: 12px; }
+  .aegis-shell .aegis-nav-label { display: inline; }
+}
+.aegis-insp-backdrop { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .aegis-shell .aegis-insp { transition: none; }
+}

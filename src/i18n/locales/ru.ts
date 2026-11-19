@@ -7,9 +7,10 @@ export const RU: TranslationDict = {
   'nav.builds': 'Сборки',
   'nav.env': 'Среда',
   'header.appSubtitle': 'Менеджер и органайзер ретро-коллекций',
-  'header.view.a': 'Презентационный',
-  'header.view.b': 'Компактный',
+  'header.view.a': 'Плитки',
+  'header.view.b': 'Список',
   'header.view.c': 'Редактор',
+  'header.viewLabel': 'Вид',
   'header.journal': 'Журнал',
   'header.setupExe': 'Setup .EXE',
   'header.downloadZip': 'Скачать .ZIP',
@@ -17,7 +18,7 @@ export const RU: TranslationDict = {
   'header.themeLight': 'Светлая',
   'header.themeLabel': 'Тема',
   'header.langLabel': 'Язык',
-  'header.sections': 'Разделы v0.5 (Beta)',
+  'header.sections': 'Разделы',
 
   // Library
   'lib.title': 'Библиотека',
@@ -72,7 +73,7 @@ export const RU: TranslationDict = {
   'buildModal.discsNote': 'Многодисковая игра: все диски и .M3U будут добавлены целиком.',
 
   // Sidebar categories
-  'cat.title': 'Категории в базе',
+  'cat.title': 'Категории',
   'cat.byConsole': 'По консоли',
   'cat.byBitness': 'По битности',
   'cat.byGenre': 'По жанру',
@@ -101,14 +102,14 @@ export const RU: TranslationDict = {
   'tools.lib.addFolder': 'Добавить папку (без обнуления)',
   'tools.lib.importDbXml': 'Импорт DB/XML',
   'tools.lib.exportDbXml': 'Экспорт DB/XML',
-  'tools.lib.scraperTitle': 'Умный скрапер медиа (проверка заглушек ~1.5 КБ)',
+  'tools.lib.scraperTitle': 'Проверить обложки и видео',
   'tools.lib.scraperDesc': 'Проверяет реальные обложки и видео: готовые пропускает, а мелкие заглушки (~1.5 КБ или дубли шаблонов) и отсутствующие медиа перекачивает заново.',
   'tools.lib.runScraper': 'Запустить умный скрапер',
-  'tools.lib.run1G1R': 'Очистка дублей 1G1R',
+  'tools.lib.run1G1R': 'Убрать дубликаты (1G1R)',
   'tools.lib.onlineRename': 'Онлайн-переименование ромов (Конструктор)',
   'tools.lib.xmlRename': 'Переименование по XML (Конструктор)',
   'tools.lib.xmlTemplate': 'Скачать шаблон XML',
-  'tools.lib.cleanupPhantom': 'Очистка фантомных папок и лишних медиа',
+  'tools.lib.cleanupPhantom': 'Удалить пустые папки и лишние медиа',
   'tools.lib.multiDiscGroup': 'Разложить многодисковые по подпапкам + .M3U',
   'tools.lib.autoMultiDiscLabel': 'Авто-папка + .M3U для многодисковых',
   'tools.lib.undoBtn': 'Отменить действие',
@@ -126,7 +127,7 @@ export const RU: TranslationDict = {
   'tools.lib.renameOnSort': 'Переименовать файлы по Конструктору при сортировке',
   'tools.lib.autoScrape': 'Запускать скрапер обложек после сортировки',
   'tools.lib.scrapeVideos': 'Скачивать короткие видео геймплея (.mp4)',
-  'tools.lib.deleteDupsPerm': 'Удалять дубликаты 1G1R безвозвратно (без резервной папки)',
+  'tools.lib.deleteDupsPerm': 'Удалять дубликаты без резервной копии',
 
   // Simulated task progress messages
   'tools.sim.scraper1': 'Аудит images/ и videos/: проверка реальных файлов и поиск заглушек ~1.5 КБ...',
@@ -238,7 +239,7 @@ export const RU: TranslationDict = {
   'ctor.presetHint.clean_only': 'Tekken 3.chd',
 
   // Inspector & Cover Video
-  'insp.header': 'Инспектор игры (Обложка + Видео при наведении)',
+  'insp.header': 'Об игре',
   'insp.oldFile': 'Исходный файл:',
   'insp.cleanFile': 'Чистое имя:',
   'insp.multiDiscFolder': 'Папка + .M3U:',
@@ -732,7 +733,7 @@ export const RU: TranslationDict = {
 
   'insp.pcTestDownloadedLog': '🧪 Скачан .CMD скрипт ПК-теста для PortMaster «{title}» ({emu}).',
   'cover.titleTip': 'Наведите курсор на обложку — без клика включится короткое геймплейное видео',
-  'cover.hoverVideoHint': 'Наведите курсор — короткое видео',
+  'cover.hoverVideoHint': 'Наведите, чтобы посмотреть видео',
   'cover.shortVideoBadge': 'Короткое видео',
   'cover.unmuteTip': 'Включить звук',
   'cover.muteTip': 'Выключить звук',
@@ -745,7 +746,7 @@ export const RU: TranslationDict = {
   'env.scanPcBtn': 'Автопоиск эмуляторов на ПК',
   'env.scanningPcBtn': 'Поиск на ПК...',
   'env.scanPcTip': 'Проверить Program Files, AppData, RetroArch, DuckStation, PCSX2, Dolphin, PPSSPP и WSL2',
-  'env.nativeReadyBadge': 'Режим Desktop AegisROM.exe: прямой запуск игр в 1 клик и нативный выбор EXE активны',
+  'env.nativeReadyBadge': 'Десктоп-версия: игры запускаются в один клик, EXE эмулятора можно выбрать на диске',
   'env.browserNoticeBadge': 'Режим браузера: генерируются .CMD-ярлыки запуска, либо откройте AegisROM.exe для прямого старта',
   'env.platformFilter': 'Платформа / Консоль:',
   'env.allPlatforms': 'Все платформы ({count})',
@@ -944,7 +945,7 @@ export const RU: TranslationDict = {
   'builds.subtab.custom': '2. Собрать свою (Фильтр ➔ Галочки)',
   'builds.subtab.converter': '3. Конвертер ({count})',
   'builds.subtab.saved': '4. Мои сборки и Синхр. ({count})',
-  'builds.flash.title': 'Собрать под объём памяти флешки (с вычетом системы и занятого места):',
+  'builds.flash.title': 'Размер карты памяти:',
   'builds.flash.noLimit': 'Без лимита',
   'builds.flash.nominal': 'Номинал:',
   'builds.flash.realFs': 'Реальная ёмкость FAT32/exFAT:',
