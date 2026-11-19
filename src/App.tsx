@@ -2033,7 +2033,7 @@ export function App() {
               videoUrl: vidFile ? URL.createObjectURL(vidFile) : r.videoUrl,
             };
           }
-          // Yield to event loop every 350 items on 14k+ DBs so UI stays completely responsive
+          // Yield to event loop every 350 items on large DBs so UI stays completely responsive
           if (i > 0 && i % CHUNK_SIZE === 0) {
             await new Promise((res) => setTimeout(res, 0));
           }
