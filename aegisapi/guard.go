@@ -1,4 +1,4 @@
-package main
+package aegisapi
 
 import (
 	"crypto/rand"
@@ -25,13 +25,13 @@ import (
 //     app page as an HttpOnly SameSite=Strict cookie, or sent by native Go
 //     clients in the X-Aegis-Token header.
 
-const localAPITokenHeader = "X-Aegis-Token"
+const TokenHeader = "X-Aegis-Token"
 
-// localAPITokenFileName stores the token of the running instance so that a newer
+// TokenFileName stores the token of the running instance so that a newer
 // launch can ask it to shut down via /api/native/shutdown.
-const localAPITokenFileName = "native-api.token"
+const TokenFileName = "native-api.token"
 
-func newLocalAPIToken() (string, error) {
+func NewToken() (string, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
@@ -39,59 +39,59 @@ func newLocalAPIToken() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-func readLocalAPITokenFile(appDir string) string {
-	b, err := os.ReadFile(filepath.Join(appDir, localAPITokenFileName))
+func ReadTokenFile(appDir string) string {
+	b, err := os.ReadFile(filepath.Join(appDir, TokenFileName))
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
 }
 
-func writeLocalAPITokenFile(appDir, token string) {
-	_ = os.WriteFile(filepath.Join(appDir, localAPITokenFileName), []byte(token), 0600)
+func WriteTokenFile(appDir, token string) {
+	_ = os.WriteFile(filepath.Join(appDir, TokenFileName), []byte(token), 0600)
 }
 
-// localAPISessionCookieName includes the port, because browsers share cookies
+// SessionCookieName includes the port, because browsers share cookies
 // between ports of the same host.
-func localAPISessionCookieName(port string) string {
+func SessionCookieName(port string) string {
 	return "aegis_session_" + port
 }
 
-type localAPIGuard struct {
+type Guard struct {
 	next       http.Handler
 	token      string
 	port       string
 	cookieName string
 }
 
-func newLocalAPIGuard(next http.Handler, token, port string) *localAPIGuard {
-	return &localAPIGuard{
+func NewGuard(next http.Handler, token, port string) *Guard {
+	return &Guard{
 		next:       next,
 		token:      token,
 		port:       port,
-		cookieName: localAPISessionCookieName(port),
+		cookieName: SessionCookieName(port),
 	}
 }
 
-func (g *localAPIGuard) allowedHost(host string) bool {
+func (g *Guard) allowedHost(host string) bool {
 	h := strings.ToLower(host)
 	return h == "127.0.0.1:"+g.port || h == "localhost:"+g.port
 }
 
-func (g *localAPIGuard) allowedOrigin(origin string) bool {
+func (g *Guard) allowedOrigin(origin string) bool {
 	o := strings.ToLower(strings.TrimRight(origin, "/"))
 	return o == "http://127.0.0.1:"+g.port || o == "http://localhost:"+g.port
 }
 
-func (g *localAPIGuard) tokenMatches(candidate string) bool {
+func (g *Guard) tokenMatches(candidate string) bool {
 	if candidate == "" {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(candidate), []byte(g.token)) == 1
 }
 
-func (g *localAPIGuard) authorized(r *http.Request) bool {
-	if g.tokenMatches(r.Header.Get(localAPITokenHeader)) {
+func (g *Guard) authorized(r *http.Request) bool {
+	if g.tokenMatches(r.Header.Get(TokenHeader)) {
 		return true
 	}
 	if c, err := r.Cookie(g.cookieName); err == nil && g.tokenMatches(c.Value) {
@@ -100,7 +100,7 @@ func (g *localAPIGuard) authorized(r *http.Request) bool {
 	return false
 }
 
-func (g *localAPIGuard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (g *Guard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !g.allowedHost(r.Host) {
 		http.Error(w, "Forbidden host", http.StatusForbidden)
 		return

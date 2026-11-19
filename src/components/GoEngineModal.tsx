@@ -6,6 +6,7 @@ import {
   DOWNLOAD_SETUP_URL,
   PORTABLE_EXE_FILENAME,
   SETUP_EXE_FILENAME,
+  DOWNLOAD_SCANNER_EXE_URL,
 } from '../version';
 import {
   X,
@@ -238,7 +239,7 @@ export const GoEngineModal: React.FC<GoEngineModalProps> = ({ isOpen, onClose })
                   </div>
 
                   <a
-                    href="/downloads/aegis-scanner-win11-x64.exe"
+                    href={DOWNLOAD_SCANNER_EXE_URL}
                     download="aegis-scanner-win11-x64.exe"
                     className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl shadow-sm transition-colors"
                   >

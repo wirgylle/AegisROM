@@ -34,8 +34,8 @@
 
 | Область | Файлы |
 |---|---|
-| Бэкенд | `aegiscore/`, `cmd/`, `server.ts`, `go.mod` |
-| Фронтенд | `src/`, `index.html`, `vite.config.ts` |
+| Бэкенд | `aegiscore/`, `aegisapi/`, `cmd/`, `go.mod` |
+| Фронтенд | `src/`, `index.html`, `vite.config.ts` (dev-прокси к Go API) |
 | Дизайн | `src/components/`, `src/index.css`, `public/` (иконки, манифест) |
 | Архитектура | структура пакетов, `docs/architecture.md` |
 | Git / документация / CI | `README.md`, `docs/`, `CONTRIBUTING.md`, `.github/`, `.gitignore`, `scripts/` |

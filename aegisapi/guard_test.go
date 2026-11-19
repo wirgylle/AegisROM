@@ -1,4 +1,4 @@
-package main
+package aegisapi
 
 import (
 	"net/http"
@@ -6,15 +6,15 @@ import (
 	"testing"
 )
 
-func newTestGuard() *localAPIGuard {
+func newTestGuard() *Guard {
 	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	return newLocalAPIGuard(ok, "secret-token", "38470")
+	return NewGuard(ok, "secret-token", "38470")
 }
 
 func TestLocalAPIGuard(t *testing.T) {
-	cookie := &http.Cookie{Name: localAPISessionCookieName("38470"), Value: "secret-token"}
+	cookie := &http.Cookie{Name: SessionCookieName("38470"), Value: "secret-token"}
 
 	cases := []struct {
 		name   string
@@ -36,10 +36,10 @@ func TestLocalAPIGuard(t *testing.T) {
 			r.AddCookie(cookie)
 		}, 200},
 		{"api with header token (native client)", "POST", "/api/native/shutdown", "127.0.0.1:38470", func(r *http.Request) {
-			r.Header.Set(localAPITokenHeader, "secret-token")
+			r.Header.Set(TokenHeader, "secret-token")
 		}, 200},
 		{"api with wrong token", "POST", "/api/native/shutdown", "127.0.0.1:38470", func(r *http.Request) {
-			r.Header.Set(localAPITokenHeader, "nope")
+			r.Header.Set(TokenHeader, "nope")
 		}, 401},
 		{"foreign origin rejected", "POST", "/api/native/emulators/launch", "127.0.0.1:38470", func(r *http.Request) {
 			r.AddCookie(cookie)

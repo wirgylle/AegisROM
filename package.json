@@ -4,8 +4,9 @@
   "version": "0.5.4",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
-    "start": "node server.ts",
+    "dev": "vite",
+    "dev:api": "go run ./cmd/aegis-server -data .aegis-data",
+    "start": "go run ./cmd/aegis-server",
     "build": "vite build",
     "release:win": "node scripts/release-win.mjs",
     "preview": "vite preview",
@@ -18,8 +19,7 @@
     "lucide-react": "^0.546.0",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
-    "vite": "^8.3.0",
-    "express": "^4.21.2"
+    "vite": "^8.3.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
@@ -27,8 +27,6 @@
     "@types/react-dom": "^19.3.0",
     "autoprefixer": "^10.4.21",
     "tailwindcss": "^4.3.3",
-    "tsx": "^4.21.0",
-    "typescript": "^7.0.2",
-    "@types/express": "^4.17.21"
+    "typescript": "^7.0.2"
   }
 }

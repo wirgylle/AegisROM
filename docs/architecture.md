@@ -9,7 +9,9 @@
 │   ├── media.go                  # Медиа, обложки, «фантомные» папки
 │   ├── scraper.go                # Индексы Libretro thumbnails / Archive.org, скачивание
 │   └── disc.go                   # Образы дисков: BIN 2352 -> ISO, MDF/IMG -> CUE+BIN
+├── aegisapi/             # HTTP-слой без привязки к ОС: guard локального API, /api/db/*, PortMaster, скрапер, раздача UI
 ├── cmd/
+│   ├── aegis-server/     # Кроссплатформенный Go-сервер: aegisapi + dist/ (dev и будущий Docker/NAS)
 │   ├── aegis-gui/        # Нативное Windows-приложение: Win32 окно + локальный HTTP API + встроенный фронтенд
 │   │   ├── main.go                   # Классический Win32 GUI (заморожен), вызывает aegiscore
 │   │   ├── hybrid_webview_server.go  # Локальный файловый API (127.0.0.1) и раздача фронтенда
@@ -29,7 +31,6 @@
 │   ├── utils/            # Multi-Disc (.m3u), конструктор имён, детектор заглушек, PortMaster и др.
 │   ├── version.ts        # Версия приложения и имена релизных файлов
 │   └── App.tsx           # Главный контроллер состояния
-├── server.ts             # Express dev-сервер + прокси скраппера (Libretro/Archive.org/PortMaster)
 └── .github/workflows/    # CI и релизы
 ```
 
@@ -38,17 +39,19 @@
 Целевая схема: вся логика живёт в `aegiscore` (без `syscall`/Win32, собирается под windows/linux/darwin). Оболочки только вызывают ядро:
 
 - `cmd/aegis-gui` — классический Win32 GUI (`--classic-win32`, заморожен, не портируется) и гибридный режим: локальный HTTP API + React UI.
-- Дальше: `aegis-server` (HTTP API поверх ядра, отдаёт React UI), десктоп через Wails, Docker/NAS.
+- `cmd/aegis-server` — HTTP API поверх ядра (`aegisapi`), отдаёт React UI. Пока слушает только loopback.
+- Дальше: десктоп через Wails, Docker/NAS.
 
 Новую логику пишите в `aegiscore` с тестом, а не в `cmd/`. Ядро не трогает UI: журнал передаётся через `aegiscore.SetLogger`, выбранный пользователем gamelist.xml — через `aegiscore.SetCustomXMLPath`.
 
 ## Два режима запуска
 
-- **Браузер / dev**: `npm run dev` → Express (`server.ts`) отдаёт фронтенд через Vite и API.
+- **Браузер / dev**: `npm run dev:api` (Go, `cmd/aegis-server`) + `npm run dev` (Vite, прокси `/api` в Go). Бэкенд один — Go.
 - **Desktop (Windows)**: `AegisROM.exe` поднимает локальный HTTP API на `127.0.0.1` и открывает фронтенд из `webdist` в окне Edge/Chrome `--app`.
 
 ## Известный технический долг
 
 - `src/App.tsx` — монолит на несколько тысяч строк; `cmd/aegis-gui/main.go` после выноса ядра ~3.4k строк Win32-кода.
 - Исходник сканера продублирован: `cmd/aegis-scanner/main.go`, `public/downloads/aegis-scanner.go` (из него собирается релизный `.exe` и он отдаётся на скачивание), `src/data/goScannerSource.ts`.
-- Тесты есть только у `aegiscore` и guard'а локального API; у фронтенда тестов нет.
+- Тесты есть у `aegiscore`, `aegisapi` и `cmd/aegis-server`; у фронтенда тестов нет.
+- Файловые операции (скан, переименование, экспорт сборок) фронтенд делает сам через File System Access API (`showDirectoryPicker`, `createWritable`, `removeEntry`): ~150 мест в `src/App.tsx`, ~45 в `SmartBuildsAndConverterTab.tsx`, `utils/persistentHandles.ts`. Это работает только в Chromium и не работает в Docker/NAS-режиме. Перенос в Go API — шаг 4.
