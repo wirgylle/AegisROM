@@ -1021,6 +1021,7 @@ func runHybridModernDesktopApp() bool {
 
 	// 4–5. Библиотека, сборки, PortMaster и скрапер: общие для всех оболочек (aegisapi).
 	aegisapi.RegisterLibraryRoutes(mux, appDir, touch)
+	aegisapi.RegisterStorageRoutes(mux, appDir, touch)
 
 	// 6. Serve Embedded React 19 + Tailwind CSS SPA directly from memory with explicit anti-cache MIME headers
 	mux.Handle("/", aegisapi.SPAHandler(webAssets, indexBytes, touch))
