@@ -83,3 +83,27 @@
 @media (prefers-reduced-motion: reduce) {
   .aegis-shell .aegis-insp { transition: none; }
 }
+
+/* Library database bar: label + select on the left, Open + Save on the right.
+   Narrow: two rows, each button sits on the same row as its left-hand neighbour.
+   Wide (≥ 44rem of bar width): a single row. */
+.aegis-dbbar-wrap { container-type: inline-size; }
+.aegis-dbbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'label open'
+    'select save';
+  align-items: center;
+  gap: 6px 8px;
+}
+.aegis-dbbar-label { grid-area: label; }
+.aegis-dbbar-select { grid-area: select; }
+.aegis-dbbar-open { grid-area: open; justify-content: center; }
+.aegis-dbbar-save { grid-area: save; justify-content: center; }
+@container (min-width: 44rem) {
+  .aegis-dbbar {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-areas: 'label select open save';
+  }
+}
