@@ -596,6 +596,10 @@ func main() {
 			noPrompt = true
 		} else if strings.EqualFold(arg, "--classic-win32") {
 			useClassicWin32 = true
+		} else if strings.EqualFold(arg, "--native-window") {
+			nativeWindowFlag = true
+		} else if strings.EqualFold(arg, "--legacy-window") {
+			legacyWindowFlag = true
 		}
 	}
 
