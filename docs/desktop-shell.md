@@ -46,6 +46,10 @@
 | 6 | Сборка `.dmg` | Job на `macos-latest` в release-workflow: `darwin/universal` (Intel + Apple Silicon), ad-hoc подпись `codesign -s -`, `.dmg` через `hdiutil`. Без аккаунта Apple. В README — как открыть неподписанное приложение. | Запуск `.dmg` на Mac |
 | 7 | PortMaster через WSL (отдельно) | Вместо `--classic-win32`: установка WSL-дистрибутива и нативного PortMaster внутри. **Риск:** большинство портов PortMaster собраны под ARM64 и KMS/DRM приставок; на x86-ПК в WSL их, скорее всего, придётся гонять через эмуляцию (box64/qemu-user). Сначала прототип на 2–3 портах, потом решение. | Прототип |
 
+### Как попробовать нативное окно (этап 2)
+
+Пока это опция, по умолчанию открывается Edge. Включить: запустить `AegisROM.exe --native-window` или создать пустой файл `use-native-window` в папке данных (`%APPDATA%\AegisROM`, путь виден в `/api/native/status` → `appDir`). Вернуть Edge: `--legacy-window` или удалить файл. Профиль окна хранится в `<appDir>\WebView2`. При первом запуске, если на диске ещё нет настроек, на несколько секунд за экраном открывается старое окно Edge и выгружает их.
+
 ### Gatekeeper без подписи
 
 Без аккаунта Apple Developer macOS помечает скачанное приложение как непроверенное. Обход для README:
@@ -103,6 +107,10 @@ Each stage is a separate PR into `dev`; after testing it ships to `main` in a re
 | 5 | Emulators on macOS | Look up `.app` bundles in `/Applications` and `~/Applications`, run the binary inside the bundle with the same arguments. RetroArch: `.dylib` cores from `~/Library/Application Support/RetroArch/cores`. OpenEmu: "open in OpenEmu" only; it imports the game into its own library and has no command line to start a specific game. | On a Mac |
 | 6 | `.dmg` build | A `macos-latest` job in the release workflow: `darwin/universal` (Intel + Apple Silicon), ad-hoc signature `codesign -s -`, `.dmg` via `hdiutil`. No Apple account. README explains how to open an unsigned app. | Opening the `.dmg` on a Mac |
 | 7 | PortMaster via WSL (separate) | Instead of `--classic-win32`: install a WSL distro and native PortMaster inside it. **Risk:** most PortMaster ports are built for ARM64 and the handhelds' KMS/DRM; on an x86 PC in WSL they will most likely need emulation (box64/qemu-user). Prototype on 2–3 ports first, then decide. | Prototype |
+
+### Trying the native window (stage 2)
+
+Opt-in for now; Edge opens by default. To enable: run `AegisROM.exe --native-window` or create an empty `use-native-window` file in the data folder (`%APPDATA%\AegisROM`; `/api/native/status` → `appDir` shows the path). Back to Edge: `--legacy-window` or delete the file. The window profile lives in `<appDir>\WebView2`. On first launch, if no settings are on disk yet, the old Edge window opens off-screen for a few seconds and uploads them.
 
 ### Gatekeeper without signing
 
