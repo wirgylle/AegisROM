@@ -525,10 +525,22 @@ func runHybridModernDesktopApp() bool {
 	var lastHeartbeatUnix int64 = time.Now().Unix()
 
 	// If an older instance is still listening on 127.0.0.1:38470, tell it to shut down so we serve the newest build
+	// The running instance only accepts the request with its session token, which it saved to appDir.
 	client := &http.Client{Timeout: 300 * time.Millisecond}
-	if resp, err := client.Post("http://127.0.0.1:38470/api/native/shutdown", "application/json", nil); err == nil {
-		_ = resp.Body.Close()
-		time.Sleep(150 * time.Millisecond)
+	if shutdownReq, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:38470/api/native/shutdown", nil); err == nil {
+		if prevToken := readLocalAPITokenFile(appDir); prevToken != "" {
+			shutdownReq.Header.Set(localAPITokenHeader, prevToken)
+		}
+		if resp, err := client.Do(shutdownReq); err == nil {
+			_ = resp.Body.Close()
+			time.Sleep(150 * time.Millisecond)
+		}
+	}
+
+	// Per-launch session token protecting the local API (see local_api_guard.go).
+	apiToken, err := newLocalAPIToken()
+	if err != nil {
+		return false
 	}
 
 	mux := http.NewServeMux()
@@ -1561,7 +1573,14 @@ func runHybridModernDesktopApp() bool {
 	}
 	appURL := fmt.Sprintf("http://%s/?v=0.5.4", ln.Addr().String())
 
-	srv := &http.Server{Handler: mux}
+	_, listenPort, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		_ = ln.Close()
+		return false
+	}
+	writeLocalAPITokenFile(appDir, apiToken)
+
+	srv := &http.Server{Handler: newLocalAPIGuard(mux, apiToken, listenPort)}
 	go func() {
 		_ = srv.Serve(ln)
 	}()
@@ -1569,7 +1588,12 @@ func runHybridModernDesktopApp() bool {
 	// Wait until our HTTP server is 100% live and responding 200 OK before opening the window!
 	readyClient := &http.Client{Timeout: 200 * time.Millisecond}
 	for i := 0; i < 40; i++ {
-		if resp, err := readyClient.Get(fmt.Sprintf("http://%s/api/native/status", ln.Addr().String())); err == nil {
+		readyReq, reqErr := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s/api/native/status", ln.Addr().String()), nil)
+		if reqErr != nil {
+			break
+		}
+		readyReq.Header.Set(localAPITokenHeader, apiToken)
+		if resp, err := readyClient.Do(readyReq); err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == 200 {
 				break
