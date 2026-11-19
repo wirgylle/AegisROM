@@ -304,6 +304,12 @@ func RegisterLibraryRoutes(mux *http.ServeMux, appDir string, touch func()) {
 			SnapUrl               string `json:"snapUrl"`
 			MarqueeUrl            string `json:"marqueeUrl"`
 			VideoUrl              string `json:"videoUrl"`
+			// Matched: название найдено в индексе Libretro. Если false, MatchedCanonicalTitle —
+			// исходное название (как раньше), а Reason объясняет, почему не найдено.
+			Matched     bool    `json:"matched"`
+			TitleSource string  `json:"titleSource,omitempty"`
+			MatchScore  float64 `json:"matchScore,omitempty"`
+			Reason      string  `json:"reason,omitempty"`
 		}
 
 		results := make([]scrapeResult, 0, len(req.Items))
@@ -312,6 +318,8 @@ func RegisterLibraryRoutes(mux *http.ServeMux, appDir string, touch func()) {
 			if prefRegion == "" {
 				prefRegion = "USA"
 			}
+			// match объясняет результат; matchedName — прежняя логика для URL обложек (индекс кэширован).
+			match := aegiscore.MatchLibretroTitle(item.LibretroSystem, item.CleanTitle, item.ComparisonKey, prefRegion)
 			matchedName := aegiscore.FindBestLibretroMatch(item.LibretroSystem, item.CleanTitle, item.ComparisonKey, prefRegion)
 			if matchedName == "" {
 				matchedName = fmt.Sprintf("%s (USA)", item.CleanTitle)
@@ -344,6 +352,10 @@ func RegisterLibraryRoutes(mux *http.ServeMux, appDir string, touch func()) {
 				SnapUrl:               snapURL,
 				MarqueeUrl:            marqueeURL,
 				VideoUrl:              videoURL,
+				Matched:               match.FileName != "",
+				TitleSource:           match.Source,
+				MatchScore:            match.Score,
+				Reason:                match.Reason,
 			})
 		}
 

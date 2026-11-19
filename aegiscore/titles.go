@@ -823,11 +823,13 @@ func ExtractCleanTitle(fileName string) string {
 	base = strings.ReplaceAll(base, ".", " ")
 
 	tokens := strings.Fields(base)
+	// "World" здесь не вырезаем: это часть многих названий (Super Mario World, Wario World),
+	// а регион (World) в скобках уже убран TagStripRegex.
 	var filtered []string
 	for _, t := range tokens {
 		up := strings.ToUpper(t)
 		if up == "USA" || up == "EUR" || up == "EUROPE" || up == "JAPAN" || up == "JPN" ||
-			up == "WORLD" || up == "RUS" || up == "RUSSIAN" || up == "RU" ||
+			up == "RUS" || up == "RUSSIAN" || up == "RU" ||
 			up == "V1" || up == "V1.0" || up == "V1.1" || up == "TOP100" ||
 			up == "РУС" || up == "РУССКАЯ" || up == "ВЕРСИЯ" {
 			continue
