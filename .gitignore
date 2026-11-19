@@ -18,8 +18,8 @@ public/downloads/*
 *.exe
 *.zip
 
-# Local runtime data of the dev server (library DB, builds, caches)
-data/
+# Local runtime data of `npm run dev:api` (library DB, builds, caches, API token)
+.aegis-data/
 
 # OS / editor
 .DS_Store

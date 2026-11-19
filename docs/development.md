@@ -14,13 +14,20 @@ npm ci
 
 `package-lock.json` закоммичен, `npm ci` ставит ровно те версии, что в нём. Новую зависимость добавляйте через `npm install <пакет>` и коммитьте обновлённый lock-файл вместе с `package.json`.
 
-## Режим разработки (Web + Express API, порт 3000)
+## Режим разработки (Vite + Go API)
+
+Бэкенд один — Go. В двух терминалах:
 
 ```bash
-npm run dev
+npm run dev:api   # Go API (cmd/aegis-server) на 127.0.0.1:38471, данные в .aegis-data/
+npm run dev       # Vite на http://localhost:3000 с горячей перезагрузкой, /api проксируется в Go
 ```
 
-Express-сервер (`server.ts`) хранит локальное состояние в `data/` (база библиотеки, сборки, кэш PortMaster). Папка в `.gitignore`, создаётся автоматически.
+API защищён токеном (как в AegisROM.exe). `aegis-server` пишет его в `.aegis-data/native-api.token`, Vite-прокси подставляет его в запросы и отклоняет запросы с чужим `Origin`. Папка `.aegis-data/` в `.gitignore`.
+
+Без Vite: `npm run build && npm start` — Go-сервер отдаёт `dist/` и API, адрес будет в логе.
+
+В браузерном режиме нет нативных функций десктопа (`/api/native/*`: диалоги выбора папок, запуск эмуляторов, chdman) — они есть только в `AegisROM.exe`.
 
 ## Проверки (то же, что делает CI)
 
@@ -34,6 +41,7 @@ printf 'placeholder' > cmd/aegis-setup/payload/AegisROM.exe.gz
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go vet -unsafeptr=false ./...
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o /dev/null ./...
 go test ./...
+GOOS=darwin GOARCH=arm64 go build -o /dev/null ./aegiscore ./aegisapi ./cmd/aegis-server
 (cd cmd/aegis-scanner && go vet ./... && go build -o /dev/null .)
 ```
 
