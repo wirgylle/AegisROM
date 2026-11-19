@@ -91,6 +91,7 @@ const SHORT_COLLATOR = new Intl.Collator('en', { sensitivity: 'base', numeric: t
 import {
   collapseMultiDiscUnifiedRows,
 } from '../utils/multiDiscEngine';
+import { WorkbenchContextPanel, type HoveredTool } from './WorkbenchContextPanel';
 
 export interface MultiDiscEntry {
   id: string;
@@ -1604,8 +1605,39 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       inspectorSkipFirstRef.current = false;
       return;
     }
-    setInspectorOpen(true);
+    // Only the Library shows the game inspector; other sections select games without opening it.
+    if (previewTab === 'library') setInspectorOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedGameId]);
+  useEffect(() => {
+    setInspectorOpen(false);
+  }, [previewTab]);
+
+  // Tools: the right panel describes the tool under the pointer / keyboard focus.
+  const [hoveredTool, setHoveredTool] = useState<HoveredTool | null>(null);
+  useEffect(() => {
+    setHoveredTool(null);
+  }, [previewTab, toolsMode]);
+  const handleToolHover = (e: React.SyntheticEvent) => {
+    const el = (e.target as HTMLElement).closest?.('[data-tool]') as HTMLElement | null;
+    if (!el) return;
+    const id = el.dataset.tool || '';
+    if (hoveredTool?.id === id) return;
+    const label = (el.textContent || el.getAttribute('title') || '').trim();
+    setHoveredTool({ id, label });
+  };
+  const contextStats = React.useMemo(() => {
+    const consoles = new Set<string>();
+    let noCover = 0;
+    let multiDisc = 0;
+    for (const g of enrichedGamesSource) {
+      if (g.consoleShort) consoles.add(g.consoleShort.toUpperCase());
+      if (!g.boxArtUrl) noCover++;
+      if (g.isMultiDisc || (g.discs && g.discs.length > 1)) multiDisc++;
+    }
+    return { consoles: consoles.size, noCover, multiDisc };
+  }, [enrichedGamesSource]);
+  const showContextPanel = previewTab !== 'library';
   useEffect(() => {
     if (!inspectorOpen) return;
     const onKey = (e: KeyboardEvent) => {
@@ -2100,7 +2132,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
           {/* TAB 2: ИНСТРУМЕНТЫ (3 Sub-Tabs: Библиотека | Флешка/Папка | Комбайн) */}
           {/* ============================================================ */}
           {previewTab === 'tools' && (
-            <div className="space-y-4">
+            <div className="space-y-4" onMouseOver={handleToolHover} onFocus={handleToolHover}>
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
                 <div>
                   <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
@@ -2162,7 +2194,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <button
+                        <button data-tool="importDb"
                           type="button"
                           onClick={() => onImportLibrary?.()}
                           disabled={activeRunning}
@@ -2171,7 +2203,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                           <Upload className="w-3.5 h-3.5 text-indigo-600" />
                           <span>{t('tools.lib.importDbXml')}</span>
                         </button>
-                        <button
+                        <button data-tool="exportDb"
                           type="button"
                           onClick={() => onExportLibrary?.()}
                           disabled={activeRunning}
@@ -2184,7 +2216,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      <button
+                      <button data-tool="pickLibrary"
                         type="button"
                         onClick={onSelectLibraryPath || onSelectAndScanFolder}
                         disabled={activeRunning}
@@ -2194,7 +2226,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         <span>{t('tools.lib.pickLocation')}</span>
                       </button>
 
-                      <button
+                      <button data-tool="fullScan"
                         type="button"
                         onClick={onSelectAndScanFolder}
                         disabled={activeRunning}
@@ -2204,7 +2236,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         <span>{t('tools.lib.fullScan')}</span>
                       </button>
 
-                      <button
+                      <button data-tool="addFolder"
                         type="button"
                         onClick={onAddFolderToLibrary || onSelectAndScanFolder}
                         disabled={activeRunning}
@@ -2227,7 +2259,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         {t('tools.lib.scraperDesc')}
                       </p>
                     </div>
-                    <button
+                    <button data-tool="scraper"
                       type="button"
                       onClick={() => {
                         if (scannedRows.length > 0 && onScrapeMedia) {
@@ -2253,7 +2285,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
 
                   {/* Core Library Action Grid: 1G1R, Online Rename, XML Rename, Phantom Cleanup, Multi-Disc .M3U */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
-                    <button
+                    <button data-tool="g1r"
                       type="button"
                       onClick={() => {
                         if (scannedRows.length > 0 && onOrganizeCatalog) {
@@ -2273,7 +2305,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       <span>{t('tools.lib.run1G1R')}</span>
                     </button>
 
-                    <button
+                    <button data-tool="onlineRename"
                       type="button"
                       onClick={() => {
                         if (scannedRows.length > 0 && onOnlineRename) {
@@ -2294,7 +2326,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     </button>
 
                     <div className="flex items-center gap-1.5">
-                      <button
+                      <button data-tool="xmlRename"
                         type="button"
                         onClick={onOpenXmlModal}
                         disabled={activeRunning}
@@ -2313,7 +2345,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       </button>
                     </div>
 
-                    <button
+                    <button data-tool="cleanup"
                       type="button"
                       onClick={() => {
                         if (scannedRows.length > 0 && onScanPhantomFolders) {
@@ -2332,7 +2364,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       <span>{t('tools.lib.cleanupPhantom')}</span>
                     </button>
 
-                    <button
+                    <button data-tool="multiDisc"
                       type="button"
                       onClick={() => {
                         if (scannedRows.length > 0 && onGroupMultiDiscFolders) {
@@ -2363,7 +2395,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   </div>
 
                   {canUndo && onUndo && (
-                    <button
+                    <button data-tool="undo"
                       onClick={onUndo}
                       className="w-full py-2 px-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-800 dark:text-slate-200 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
                     >
@@ -2395,7 +2427,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                           📁 {sortTargetFolderName || selectedFolderName || effectiveLibraryPath}
                         </div>
                       </div>
-                      <button
+                      <button data-tool="pickLibrary"
                         type="button"
                         onClick={onSelectSortTargetFolder}
                         disabled={activeRunning}
@@ -2478,7 +2510,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       </label>
                     </div>
 
-                    <button
+                    <button data-tool="applySort"
                       type="button"
                       onClick={() => onApplySortRulesInFolder?.(renameOnSortRules)}
                       disabled={activeRunning}
@@ -2507,7 +2539,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       💾 {sdTargetFolderName || selectedFolderName || 'EASYROMS (E:\\)'}
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      <button
+                      <button data-tool="sdPick"
                         type="button"
                         onClick={onSelectSdFolder || onSelectAndScanFolder}
                         disabled={activeRunning}
@@ -2517,7 +2549,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         <span>{t('tools.sd.pickLocation')}</span>
                       </button>
 
-                      <button
+                      <button data-tool="sdScan"
                         type="button"
                         onClick={onScanSdFolder || onSelectAndScanFolder}
                         disabled={activeRunning}
@@ -2527,7 +2559,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         <span>{t('tools.sd.scanBtn')}</span>
                       </button>
 
-                      <button
+                      <button data-tool="sdDiff"
                         type="button"
                         onClick={() => setLibrarySyncModalOpen(true)}
                         disabled={activeRunning}
@@ -2541,7 +2573,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
 
                   {/* SD Card Maintenance Tools Grid */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    <button
+                    <button data-tool="scraper"
                       type="button"
                       onClick={() => {
                         if (scannedRows.length > 0 && onScrapeMedia) {
@@ -2560,7 +2592,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       <span>{t('tools.sd.scraperBtn')}</span>
                     </button>
 
-                    <button
+                    <button data-tool="g1r"
                       type="button"
                       onClick={() => {
                         if (scannedRows.length > 0 && onOrganizeCatalog) {
@@ -2579,7 +2611,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       <span>{t('tools.sd.dedupBtn')}</span>
                     </button>
 
-                    <button
+                    <button data-tool="onlineRename"
                       type="button"
                       onClick={() => {
                         if (scannedRows.length > 0 && onOnlineRename) {
@@ -2597,7 +2629,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       <span>{t('tools.sd.onlineRenameBtn')}</span>
                     </button>
 
-                    <button
+                    <button data-tool="xmlRename"
                       type="button"
                       onClick={onOpenXmlModal}
                       disabled={activeRunning}
@@ -2607,7 +2639,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       <span>{t('tools.sd.xmlRenameBtn')}</span>
                     </button>
 
-                    <button
+                    <button data-tool="cleanup"
                       type="button"
                       onClick={() => {
                         if (scannedRows.length > 0 && onScanPhantomFolders) {
@@ -2651,7 +2683,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       </select>
                     </div>
 
-                    <button
+                    <button data-tool="sdRepair"
                       type="button"
                       onClick={() => {
                         if (onRepairSdCard && (scannedRows.length > 0 || sdTargetFolderName)) {
@@ -2680,7 +2712,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
               {toolsMode === 'combine' && (
                 <div className="space-y-4">
                   {/* Clear human explanation */}
-                  <div className="bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-xl p-3.5 text-xs space-y-1">
+                  <div className="bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-xl p-3.5 text-xs space-y-1 aegis-ctx-inline">
                     <div className="text-sm font-semibold text-blue-950 dark:text-blue-200">
                       {t('tools.comb.bufferTitle')}
                     </div>
@@ -2700,7 +2732,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                           ? `📥 ${bufferFolderName} (${bufferPreviewItems.length})`
                           : '—'}
                       </div>
-                      <button
+                      <button data-tool="bufferPick"
                         type="button"
                         onClick={onSelectBufferFolder}
                         disabled={activeRunning}
@@ -2718,7 +2750,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 truncate bg-slate-50 dark:bg-slate-800 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
                         📁 {combineTargetFolderName || effectiveLibraryPath}
                       </div>
-                      <button
+                      <button data-tool="targetPick"
                         type="button"
                         onClick={onSelectCombineTargetFolder}
                         disabled={activeRunning}
@@ -2851,7 +2883,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2.5">
-                    <button
+                    <button data-tool="runBuffer"
                       type="button"
                       onClick={() => onRunBufferAutoProcess?.()}
                       disabled={activeRunning}
@@ -2991,7 +3023,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     )}
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      <button
+                      <button data-tool="massDelete"
                         type="button"
                         disabled={activeRunning || massMatchedGames.length === 0}
                         onClick={() => setConfirmMassDelete(true)}
@@ -3001,7 +3033,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         <span>{t('tools.comb.massDeleteBtn')} ({massMatchedGames.length})</span>
                       </button>
 
-                      <button
+                      <button data-tool="massMove"
                         type="button"
                         disabled={activeRunning || massMatchedGames.length === 0}
                         onClick={() => {
@@ -3024,7 +3056,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         <span>{t('tools.comb.massMoveBtn')} ({massMatchedGames.length})</span>
                       </button>
 
-                      <button
+                      <button data-tool="massSplit"
                         type="button"
                         disabled={activeRunning}
                         onClick={() => {
@@ -3115,9 +3147,35 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         <aside
           className="aegis-insp min-w-0 p-5 bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 flex flex-col justify-between gap-4 overflow-y-auto"
           data-open={inspectorOpen}
-          aria-label={t('insp.header')}
+          data-ctx={showContextPanel}
+          aria-label={showContextPanel ? t('ctx.panelLabel') : t('insp.header')}
         >
-          {selectedGame && (() => {
+          {showContextPanel && (
+            <WorkbenchContextPanel
+              section={previewTab as 'tools' | 'builds' | 'env'}
+              toolsMode={toolsMode}
+              hoveredTool={hoveredTool}
+              gameCount={enrichedGamesSource.length}
+              consoleCount={contextStats.consoles}
+              noCoverCount={contextStats.noCover}
+              multiDiscCount={contextStats.multiDisc}
+              libraryPath={effectiveLibraryPath}
+              sdFolderName={sdTargetFolderName || selectedFolderName || ''}
+              bufferFolderName={bufferFolderName}
+              bufferItemCount={bufferPreviewItems.length}
+              savedBuilds={savedBuilds}
+              buildPortCount={portMasterBuildSlugs.length}
+              assignedEmulatorCount={Object.keys(starredEmulatorsByConsole || {}).length}
+              customExeCount={Object.values(emulatorCustomPaths || {}).filter(Boolean).length}
+              portCatalogCount={portMasterCatalog.length}
+              libraryPortCount={libraryPortSlugs.length}
+              running={activeRunning}
+              progressPct={activePct}
+              statusText={statusLineText}
+              logs={logs}
+            />
+          )}
+          {!showContextPanel && selectedGame && (() => {
             const resolvedEmu = resolvePriorityEmulatorForConsole(
               selectedGame.consoleShort,
               emulatorCustomPaths,

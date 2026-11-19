@@ -80,6 +80,14 @@
   .aegis-shell .aegis-nav-label { display: inline; }
 }
 .aegis-insp-backdrop { display: none; }
+/* Outside the Library the right column holds section context (WorkbenchContextPanel).
+   Below 1024 px there is no room for it: it is hidden and the descriptions stay inline in the main column. */
+@media (min-width: 1024px) {
+  .aegis-ctx-inline { display: none; }
+}
+@media (max-width: 1023.98px) {
+  .aegis-shell .aegis-insp[data-ctx='true'] { display: none; }
+}
 @media (prefers-reduced-motion: reduce) {
   .aegis-shell .aegis-insp { transition: none; }
 }
