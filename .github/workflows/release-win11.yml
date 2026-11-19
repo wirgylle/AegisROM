@@ -1,11 +1,18 @@
 name: Release (Windows 11 x64)
 
-# Публикация релиза: создать тег vX.Y.Z на коммите в main и запушить его.
-#   git checkout main && git pull
-#   git tag v0.5.5 && git push origin v0.5.5
-# Версия в теге должна совпадать с "version" в package.json.
-
-# Каждый push в dev тоже собирает exe: тестовая сборка в Actions → Artifacts (без публикации).
+# RU: Публикация релиза. Actions → «Release (Windows 11 x64)» → Run workflow,
+#     ветка main, в поле version впиши версию из package.json (например 0.5.5).
+#     Workflow сам создаёт черновик релиза, прикладывает файлы, публикует его и ставит тег vX.Y.Z.
+#     Релиз вручную в интерфейсе Releases не создавай: в репо включены неизменяемые релизы,
+#     к уже опубликованному релизу файлы приложить нельзя.
+# EN: To publish a release: Actions → "Release (Windows 11 x64)" → Run workflow on main,
+#     set version to the package.json version (e.g. 0.5.5). The workflow creates a draft
+#     release, uploads the assets, then publishes it and creates the vX.Y.Z tag.
+#     Don't create the release by hand in the Releases UI: immutable releases are enabled,
+#     so assets can't be added after a release is published.
+#
+# RU: Каждый push в dev собирает тестовый exe: Actions → Artifacts, без публикации.
+# EN: Every push to dev builds a test exe: Actions → Artifacts, nothing is published.
 
 on:
   push:
@@ -14,6 +21,11 @@ on:
     branches:
       - dev
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, without "v" (must match package.json) / Версия без "v", как в package.json'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -29,17 +41,32 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check tag is on main and matches package.json
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Resolve release tag
+        id: rel
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
+          if [ "${GITHUB_REF}" != "${GITHUB_REF#refs/tags/v}" ]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          elif [ -n "$INPUT_VERSION" ]; then
+            if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+              echo "Release must be run on main / Релиз запускается только с main"; exit 1
+            fi
+            echo "tag=v${INPUT_VERSION#v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check release is on main and matches package.json
+        if: steps.rel.outputs.tag != ''
+        env:
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
           PKG="$(node -p "require('./package.json').version")"
-          if [ "$TAG" != "$PKG" ]; then
-            echo "Tag v$TAG does not match package.json version $PKG"; exit 1
+          if [ "${TAG#v}" != "$PKG" ]; then
+            echo "Tag $TAG does not match package.json version $PKG"; exit 1
           fi
           git fetch origin main
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "Tag must point to a commit on main"; exit 1
+            echo "Release commit must be on main"; exit 1
           fi
 
       - name: Setup Node.js 22
@@ -74,24 +101,40 @@ jobs:
             public/downloads/AegisROM-v*-Win11-x64.zip
             public/downloads/version.json
 
-      # Заметки к релизу берутся из docs/releases/<тег>.md, если файл есть.
+      # RU: Заметки к релизу берутся из docs/releases/<тег>.md, если файл есть.
+      # EN: Release notes come from docs/releases/<tag>.md when the file exists.
       - name: Find release notes
         id: notes
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: steps.rel.outputs.tag != ''
+        env:
+          TAG: ${{ steps.rel.outputs.tag }}
         run: |
-          f="docs/releases/${GITHUB_REF_NAME}.md"
+          f="docs/releases/${TAG}.md"
           if [ -f "$f" ]; then echo "path=$f" >> "$GITHUB_OUTPUT"; fi
 
-      - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+      # RU: Сначала черновик: к опубликованному неизменяемому релизу файлы не добавить.
+      # EN: Draft first: assets can't be added to a published immutable release.
+      - name: Create draft release with assets
+        if: steps.rel.outputs.tag != ''
         uses: softprops/action-gh-release@v2
         with:
-          make_latest: true
+          tag_name: ${{ steps.rel.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: AegisROM ${{ steps.rel.outputs.tag }}
+          draft: true
           body_path: ${{ steps.notes.outputs.path }}
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: |
             public/downloads/AegisROM-Setup-v*-Win11-x64.exe
             public/downloads/AegisROM-Portable-Win11-x64.exe
             public/downloads/aegis-scanner-win11-x64.exe
             public/downloads/AegisROM-v*-Win11-x64.zip
             public/downloads/version.json
+
+      - name: Publish release
+        if: steps.rel.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest

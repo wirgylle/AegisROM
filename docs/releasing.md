@@ -22,17 +22,21 @@
 1. Всё, что входит в релиз, смержено в `dev`, проверено, и `dev` смержен в `main` через pull request.
 2. Версия поднята (см. выше) и это уже в `main`.
 3. В `docs/releases/vX.Y.Z.md` лежат заметки к релизу для пользователей: что нового, что в beta, известные проблемы. Workflow поставит их в описание релиза, а под ними добавит автоматический список PR.
-4. Создать и запушить тег на `main`:
+4. GitHub → **Actions** → **Release (Windows 11 x64)** → **Run workflow**. Ветка `main`, в поле `version` впиши версию без `v`, например `0.5.5`.
+5. Workflow проверит, что запуск идёт с `main` и версия совпадает с `package.json`. Затем он соберёт `Setup.exe`, `Portable.exe`, сканер и `.zip`, создаст черновик релиза с этими файлами и заметками, опубликует его и поставит тег `v0.5.5`. Релиз помечается как Latest, поэтому ссылка `releases/latest` всегда ведёт на него.
 
-   ```bash
-   git checkout main
-   git pull
-   git tag v0.5.5
-   git push origin v0.5.5
-   ```
+**Не создавай релиз вручную через Releases → Draft a new release → Publish.** В репозитории включены неизменяемые релизы (immutable releases): к опубликованному релизу файлы приложить уже нельзя, и сборка упадёт. Так случилось с первой попыткой v0.5.4.
 
-5. Workflow проверит, что тег стоит на коммите из `main` и совпадает с версией в `package.json`, соберёт `Setup.exe`, `Portable.exe`, сканер и `.zip` и создаст релиз с автоматическими release notes. Релиз помечается как Latest, поэтому ссылка `releases/latest` всегда ведёт на него (pre-release GitHub в `latest` не учитывает, поэтому флаг не ставится).
+Из терминала можно запушить тег `vX.Y.Z` на коммит в `main` (`git tag v0.5.5 && git push origin v0.5.5`), результат тот же.
 
-Без терминала: GitHub → **Releases** → **Draft a new release** → в поле тега ввести `v0.5.5`, target `main` → **Publish**. Тег создастся и запустит тот же workflow, файлы добавятся в релиз через несколько минут.
+### Releasing (EN)
+
+1. Everything for the release is merged into `dev`, tested, and `dev` is merged into `main` via a pull request.
+2. The version is bumped in `package.json` and that change is on `main`.
+3. User-facing notes are in `docs/releases/vX.Y.Z.md`.
+4. GitHub → **Actions** → **Release (Windows 11 x64)** → **Run workflow** on `main`, with `version` set to the version without `v` (e.g. `0.5.5`).
+5. The workflow checks the version against `package.json`, builds the assets, creates a draft release with them, then publishes it as Latest and creates the `vX.Y.Z` tag.
+
+Don't publish a release by hand in the Releases UI: immutable releases are enabled, so assets can't be attached after publishing. Pushing a `vX.Y.Z` tag on a `main` commit works too.
 
 Ссылка для пользователей на последнюю версию: `https://github.com/wirgylle/AegisROM/releases/latest`.
