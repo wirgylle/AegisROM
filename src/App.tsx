@@ -5715,6 +5715,149 @@ export function App() {
   };
 
   // =========================================================================
+  // 1G1R: ТОЛЬКО ОТБОР ДУБЛЕЙ (без сортировки, переименования и скрапинга)
+  // =========================================================================
+  const handleRun1G1R = async () => {
+    if (isAnyProcessRunning) return;
+    const activeRoms = romsRef.current;
+    if (activeRoms.length === 0) {
+      const msg = t('app.g1r.noRoms');
+      setCurrentActionText(msg);
+      addLog(msg);
+      return;
+    }
+    const activeRoot = rootDirHandle;
+    if (!activeRoot) {
+      const msg = t('app.g1r.noFolder');
+      setCurrentActionText(msg);
+      addLog(msg);
+      return;
+    }
+
+    stopRequestedRef.current = false;
+    setIsOrganizing(true);
+    setProgressPct(0);
+    const startMsg = tf('app.g1r.start', { name: activeRoot.name });
+    setCurrentActionText(startMsg);
+    addLog(startMsg);
+
+    let moved = 0;
+    let noAccess = 0;
+    let failed = 0;
+    const newUndoBatch: UndoAction[] = [];
+    const movedIds = new Set<string>();
+    const touchedDirs = new Set<any>();
+
+    try {
+      // Пересчитываем дубли по текущей библиотеке: статусы могли устареть после переименований.
+      const expanded = expandMultiDiscScannedRoms(activeRoms);
+      const deduped = deduplicateAcrossSubfolders(expanded, getPriorityArray(priorityPreset));
+      const losers = deduped.filter((r) => r.status !== 'verified');
+      const keptCount = deduped.length - losers.length;
+
+      for (let i = 0; i < losers.length; i++) {
+        if (stopRequestedRef.current) break;
+        const r = losers[i];
+        setCurrentActionText(
+          tf('app.g1r.progress', { i: i + 1, total: losers.length, file: r.fileName })
+        );
+        setProgressPct(Math.round(((i + 1) / Math.max(1, losers.length)) * 95));
+
+        if (!r.parentHandle || !r.fileObj) {
+          noAccess++;
+          addLog(tf('app.g1r.noAccessLog', { path: r.relativePath || r.fileName }));
+          continue;
+        }
+
+        try {
+          if (deleteJunkPermanently) {
+            await r.parentHandle.removeEntry(r.fileName);
+            for (const cf of r.companionFiles || []) {
+              try {
+                await r.parentHandle.removeEntry(cf.name);
+              } catch {}
+            }
+            addLog(tf('app.sort.delJunkLog', { path: r.relativePath }));
+          } else {
+            const qFolder =
+              r.status === 'junk_bad_dump' ? '_BadDumps_Junk' : '_Duplicates_1G1R';
+            const qRoot = await activeRoot.getDirectoryHandle(qFolder, { create: true });
+            const targetDirHandle = await qRoot.getDirectoryHandle(r.consoleCode, {
+              create: true,
+            });
+            const dupFileName = `${r.fileName.replace(/\.[^/.]+$/, '')}_${r.headerlessCrc32.slice(
+              0,
+              6
+            )}${normalizeDiskOutputExt(r.extension)}`;
+            await writeRomWithCompanionsToDir(r, targetDirHandle, dupFileName, true);
+            newUndoBatch.push({
+              fromDirHandle: targetDirHandle,
+              fromName: dupFileName,
+              toDirHandle: r.parentHandle,
+              toName: r.fileName,
+              fileData: new ArrayBuffer(0),
+            });
+            addLog(
+              tf('app.sort.movedDupLog', {
+                path: r.relativePath,
+                target: `${qFolder}/${r.consoleCode}`,
+              })
+            );
+          }
+          moved++;
+          movedIds.add(r.id);
+          touchedDirs.add(r.parentHandle);
+        } catch (err) {
+          failed++;
+          addLog(tf('app.g1r.errItemLog', { path: r.relativePath || r.fileName, err: String(err) }));
+        }
+      }
+
+      // Убранные файлы больше не лежат в библиотеке: убираем их из списка.
+      const remaining = collapseMultiDiscScannedRoms(
+        deduped.filter((r) => !movedIds.has(r.id)),
+        filenameConfigRef.current
+      );
+
+      // gamelist.xml переписываем только в папках, откуда что-то ушло.
+      const byConsoleHandle = new Map<any, ScannedRomFile[]>();
+      for (const r of remaining) {
+        if (r.status !== 'verified') continue;
+        const h = r.targetDirHandle || r.parentHandle;
+        if (!h || !touchedDirs.has(h)) continue;
+        const arr = byConsoleHandle.get(h) || [];
+        arr.push(r);
+        byConsoleHandle.set(h, arr);
+      }
+      for (const [cHandle, cRoms] of byConsoleHandle.entries()) {
+        await writeGamelistXmlToHandle(cHandle, cRoms);
+      }
+
+      romsRef.current = remaining;
+      setRoms(remaining);
+      setLastScanMode('replace');
+      setScanRevision((n) => n + 1);
+      if (newUndoBatch.length > 0) setUndoStack(newUndoBatch);
+      syncScannedRomsIntoDb(remaining, activeRoot.name, true);
+
+      const doneMsg = tf(stopRequestedRef.current ? 'app.g1r.stopped' : 'app.g1r.done', {
+        found: losers.length,
+        moved,
+        kept: keptCount,
+        noAccess,
+        failed,
+      });
+      setCurrentActionText(doneMsg);
+      addLog(doneMsg);
+    } catch (err) {
+      addLog(tf('app.g1r.errLog', { err: String(err) }));
+    } finally {
+      setIsOrganizing(false);
+      setProgressPct(100);
+    }
+  };
+
+  // =========================================================================
   // BUFFER AUTO-PROCESSOR (АВТО-РАЗБОР БУФЕРНОЙ ПАПКИ + КОНСТРУКТОР ИМЁН)
   // =========================================================================
   const handleSelectBufferFolder = async () => {
@@ -7543,7 +7686,7 @@ export function App() {
         onScanExternalSourceForDiff={scanExternalSourceForDiff}
         lastScanMode={lastScanMode}
         scanRevision={scanRevision}
-        onOrganizeCatalog={() => handleOrganizeCatalog()}
+        onOrganizeCatalog={() => handleRun1G1R()}
         onGroupMultiDiscFolders={handleGroupMultiDiscFolders}
         autoGroupMultiDisc={autoGroupMultiDisc}
         onChangeAutoGroupMultiDisc={setAutoGroupMultiDisc}
