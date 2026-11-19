@@ -4,35 +4,19 @@
 package main
 
 import (
+	"aegisgui/aegiscore"
 	"aegisgui/cmd/winsetup"
-	"archive/zip"
-	"bytes"
-	"compress/flate"
-	"crypto/md5"
-	"encoding/binary"
-	"encoding/hex"
-	"encoding/json"
-	"encoding/xml"
 	"fmt"
-	"hash/crc32"
-	"image"
-	"image/color"
-	"image/png"
-	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
-	"unicode"
 	"unicode/utf16"
 	"unsafe"
 )
@@ -49,49 +33,49 @@ var (
 	uxtheme  = syscall.NewLazyDLL("uxtheme.dll")
 	comdlg32 = syscall.NewLazyDLL("comdlg32.dll")
 
-	procRegisterClassExW        = user32.NewProc("RegisterClassExW")
-	procCreateWindowExW         = user32.NewProc("CreateWindowExW")
-	procDestroyWindow           = user32.NewProc("DestroyWindow")
-	procDefWindowProcW          = user32.NewProc("DefWindowProcW")
-	procShowWindow              = user32.NewProc("ShowWindow")
-	procUpdateWindow            = user32.NewProc("UpdateWindow")
-	procGetMessageW             = user32.NewProc("GetMessageW")
-	procTranslateMessage        = user32.NewProc("TranslateMessage")
-	procDispatchMessageW        = user32.NewProc("DispatchMessageW")
-	procPostQuitMessage         = user32.NewProc("PostQuitMessage")
-	procSendMessageW            = user32.NewProc("SendMessageW")
-	procPostMessageW            = user32.NewProc("PostMessageW")
-	procSetWindowTextW          = user32.NewProc("SetWindowTextW")
-	procGetWindowTextW          = user32.NewProc("GetWindowTextW")
-	procGetWindowTextLengthW    = user32.NewProc("GetWindowTextLengthW")
-	procEnableWindow            = user32.NewProc("EnableWindow")
-	procMessageBoxW             = user32.NewProc("MessageBoxW")
-	procLoadCursorW             = user32.NewProc("LoadCursorW")
-	procLoadIconW               = user32.NewProc("LoadIconW")
-	procGetClientRect           = user32.NewProc("GetClientRect")
-	procMoveWindow              = user32.NewProc("MoveWindow")
-	procInvalidateRect          = user32.NewProc("InvalidateRect")
+	procRegisterClassExW     = user32.NewProc("RegisterClassExW")
+	procCreateWindowExW      = user32.NewProc("CreateWindowExW")
+	procDestroyWindow        = user32.NewProc("DestroyWindow")
+	procDefWindowProcW       = user32.NewProc("DefWindowProcW")
+	procShowWindow           = user32.NewProc("ShowWindow")
+	procUpdateWindow         = user32.NewProc("UpdateWindow")
+	procGetMessageW          = user32.NewProc("GetMessageW")
+	procTranslateMessage     = user32.NewProc("TranslateMessage")
+	procDispatchMessageW     = user32.NewProc("DispatchMessageW")
+	procPostQuitMessage      = user32.NewProc("PostQuitMessage")
+	procSendMessageW         = user32.NewProc("SendMessageW")
+	procPostMessageW         = user32.NewProc("PostMessageW")
+	procSetWindowTextW       = user32.NewProc("SetWindowTextW")
+	procGetWindowTextW       = user32.NewProc("GetWindowTextW")
+	procGetWindowTextLengthW = user32.NewProc("GetWindowTextLengthW")
+	procEnableWindow         = user32.NewProc("EnableWindow")
+	procMessageBoxW          = user32.NewProc("MessageBoxW")
+	procLoadCursorW          = user32.NewProc("LoadCursorW")
+	procLoadIconW            = user32.NewProc("LoadIconW")
+	procGetClientRect        = user32.NewProc("GetClientRect")
+	procMoveWindow           = user32.NewProc("MoveWindow")
+	procInvalidateRect       = user32.NewProc("InvalidateRect")
 
-	procGetModuleHandleW        = kernel32.NewProc("GetModuleHandleW")
+	procGetModuleHandleW = kernel32.NewProc("GetModuleHandleW")
 
-	procCreateFontW             = gdi32.NewProc("CreateFontW")
-	procCreateSolidBrush        = gdi32.NewProc("CreateSolidBrush")
-	procSetTextColor            = gdi32.NewProc("SetTextColor")
-	procSetBkColor              = gdi32.NewProc("SetBkColor")
-	procSetBkMode               = gdi32.NewProc("SetBkMode")
+	procCreateFontW      = gdi32.NewProc("CreateFontW")
+	procCreateSolidBrush = gdi32.NewProc("CreateSolidBrush")
+	procSetTextColor     = gdi32.NewProc("SetTextColor")
+	procSetBkColor       = gdi32.NewProc("SetBkColor")
+	procSetBkMode        = gdi32.NewProc("SetBkMode")
 
-	procInitCommonControlsEx    = comctl32.NewProc("InitCommonControlsEx")
+	procInitCommonControlsEx = comctl32.NewProc("InitCommonControlsEx")
 
-	procSHBrowseForFolderW      = shell32.NewProc("SHBrowseForFolderW")
-	procSHGetPathFromIDListW    = shell32.NewProc("SHGetPathFromIDListW")
-	procShellExecuteW           = shell32.NewProc("ShellExecuteW")
+	procSHBrowseForFolderW   = shell32.NewProc("SHBrowseForFolderW")
+	procSHGetPathFromIDListW = shell32.NewProc("SHGetPathFromIDListW")
+	procShellExecuteW        = shell32.NewProc("ShellExecuteW")
 
-	procCoInitializeEx          = ole32.NewProc("CoInitializeEx")
-	procCoTaskMemFree           = ole32.NewProc("CoTaskMemFree")
+	procCoInitializeEx = ole32.NewProc("CoInitializeEx")
+	procCoTaskMemFree  = ole32.NewProc("CoTaskMemFree")
 
-	procDwmSetWindowAttribute   = dwmapi.NewProc("DwmSetWindowAttribute")
-	procSetWindowTheme          = uxtheme.NewProc("SetWindowTheme")
-	procGetOpenFileNameW        = comdlg32.NewProc("GetOpenFileNameW")
+	procDwmSetWindowAttribute = dwmapi.NewProc("DwmSetWindowAttribute")
+	procSetWindowTheme        = uxtheme.NewProc("SetWindowTheme")
+	procGetOpenFileNameW      = comdlg32.NewProc("GetOpenFileNameW")
 )
 
 // Win32 Constants
@@ -144,17 +128,17 @@ const (
 	WM_APP             = 0x8000
 
 	// Win32 Native Tooltip Constants (tooltips_class32)
-	TTS_ALWAYSTIP       = 0x01
-	TTS_NOPREFIX        = 0x02
-	TTS_BALLOON         = 0x40
-	TTF_IDISHWND        = 0x0001
-	TTF_SUBCLASS        = 0x0010
-	TTM_ACTIVATE        = WM_USER + 1
-	TTM_SETDELAYTIME    = WM_USER + 3
-	TTM_SETMAXTIPWIDTH  = WM_USER + 24
-	TTM_ADDTOOLW        = WM_USER + 50
-	TTDT_AUTOPOP        = 2
-	TTDT_INITIAL        = 3
+	TTS_ALWAYSTIP      = 0x01
+	TTS_NOPREFIX       = 0x02
+	TTS_BALLOON        = 0x40
+	TTF_IDISHWND       = 0x0001
+	TTF_SUBCLASS       = 0x0010
+	TTM_ACTIVATE       = WM_USER + 1
+	TTM_SETDELAYTIME   = WM_USER + 3
+	TTM_SETMAXTIPWIDTH = WM_USER + 24
+	TTM_ADDTOOLW       = WM_USER + 50
+	TTDT_AUTOPOP       = 2
+	TTDT_INITIAL       = 3
 
 	WM_APP_SCAN_DONE        = WM_APP + 1
 	WM_APP_ORGANIZE_DONE    = WM_APP + 2
@@ -395,774 +379,22 @@ type OPENFILENAMEW struct {
 	FlagsEx           uint32
 }
 
-type ConsoleMeta struct {
-	Code             string
-	DisplayName      string
-	GenerationFolder string
-	LibretroSystem   string
-	ArchiveVideoID   string
-}
-
-var consoleCatalog = map[string]ConsoleMeta{
-	"nes": {
-		Code:             "nes",
-		DisplayName:      "Nintendo NES / Dendy",
-		GenerationFolder: "1_8bit (NES, Famicom, MasterSystem, Atari)",
-		LibretroSystem:   "Nintendo - Nintendo Entertainment System",
-		ArchiveVideoID:   "nessnaps",
-	},
-	"famicom": {
-		Code:             "famicom",
-		DisplayName:      "Nintendo Famicom",
-		GenerationFolder: "1_8bit (NES, Famicom, MasterSystem, Atari)",
-		LibretroSystem:   "Nintendo - Nintendo Entertainment System",
-		ArchiveVideoID:   "NintendoFamicomVideoSnaps",
-	},
-	"fds": {
-		Code:             "fds",
-		DisplayName:      "Famicom Disk System",
-		GenerationFolder: "1_8bit (NES, Famicom, MasterSystem, Atari)",
-		LibretroSystem:   "Nintendo - Family Computer Disk System",
-		ArchiveVideoID:   "nessnaps",
-	},
-	"mastersystem": {
-		Code:             "mastersystem",
-		DisplayName:      "Sega Master System",
-		GenerationFolder: "1_8bit (NES, Famicom, MasterSystem, Atari)",
-		LibretroSystem:   "Sega - Master System - Mark III",
-		ArchiveVideoID:   "mastersystemsnaps",
-	},
-	"atari2600": {
-		Code:             "atari2600",
-		DisplayName:      "Atari 2600",
-		GenerationFolder: "1_8bit (NES, Famicom, MasterSystem, Atari)",
-		LibretroSystem:   "Atari - 2600",
-		ArchiveVideoID:   "atari7800snaps",
-	},
-	"atari7800": {
-		Code:             "atari7800",
-		DisplayName:      "Atari 7800",
-		GenerationFolder: "1_8bit (NES, Famicom, MasterSystem, Atari)",
-		LibretroSystem:   "Atari - 7800",
-		ArchiveVideoID:   "atari7800snaps",
-	},
-	"snes": {
-		Code:             "snes",
-		DisplayName:      "Super Nintendo (SNES / SFC)",
-		GenerationFolder: "2_16bit (SNES, MegaDrive, PCEngine, Arcade)",
-		LibretroSystem:   "Nintendo - Super Nintendo Entertainment System",
-		ArchiveVideoID:   "snapssnaps",
-	},
-	"genesis": {
-		Code:             "genesis",
-		DisplayName:      "Sega Mega Drive / Genesis",
-		GenerationFolder: "2_16bit (SNES, MegaDrive, PCEngine, Arcade)",
-		LibretroSystem:   "Sega - Mega Drive - Genesis",
-		ArchiveVideoID:   "genesissnaps",
-	},
-	"pcengine": {
-		Code:             "pcengine",
-		DisplayName:      "NEC PC Engine / TurboGrafx-16",
-		GenerationFolder: "2_16bit (SNES, MegaDrive, PCEngine, Arcade)",
-		LibretroSystem:   "NEC - PC Engine - TurboGrafx 16",
-		ArchiveVideoID:   "pcenginesnaps",
-	},
-	"sega32x": {
-		Code:             "sega32x",
-		DisplayName:      "Sega 32X",
-		GenerationFolder: "2_16bit (SNES, MegaDrive, PCEngine, Arcade)",
-		LibretroSystem:   "Sega - 32X",
-		ArchiveVideoID:   "32xsnaps",
-	},
-	"arcade": {
-		Code:             "arcade",
-		DisplayName:      "Arcade / FBNeo / NeoGeo",
-		GenerationFolder: "2_16bit (SNES, MegaDrive, PCEngine, Arcade)",
-		LibretroSystem:   "FBNeo - Arcade Games",
-		ArchiveVideoID:   "neogeosnaps_202302",
-	},
-	"gb": {
-		Code:             "gb",
-		DisplayName:      "Nintendo Game Boy",
-		GenerationFolder: "3_Portable (GB, GBC, GBA, NDS, PSP, GameGear)",
-		LibretroSystem:   "Nintendo - Game Boy",
-		ArchiveVideoID:   "gbcsnaps",
-	},
-	"gbc": {
-		Code:             "gbc",
-		DisplayName:      "Nintendo Game Boy Color",
-		GenerationFolder: "3_Portable (GB, GBC, GBA, NDS, PSP, GameGear)",
-		LibretroSystem:   "Nintendo - Game Boy Color",
-		ArchiveVideoID:   "gbcsnaps",
-	},
-	"gba": {
-		Code:             "gba",
-		DisplayName:      "Nintendo Game Boy Advance",
-		GenerationFolder: "3_Portable (GB, GBC, GBA, NDS, PSP, GameGear)",
-		LibretroSystem:   "Nintendo - Game Boy Advance",
-		ArchiveVideoID:   "gbasnaps",
-	},
-	"nds": {
-		Code:             "nds",
-		DisplayName:      "Nintendo DS",
-		GenerationFolder: "3_Portable (GB, GBC, GBA, NDS, PSP, GameGear)",
-		LibretroSystem:   "Nintendo - Nintendo DS",
-		ArchiveVideoID:   "gbasnaps",
-	},
-	"psp": {
-		Code:             "psp",
-		DisplayName:      "Sony PlayStation Portable (PSP)",
-		GenerationFolder: "3_Portable (GB, GBC, GBA, NDS, PSP, GameGear)",
-		LibretroSystem:   "Sony - PlayStation Portable",
-		ArchiveVideoID:   "SonyPSPVideoSnaps",
-	},
-	"gamegear": {
-		Code:             "gamegear",
-		DisplayName:      "Sega Game Gear",
-		GenerationFolder: "3_Portable (GB, GBC, GBA, NDS, PSP, GameGear)",
-		LibretroSystem:   "Sega - Game Gear",
-		ArchiveVideoID:   "gamegearsnaps",
-	},
-	"lynx": {
-		Code:             "lynx",
-		DisplayName:      "Atari Lynx",
-		GenerationFolder: "3_Portable (GB, GBC, GBA, NDS, PSP, GameGear)",
-		LibretroSystem:   "Atari - Lynx",
-		ArchiveVideoID:   "atari7800snaps",
-	},
-	"psx": {
-		Code:             "psx",
-		DisplayName:      "Sony PlayStation 1",
-		GenerationFolder: "4_32_64bit_3D (PlayStation 1, Nintendo 64)",
-		LibretroSystem:   "Sony - PlayStation",
-		ArchiveVideoID:   "SonyPlaystationVideoSnaps",
-	},
-	"n64": {
-		Code:             "n64",
-		DisplayName:      "Nintendo 64",
-		GenerationFolder: "4_32_64bit_3D (PlayStation 1, Nintendo 64)",
-		LibretroSystem:   "Nintendo - Nintendo 64",
-		ArchiveVideoID:   "n64snaps",
-	},
-}
-
-var extToDefaultConsole = map[string]string{
-	".sfc": "snes", ".smc": "snes", ".fig": "snes", ".swc": "snes",
-	".nes": "nes", ".unf": "nes",
-	".fds": "fds",
-	".md":  "genesis", ".gen": "genesis", ".smd": "genesis", ".bin": "genesis",
-	".32x": "sega32x",
-	".sms": "mastersystem",
-	".gg":  "gamegear",
-	".gba": "gba", ".agb": "gba",
-	".gb":  "gb",
-	".gbc": "gbc",
-	".z64": "n64", ".n64": "n64", ".v64": "n64",
-	".nds": "nds",
-	".iso": "psx", ".cue": "psx", ".chd": "psx", ".img": "psx", ".mdf": "psx", ".pbp": "psx", ".m3u": "psx", ".ccd": "psx",
-	".cso": "psp",
-	".pce": "pcengine", ".sgx": "pcengine",
-	".a26": "atari2600",
-	".a78": "atari7800",
-	".lnx": "lynx",
-}
-
-// Built-in PlayStation 1 Serial Database for instant offline recognition of numbered 000001/000002/0001 PS1 discs
-var ps1SerialToTitle = map[string]string{
-	// Resident Evil / Dino Crisis / Silent Hill / Survival Horror
-	"SLUS00170": "Resident Evil (USA)",
-	"SLUS00551": "Resident Evil - Director's Cut (USA)",
-	"SLUS00747": "Resident Evil - Director's Cut DualShock (USA)",
-	"SLUS00748": "Resident Evil 2 (USA) (Disc 1)",
-	"SLUS00756": "Resident Evil 2 (USA) (Disc 2)",
-	"SLUS00922": "Resident Evil 3 - Nemesis (USA)",
-	"SLUS01045": "Resident Evil Survivor (USA)",
-	"SLES00200": "Resident Evil (Europe)",
-	"SLES00969": "Resident Evil - Director's Cut (Europe)",
-	"SLES00972": "Resident Evil 2 (Europe) (Disc 1)",
-	"SLES10972": "Resident Evil 2 (Europe) (Disc 2)",
-	"SLES02529": "Resident Evil 3 - Nemesis (Europe)",
-	"SLPS00222": "Biohazard (Japan)",
-	"SLPS01222": "Biohazard 2 (Japan)",
-	"SLPS02300": "Biohazard 3 - Last Escape (Japan)",
-	"SLUS00707": "Silent Hill (USA)",
-	"SLUS00776": "Silent Hill (USA)",
-	"SLES01514": "Silent Hill (Europe)",
-	"SLPM86192": "Silent Hill (Japan)",
-	"SLUS00920": "Dino Crisis (USA)",
-	"SLUS01279": "Dino Crisis 2 (USA)",
-	"SLES02207": "Dino Crisis (Europe)",
-	"SLES03221": "Dino Crisis 2 (Europe)",
-	"SLPS02180": "Dino Crisis (Japan)",
-	"SLPM86627": "Dino Crisis 2 (Japan)",
-	"SLUS00662": "Parasite Eve (USA) (Disc 1)",
-	"SLUS00668": "Parasite Eve (USA) (Disc 2)",
-	"SLUS01042": "Parasite Eve II (USA) (Disc 1)",
-	"SLUS01055": "Parasite Eve II (USA) (Disc 2)",
-	"SLES02558": "Parasite Eve II (Europe) (Disc 1)",
-	"SLES12558": "Parasite Eve II (Europe) (Disc 2)",
-	"SLUS01201": "Alone in the Dark - The New Nightmare (USA) (Disc 1)",
-	"SLUS01377": "Alone in the Dark - The New Nightmare (USA) (Disc 2)",
-	"SLES02801": "Alone in the Dark - The New Nightmare (Europe)",
-	"SLUS00124": "Alone in the Dark - One-Eyed Jack's Revenge (USA)",
-	"SLUS00442": "Clock Tower (USA)",
-	"SLUS00695": "Clock Tower II - The Struggle Within (USA)",
-	"SLUS01128": "Countdown Vampires (USA)",
-	"SLUS01064": "Galerians (USA)",
-	"SLUS00956": "Fear Effect (USA)",
-	"SLUS01266": "Fear Effect 2 - Retro Helix (USA)",
-	"SLUS00654": "Nightmare Creatures (USA)",
-	"SLUS01112": "Nightmare Creatures II (USA)",
-	"SLUS01334": "Martian Gothic - Unification (USA)",
-	"SLUS01324": "Evil Dead - Hail to the King (USA)",
-
-	// Tekken / Mortal Kombat / Street Fighter / Fighting
-	"SLUS00006": "Tekken (USA)",
-	"SLUS00213": "Tekken 2 (USA)",
-	"SLUS00402": "Tekken 3 (USA)",
-	"SCES00005": "Tekken (Europe)",
-	"SCES00255": "Tekken 2 (Europe)",
-	"SCES01237": "Tekken 3 (Europe)",
-	"SLPS00001": "Tekken (Japan)",
-	"SLPS00300": "Tekken 2 (Japan)",
-	"SLPS01300": "Tekken 3 (Japan)",
-	"SLUS00079": "Mortal Kombat 3 (USA)",
-	"SLUS00330": "Mortal Kombat Trilogy (USA)",
-	"SLUS00605": "Mortal Kombat 4 (USA)",
-	"SLUS00476": "Mortal Kombat Mythologies - Sub-Zero (USA)",
-	"SLUS00824": "Mortal Kombat - Special Forces (USA)",
-	"SLES00060": "Mortal Kombat 3 (Europe)",
-	"SLES00529": "Mortal Kombat Trilogy (Europe)",
-	"SLES01342": "Mortal Kombat 4 (Europe)",
-	"SLUS00197": "Street Fighter Alpha - Warriors' Dreams (USA)",
-	"SLUS00258": "Street Fighter Alpha 2 (USA)",
-	"SLUS00821": "Street Fighter Alpha 3 (USA)",
-	"SLUS00548": "Street Fighter EX Plus Alpha (USA)",
-	"SLUS01105": "Street Fighter EX2 Plus (USA)",
-	"SLUS00423": "Street Fighter Collection (USA)",
-	"SLUS00800": "Marvel Super Heroes vs. Street Fighter (USA)",
-	"SLUS01059": "Marvel vs. Capcom - Clash of Super Heroes (USA)",
-	"SLUS00263": "Marvel Super Heroes (USA)",
-	"SLUS00627": "X-Men vs. Street Fighter (USA)",
-	"SLUS00047": "X-Men - Children of the Atom (USA)",
-	"SLUS00786": "X-Men - Mutant Academy (USA)",
-	"SLUS01382": "X-Men - Mutant Academy 2 (USA)",
-	"SLUS00414": "Soul Blade (USA)",
-	"SCES00577": "Soul Blade (Europe)",
-	"SLUS00606": "Dead or Alive (USA)",
-	"SLES01258": "Dead or Alive (Europe)",
-	"SLUS00665": "Bloody Roar (USA)",
-	"SCUS94424": "Bloody Roar II (USA)",
-	"SLES01925": "Bloody Roar II (Europe)",
-	"SLUS00694": "Rival Schools - United by Fate (USA)",
-	"SLUS00765": "Bushido Blade 2 (USA)",
-	"SCUS94180": "Bushido Blade (USA)",
-	"SLUS00018": "Battle Arena Toshinden (USA)",
-	"SLUS00220": "Battle Arena Toshinden 2 (USA)",
-	"SLUS00483": "Battle Arena Toshinden 3 (USA)",
-	"SLUS00733": "Guilty Gear (USA)",
-	"SLUS00559": "Gundam Battle Assault (USA)",
-	"SLUS01418": "Gundam Battle Assault 2 (USA)",
-	"SLUS00816": "WWF Attitude (USA)",
-	"SLUS00868": "WWF War Zone (USA)",
-	"SLUS00927": "WWF SmackDown! (USA)",
-	"SLUS01234": "WWF SmackDown! 2 - Know Your Role (USA)",
-	"SLES02619": "WWF SmackDown! (Europe)",
-	"SLES03252": "WWF SmackDown! 2 - Know Your Role (Europe)",
-	"SLUS00914": "WCW Mayhem (USA)",
-	"SLUS00718": "WCW Nitro (USA)",
-	"SLUS01092": "Capcom vs. SNK Pro (USA)",
-	"SLUS00682": "King of Fighters '95, The (USA)",
-	"SLUS00832": "King of Fighters '99, The (USA)",
-	"SLUS01153": "Dragon Ball GT - Final Bout (USA)",
-	"SLUS01493": "Dragon Ball Z - Ultimate Battle 22 (USA)",
-	"SLUS00711": "Ehrgeiz - God Bless the Ring (USA)",
-	"SCUS94240": "Cardinal Syn (USA)",
-	"SLUS00692": "Wu-Tang - Shaolin Style (USA)",
-	"SLUS00789": "Thrill Kill (USA)",
-
-	// Crash Bandicoot / Spyro / Platformers
-	"SCUS94900": "Crash Bandicoot (USA)",
-	"SCUS94154": "Crash Bandicoot 2 - Cortex Strikes Back (USA)",
-	"SCUS94244": "Crash Bandicoot - Warped (USA)",
-	"SCUS94426": "Crash Team Racing (USA)",
-	"SCUS94571": "Crash Bash (USA)",
-	"SCES00344": "Crash Bandicoot (Europe)",
-	"SCES00967": "Crash Bandicoot 2 - Cortex Strikes Back (Europe)",
-	"SCES01420": "Crash Bandicoot 3 - Warped (Europe)",
-	"SCES02105": "Crash Team Racing (Europe)",
-	"SCES02834": "Crash Bash (Europe)",
-	"SCPS10031": "Crash Bandicoot (Japan)",
-	"SCPS10047": "Crash Bandicoot 2 (Japan)",
-	"SCPS10073": "Crash Bandicoot 3 (Japan)",
-	"SCPS10118": "Crash Bandicoot Racing (Japan)",
-	"SCUS94228": "Spyro the Dragon (USA)",
-	"SCUS94425": "Spyro 2 - Ripto's Rage! (USA)",
-	"SCUS94467": "Spyro - Year of the Dragon (USA)",
-	"SCES01438": "Spyro the Dragon (Europe)",
-	"SCES02104": "Spyro 2 - Gateway to Glimmer (Europe)",
-	"SCES02835": "Spyro - Year of the Dragon (Europe)",
-	"SLUS00005": "Rayman (USA)",
-	"SLUS01235": "Rayman 2 - The Great Escape (USA)",
-	"SLUS01265": "Rayman Brain Games (USA)",
-	"SLUS01354": "Rayman Rush (USA)",
-	"SLES00049": "Rayman (Europe)",
-	"SLES02908": "Rayman 2 - The Great Escape (Europe)",
-	"SLUS00349": "Croc - Legend of the Gobbos (USA)",
-	"SLUS00634": "Croc 2 (USA)",
-	"SLES00593": "Croc - Legend of the Gobbos (Europe)",
-	"SLES02088": "Croc 2 (Europe)",
-	"SLUS00592": "Gex - Enter the Gecko (USA)",
-	"SLUS00806": "Gex 3 - Deep Cover Gecko (USA)",
-	"SLUS00042": "Gex (USA)",
-	"SCUS94227": "MediEvil (USA)",
-	"SCUS94564": "MediEvil II (USA)",
-	"SCES00311": "MediEvil (Europe)",
-	"SCES02544": "MediEvil 2 (Europe)",
-	"SCUS94190": "Oddworld - Abe's Oddysee (USA)",
-	"SLUS00710": "Oddworld - Abe's Exoddus (USA)",
-	"SLES00839": "Oddworld - Abe's Oddysee (Europe)",
-	"SLES01480": "Oddworld - Abe's Exoddus (Europe)",
-	"SCUS94409": "Ape Escape (USA)",
-	"SCES01564": "Ape Escape (Europe)",
-	"SCUS94103": "Jumping Flash! (USA)",
-	"SCUS94109": "Jumping Flash! 2 (USA)",
-	"SCUS94608": "Tomba! (USA)",
-	"SCUS94454": "Tomba! 2 - The Evil Swine Return (USA)",
-	"SLUS00530": "Klonoa - Door to Phantomile (USA)",
-	"SLUS00456": "Pandemonium! (USA)",
-	"SLUS00576": "Pandemonium 2 (USA)",
-	"SLUS00670": "Heart of Darkness (USA)",
-	"SLUS00585": "Skullmonkeys (USA)",
-	"SLUS00714": "Bugs Bunny - Lost in Time (USA)",
-	"SLUS01176": "Bugs Bunny & Taz - Time Busters (USA)",
-	"SLUS01148": "Sheep, Dog 'n' Wolf (USA)",
-	"SLUS00884": "Tarzan (USA)",
-	"SLUS00611": "Hercules (USA)",
-	"SLES00898": "Disney's Hercules (Europe)",
-	"SLUS00991": "Toy Story 2 - Buzz Lightyear to the Rescue! (USA)",
-	"SLUS01206": "Aladdin in Nasira's Revenge (USA)",
-	"SLUS01156": "Emperor's New Groove, The (USA)",
-	"SLUS01396": "Monsters, Inc. - Scream Team (USA)",
-	"SLUS01451": "Lilo & Stitch (USA)",
-	"SLUS00888": "A Bug's Life (USA)",
-	"SLUS01070": "102 Dalmatians - Puppies to the Rescue (USA)",
-	"SLUS00766": "Pac-Man World (USA)",
-	"SLUS01061": "Mega Man X4 (USA)",
-	"SLUS01213": "Mega Man X5 (USA)",
-	"SLUS01395": "Mega Man X6 (USA)",
-	"SLUS00561": "Mega Man X4 (USA)",
-	"SLUS00451": "Mega Man 8 (USA)",
-	"SLUS00603": "Mega Man Legends (USA)",
-	"SLUS01140": "Mega Man Legends 2 (USA)",
-
-	// Castlevania / Metal Gear / Action-Adventure / Stealth / Tomb Raider
-	"SLUS00067": "Castlevania - Symphony of the Night (USA)",
-	"SLES00524": "Castlevania - Symphony of the Night (Europe)",
-	"SLPM86023": "Akumajou Dracula X - Gekka no Yasoukyoku (Japan)",
-	"SLUS01384": "Castlevania Chronicles (USA)",
-	"SLUS00594": "Metal Gear Solid (USA) (Disc 1)",
-	"SLUS00776_2": "Metal Gear Solid (USA) (Disc 2)",
-	"SLUS00957": "Metal Gear Solid - VR Missions (USA)",
-	"SLES01370": "Metal Gear Solid (Europe) (Disc 1)",
-	"SLES11370": "Metal Gear Solid (Europe) (Disc 2)",
-	"SLPM86114": "Metal Gear Solid (Japan)",
-	"SLUS00339": "Tomb Raider (USA)",
-	"SLUS00437": "Tomb Raider II (USA)",
-	"SLUS00691": "Tomb Raider III - Adventures of Lara Croft (USA)",
-	"SLUS00885": "Tomb Raider - The Last Revelation (USA)",
-	"SLUS01311": "Tomb Raider Chronicles (USA)",
-	"SLES00024": "Tomb Raider (Europe)",
-	"SLES00718": "Tomb Raider II (Europe)",
-	"SLES01649": "Tomb Raider III (Europe)",
-	"SLES02238": "Tomb Raider - The Last Revelation (Europe)",
-	"SLES03331": "Tomb Raider Chronicles (Europe)",
-	"SCUS94423": "Syphon Filter (USA)",
-	"SCUS94451": "Syphon Filter 2 (USA) (Disc 1)",
-	"SCUS94492": "Syphon Filter 2 (USA) (Disc 2)",
-	"SCUS94640": "Syphon Filter 3 (USA)",
-	"SCES01910": "Syphon Filter (Europe)",
-	"SCES02608": "Syphon Filter 2 (Europe)",
-	"SCES03697": "Syphon Filter 3 (Europe)",
-	"SLUS00708": "Legacy of Kain - Soul Reaver (USA)",
-	"SLES01301": "Legacy of Kain - Soul Reaver (Europe)",
-	"SLUS00027": "Blood Omen - Legacy of Kain (USA)",
-	"SLUS00664": "Tenchu - Stealth Assassins (USA)",
-	"SLUS00706": "Tenchu - Stealth Assassins (USA)",
-	"SLUS00939": "Tenchu 2 - Birth of the Stealth Assassins (USA)",
-	"SLES01395": "Tenchu - Stealth Assassins (Europe)",
-	"SLES02899": "Tenchu 2 - Birth of the Stealth Assassins (Europe)",
-	"SLUS01115": "Spider-Man (USA)",
-	"SLUS01378": "Spider-Man 2 - Enter Electro (USA)",
-	"SLES02886": "Spider-Man (Europe)",
-	"SLES03623": "Spider-Man 2 - Enter Electro (Europe)",
-	"SLUS00453": "Fighting Force (USA)",
-	"SLUS00934": "Fighting Force 2 (USA)",
-	"SLES00704": "Fighting Force (Europe)",
-	"SLUS01098": "Jackie Chan Stuntmaster (USA)",
-	"SLES01444": "Jackie Chan Stuntmaster (Europe)",
-	"SLUS00739": "Pepsiman (Japan)",
-	"SLPS01762": "Pepsiman (Japan)",
-	"SLUS01182": "Blade (USA)",
-	"SLUS00642": "Apocalypse (USA)",
-	"SCUS94555": "C-12 - Final Resistance (USA)",
-	"SLUS00974": "Urban Chaos (USA)",
-
-	// James Bond 007 (Protected against 007 loop!)
-	"SLUS00975": "007 - Tomorrow Never Dies (USA)",
-	"SLUS01272": "007 - The World Is Not Enough (USA)",
-	"SLUS01268": "007 Racing (USA)",
-	"SLES02275": "007 - Tomorrow Never Dies (Europe)",
-	"SLES03134": "007 - The World Is Not Enough (Europe)",
-	"SLES03249": "007 Racing (Europe)",
-
-	// Gran Turismo / Need for Speed / Driver / Twisted Metal / Racing & Vehicular Combat
-	"SCUS94194": "Gran Turismo (USA)",
-	"SCUS94455": "Gran Turismo 2 (USA) (Arcade Mode)",
-	"SCUS94488": "Gran Turismo 2 (USA) (Simulation Mode)",
-	"SCES00984": "Gran Turismo (Europe)",
-	"SCES02380": "Gran Turismo 2 (Europe)",
-	"SCPS10045": "Gran Turismo (Japan)",
-	"SCPS10116": "Gran Turismo 2 (Japan)",
-	"SLUS00204": "Need for Speed, The (USA)",
-	"SLUS00276": "Need for Speed II (USA)",
-	"SLUS00619": "Need for Speed III - Hot Pursuit (USA)",
-	"SLUS00826": "Need for Speed - High Stakes (USA)",
-	"SLUS01104": "Need for Speed - Porsche Unleashed (USA)",
-	"SLUS00590": "Need for Speed - V-Rally (USA)",
-	"SLUS01003": "Need for Speed - V-Rally 2 (USA)",
-	"SLES01156": "Need for Speed III - Hot Pursuit (Europe)",
-	"SLES01729": "Need for Speed - Road Challenge (Europe)",
-	"SLES02559": "Need for Speed - Porsche 2000 (Europe)",
-	"SLUS00797": "Driver - You Are the Wheelman (USA)",
-	"SLUS01161": "Driver 2 (USA) (Disc 1)",
-	"SLUS01318": "Driver 2 (USA) (Disc 2)",
-	"SLES01816": "Driver (Europe)",
-	"SLES02993": "Driver 2 (Europe)",
-	"SCUS94301": "Twisted Metal (USA)",
-	"SCUS94304": "Twisted Metal 2 (USA)",
-	"SCUS94249": "Twisted Metal III (USA)",
-	"SCUS94560": "Twisted Metal 4 (USA)",
-	"SCUS94642": "Twisted Metal - Small Brawl (USA)",
-	"SCES00061": "Twisted Metal (Europe)",
-	"SCES00466": "Twisted Metal 2 (Europe)",
-	"SLUS00510": "Vigilante 8 (USA)",
-	"SLUS01040": "Vigilante 8 - 2nd Offense (USA)",
-	"SLES01215": "Vigilante 8 (Europe)",
-	"SLES02165": "Vigilante 8 - 2nd Offense (Europe)",
-	"SLUS00865": "Rogue Trip - Vacation 2012 (USA)",
-	"SLUS00038": "Road Rash (USA)",
-	"SLUS00525": "Road Rash 3D (USA)",
-	"SLUS00969": "Road Rash - Jailbreak (USA)",
-	"SLES00138": "Road Rash (Europe)",
-	"SLES01157": "Road Rash 3D (Europe)",
-	"SLUS00001": "Ridge Racer (USA)",
-	"SLUS00214": "Ridge Racer Revolution (USA)",
-	"SLUS00403": "Rage Racer (USA)",
-	"SLUS00790": "R4 - Ridge Racer Type 4 (USA)",
-	"SCES00001": "Ridge Racer (Europe)",
-	"SCES01706": "Ridge Racer Type 4 (Europe)",
-	"SLUS00643": "Colin McRae Rally (USA)",
-	"SLUS01222": "Colin McRae Rally 2.0 (USA)",
-	"SLES00477": "Colin McRae Rally (Europe)",
-	"SLES02605": "Colin McRae Rally 2.0 (Europe)",
-	"SCUS94903": "WipEout (USA)",
-	"SCUS94351": "WipEout XL (USA)",
-	"SLUS00867": "WipEout 3 (USA)",
-	"SCES00010": "WipEout (Europe)",
-	"SCES00327": "WipEout 2097 (Europe)",
-	"SCES01909": "WipEout 3 (Europe)",
-	"SLUS00757": "Test Drive 5 (USA)",
-	"SLUS00948": "Test Drive 6 (USA)",
-	"SLUS00918": "Sled Storm (USA)",
-	"SCUS94196": "Jet Moto (USA)",
-	"SCUS94167": "Jet Moto 2 (USA)",
-	"SCUS94293": "Jet Moto 3 (USA)",
-	"SLUS00637": "NASCAR Rumble (USA)",
-	"SLUS00907": "Re-Volt (USA)",
-	"SLUS01019": "Destruction Derby Raw (USA)",
-	"SCUS94302": "Destruction Derby (USA)",
-	"SCUS94350": "Destruction Derby 2 (USA)",
-	"SLUS00760": "Carmageddon (Europe)",
-	"SLES01960": "Carmageddon (Europe)",
-	"SLUS01237": "Hot Wheels Turbo Racing (USA)",
-	"SLUS01195": "Looney Tunes Racing (USA)",
-	"SLUS01095": "Woody Woodpecker Racing (USA)",
-	"SLUS00805": "South Park Rally (USA)",
-	"SLUS01142": "Walt Disney World Quest - Magical Racing Tour (USA)",
-	"SLUS00999": "Speed Punks (USA)",
-	"SCES02546": "Speed Freaks (Europe)",
-	"SLUS01381": "Smuggler's Run (USA)",
-	"SLUS01391": "Italian Job, The (USA)",
-
-	// Final Fantasy / Diablo / RPGs / Strategy
-	"SCUS94163": "Final Fantasy VII (USA) (Disc 1)",
-	"SCUS94164": "Final Fantasy VII (USA) (Disc 2)",
-	"SCUS94165": "Final Fantasy VII (USA) (Disc 3)",
-	"SLUS00892": "Final Fantasy VIII (USA) (Disc 1)",
-	"SLUS00908": "Final Fantasy VIII (USA) (Disc 2)",
-	"SLUS00909": "Final Fantasy VIII (USA) (Disc 3)",
-	"SLUS00910": "Final Fantasy VIII (USA) (Disc 4)",
-	"SLUS01251": "Final Fantasy IX (USA) (Disc 1)",
-	"SLUS01295": "Final Fantasy IX (USA) (Disc 2)",
-	"SLUS01296": "Final Fantasy IX (USA) (Disc 3)",
-	"SLUS01297": "Final Fantasy IX (USA) (Disc 4)",
-	"SCUS94221": "Final Fantasy Tactics (USA)",
-	"SLUS00877": "Final Fantasy Anthology (USA)",
-	"SLUS01360": "Final Fantasy Chronicles - Chrono Trigger (USA)",
-	"SLUS01363": "Final Fantasy Origins (USA)",
-	"SCES00867": "Final Fantasy VII (Europe)",
-	"SCES02080": "Final Fantasy VIII (Europe)",
-	"SLES02965": "Final Fantasy IX (Europe)",
-	"SLUS01041": "Chrono Cross (USA) (Disc 1)",
-	"SLUS01080": "Chrono Cross (USA) (Disc 2)",
-	"SCUS94568": "Legend of Dragoon, The (USA) (Disc 1)",
-	"SCUS94584": "Legend of Dragoon, The (USA) (Disc 2)",
-	"SCUS94585": "Legend of Dragoon, The (USA) (Disc 3)",
-	"SCUS94586": "Legend of Dragoon, The (USA) (Disc 4)",
-	"SLUS00664_X": "Xenogears (USA) (Disc 1)",
-	"SLUS00669": "Xenogears (USA) (Disc 2)",
-	"SLUS00958": "Vagrant Story (USA)",
-	"SLES02754": "Vagrant Story (Europe)",
-	"SLUS00397": "Diablo (USA)",
-	"SLES01159": "Diablo (Europe)",
-	"SLUS00597": "Suikoden (USA)",
-	"SLUS00958_S": "Suikoden II (USA)",
-	"SLUS00944": "Suikoden II (USA)",
-	"SLUS00422": "Breath of Fire III (USA)",
-	"SLUS01324_B": "Breath of Fire IV (USA)",
-	"SLUS01175": "Breath of Fire IV (USA)",
-	"SCUS94192": "Wild Arms (USA)",
-	"SCUS94484": "Wild Arms 2 (USA)",
-	"SLUS00924": "Grandia (USA)",
-	"SLUS01158": "Legend of Mana (USA)",
-	"SLUS01013": "Valkyrie Profile (USA)",
-	"SLUS00782": "Star Ocean - The Second Story (USA)",
-	"SLUS00626": "Tales of Destiny (USA)",
-	"SLUS01355": "Tales of Eternia (USA)",
-	"SLUS00732": "Brave Fencer Musashi (USA)",
-	"SLUS01032": "Threads of Fate (USA)",
-	"SLUS01011": "Front Mission 3 (USA)",
-	"SLUS01230": "Persona 2 - Eternal Punishment (USA)",
-	"SCUS94254": "Alundra (USA)",
-	"SLUS01017": "Alundra 2 (USA)",
-	"SLUS00447": "Castlevania / Vandal Hearts (USA)",
-	"SLUS00940": "Vandal Hearts II (USA)",
-	"SLUS00297": "Command & Conquer - Red Alert (USA)",
-	"SLUS00667": "Command & Conquer - Red Alert - Retaliation (USA)",
-	"SLUS00379": "Command & Conquer (USA)",
-	"SLUS00764": "Warcraft II - The Dark Saga (USA)",
-	"SLUS00686": "Dune 2000 (USA)",
-	"SLES01085": "Dune 2000 (Europe)",
-	"SLUS00856": "Warzone 2100 (USA)",
-	"SLUS00909_W": "Worms Armageddon (USA)",
-	"SLUS00889": "Worms Armageddon (USA)",
-	"SLUS01438": "Worms World Party (USA)",
-	"SLES01990": "Worms Armageddon (Europe)",
-	"SLUS00779": "Hogs of War (USA)",
-	"SLES01041": "Hogs of War (Europe)",
-	"SLUS00656": "KKND Krossfire (USA)",
-	"SLUS00519": "Theme Hospital (USA)",
-	"SLUS00988": "SimCity 2000 (USA)",
-	"SLUS00845": "Yu-Gi-Oh! Forbidden Memories (USA)",
-	"SLES03947": "Yu-Gi-Oh! Forbidden Memories (Europe)",
-	"SLUS01036": "Digimon World (USA)",
-	"SLUS01193": "Digimon World 2 (USA)",
-	"SLUS01436": "Digimon World 3 (USA)",
-	"SLUS01319": "Digimon Rumble Arena (USA)",
-	"SLUS01118": "Monster Rancher 2 (USA)",
-	"SLUS00825": "Harvest Moon - Back to Nature (USA)",
-
-	// Medal of Honor / Quake / Doom / GTA / Shooters & Arcade Action
-	"SLUS00879": "Medal of Honor (USA)",
-	"SLUS01270": "Medal of Honor - Underground (USA)",
-	"SLES02470": "Medal of Honor (Europe)",
-	"SLES03106": "Medal of Honor - Underground (Europe)",
-	"SLUS00589": "Quake II (USA)",
-	"SLES01534": "Quake II (Europe)",
-	"SLUS00077": "Doom (USA)",
-	"SLUS00331": "Final Doom (USA)",
-	"SLES00132": "Doom (Europe)",
-	"SLUS00628": "Duke Nukem - Time to Kill (USA)",
-	"SLUS01072": "Duke Nukem - Land of the Babes (USA)",
-	"SLUS00539": "Duke Nukem - Total Meltdown (USA)",
-	"SLUS00106": "Grand Theft Auto (USA)",
-	"SLUS00789_G": "Grand Theft Auto 2 (USA)",
-	"SLUS00784": "Grand Theft Auto 2 (USA)",
-	"SLUS00846": "Grand Theft Auto - Mission Pack #1 - London 1969 (USA)",
-	"SLES00032": "Grand Theft Auto (Europe)",
-	"SLES01404": "Grand Theft Auto 2 (Europe)",
-	"SLUS00065": "Alien Trilogy (USA)",
-	"SLUS01223": "Alien Resurrection (USA)",
-	"SLES02913": "Alien Resurrection (Europe)",
-	"SLUS00601": "Delta Force - Urban Warfare (USA)",
-	"SLUS01429": "Delta Force - Urban Warfare (USA)",
-	"SLUS00912": "Rainbow Six (USA)",
-	"SLUS01263": "Rainbow Six - Lone Wolf (USA)",
-	"SLUS00836": "Army Men 3D (USA)",
-	"SLUS00873": "Army Men - Air Attack (USA)",
-	"SLUS01190": "Army Men - Air Attack 2 (USA)",
-	"SLUS00976": "Army Men - Sarge's Heroes (USA)",
-	"SLUS01229": "Army Men - Sarge's Heroes 2 (USA)",
-	"SLUS01218": "Metal Slug X (USA)",
-	"SLES02987": "Metal Slug X (Europe)",
-	"SLPS00950": "Metal Slug (Japan)",
-	"SLUS00317": "Contra - Legacy of War (USA)",
-	"SLUS01336": "C - The Contra Adventure (USA)",
-	"SLUS00593": "Einhander (USA)",
-	"SLUS00887": "R-Type Delta (USA)",
-	"SLUS00650": "G-Darius (USA)",
-	"SLUS00517": "Time Crisis (USA)",
-	"SLUS01264": "Time Crisis - Project Titan (USA)",
-	"SLUS00657": "Point Blank (USA)",
-	"SLUS00488": "MDK (USA)",
-	"SLUS00527": "Future Cop - L.A.P.D. (USA)",
-	"SLUS00745": "Silent Bomber (USA)",
-	"SLUS00674": "Omega Boost (USA)",
-	"SCUS94448": "Omega Boost (USA)",
-	"SLUS00435": "Nuclear Strike (USA)",
-	"SLUS00284": "Soviet Strike (USA)",
-	"SLUS00450": "Ace Combat 2 (USA)",
-	"SLUS00972": "Ace Combat 3 - Electrosphere (USA)",
-
-	// Tony Hawk / Sports / Extreme Sports
-	"SLUS00861": "Tony Hawk's Pro Skater (USA)",
-	"SLUS01066": "Tony Hawk's Pro Skater 2 (USA)",
-	"SLUS01419": "Tony Hawk's Pro Skater 3 (USA)",
-	"SLUS01485": "Tony Hawk's Pro Skater 4 (USA)",
-	"SLES02055": "Tony Hawk's Skateboarding (Europe)",
-	"SLES02908_T": "Tony Hawk's Pro Skater 2 (Europe)",
-	"SLES02909": "Tony Hawk's Pro Skater 2 (Europe)",
-	"SLES03645": "Tony Hawk's Pro Skater 3 (Europe)",
-	"SLUS01134": "Matt Hoffman's Pro BMX (USA)",
-	"SLUS01122": "Dave Mirra Freestyle BMX (USA)",
-	"SLUS00426": "Cool Boarders 2 (USA)",
-	"SLUS00698": "Cool Boarders 3 (USA)",
-	"SLUS00989": "Cool Boarders 4 (USA)",
-	"SCUS94356": "Cool Boarders (USA)",
-	"SLUS01012": " Grind Session (USA)",
-	"SLUS01053": "ISS Pro Evolution (USA)",
-	"SLES02095": "ISS Pro Evolution (Europe)",
-	"SLES03321": "ISS Pro Evolution 2 (Europe)",
-	"SLPM86538": "World Soccer Jikkyou Winning Eleven 4 (Japan)",
-	"SLPM87056": "World Soccer Winning Eleven 2002 (Japan)",
-	"SLUS00964": "FIFA 2000 (USA)",
-	"SLUS01262": "FIFA 2001 (USA)",
-	"SLUS01408": "FIFA Soccer 2002 (USA)",
-	"SLUS01504": "FIFA Soccer 2003 (USA)",
-	"SLUS01549": "FIFA Soccer 2004 (USA)",
-	"SLUS01585": "FIFA Soccer 2005 (USA)",
-	"SLUS00919": "NBA Live 2000 (USA)",
-	"SLUS01271": "NBA Live 2001 (USA)",
-	"SLUS01416": "NBA Live 2002 (USA)",
-	"SLUS01494": "NBA Live 2003 (USA)",
-	"SLUS00965": "NHL 2000 (USA)",
-	"SLUS01261": "NHL 2001 (USA)",
-	"SLUS01071": "Knockout Kings 2000 (USA)",
-	"SLUS01269": "Knockout Kings 2001 (USA)",
-}
-
-type RomItem struct {
-	FilePath         string
-	SourceSubfolder  string
-	FileName         string
-	ExtractedTitle   string // Real title extracted from inside ROM binary or gamelist.xml
-	CleanTitle       string
-	ComparisonKey    string
-	CanonicalName    string
-	Extension        string
-	ConsoleCode      string
-	Generation       string
-	FileSize         int64
-	CRC32            string
-	HeaderlessCRC32  string
-	MD5              string
-	Region           string
-	IsRussian        bool
-	IsFromTopFolder  bool
-	IsNumberedFile   bool // e.g., 000001.pbp, 000002.chd, 0001.bin
-	Revision         string
-	Status           string // "verified", "duplicate_clone", "junk_bad_dump"
-	Is1G1RWinner     bool
-	Reason           string
-	MediaStatus      string
-}
-
-type PhantomFolderItem struct {
-	FullPath       string
-	RelativePath   string
-	FolderName     string
-	Reason         string
-	FileCount      int
-	TotalBytes     int64
-	HasUsefulMedia bool
-	DefaultChecked bool
-}
-
 type UndoEntry struct {
 	FromPath string
 	ToPath   string
 }
 
-type GameListXML struct {
-	XMLName xml.Name       `xml:"gameList"`
-	Games   []GameEntryXML `xml:"game"`
-}
-
-type GameEntryXML struct {
-	Path        string `xml:"path"`
-	Name        string `xml:"name"`
-	Desc        string `xml:"desc"`
-	Image       string `xml:"image,omitempty"`
-	Thumbnail   string `xml:"thumbnail,omitempty"`
-	Marquee     string `xml:"marquee,omitempty"`
-	Video       string `xml:"video,omitempty"`
-	Rating      string `xml:"rating,omitempty"`
-	ReleaseDate string `xml:"releasedate,omitempty"`
-	Developer   string `xml:"developer,omitempty"`
-	Publisher   string `xml:"publisher,omitempty"`
-	Genre       string `xml:"genre,omitempty"`
-	Region      string `xml:"region,omitempty"`
-}
-
-var (
-	regionRegex       = regexp.MustCompile(`(?i)\((USA|Europe|Japan|World|Russia|Rus|Ru|Germany|France|Spain|Italy|Australia|Asia|Korea|Brazil|China|En,Fr,De|En,Ja|U|E|J|W|UE|JU)\)`)
-	rusTagRegex       = regexp.MustCompile(`(?i)(\[rus\]|\(rus\)|\(ru\)|\[r-rus\]|\[russian\]|\(russian\)|_rus\b|\.rus\b|\brus\b|рус)`)
-	revisionRegex     = regexp.MustCompile(`(?i)\((Rev\s*[0-9A-Z]+|v[0-9]+\.[0-9]+|Alt\s*[0-9]*)\)`)
-	junkRegex         = regexp.MustCompile(`(?i)\[(b[0-9]*|h[0-9]*|t[0-9]*|p[0-9]*|o[0-9]*)\]|\((Pirate|Bootleg|Corrupt|Bad)\)`)
-	tagStripRegex     = regexp.MustCompile(`\[.*?\]|\(.*?\)`)
-	leadingNumRegex   = regexp.MustCompile(`^[\s\[\(#]*0*(\d{1,10})[\s\])\._-]+`)
-	pureNumberRegex   = regexp.MustCompile(`^(?:game[_-]?|rom[_-]?|track[_-]?|psx[_-]?|ps1[_-]?)?0*(\d{1,10})(?:[_-]?[1-4a-d])?$`)
-	seqPrefixNumRegex = regexp.MustCompile(`^[\s\[\(#]*0*(\d{1,10})(?:[\s\])\._-]+|$)`)
-	ps1SerialRegex    = regexp.MustCompile(`(?i)(SLUS|SCUS|SLES|SCES|SLPS|SCPS|SLPM|SIPS|ESPM|PAPX|PBPX|SCPM|LSP)[_\-\s\.]*(\d{3})[\.\_\-]?(\d{2})`)
-	hrefPngRegex      = regexp.MustCompile(`href="([^"]+\.png)"`)
-	xmlGameBlockRegex = regexp.MustCompile(`(?is)<game\b[^>]*>(.*?)</game>`)
-)
-
-type XmlMappingCandidate struct {
-	OldFileName    string
-	CoreKey        string
-	CleanTitle     string
-	NewFileName    string
-	HasRomOnDisk   bool
-	HasImage       bool
-	HasVideo       bool
-	DefaultChecked bool
-	SourceLabel    string
-}
-
 // Global UI & App State
 var (
-	hMainWnd              uintptr
-	hPhantomWnd           uintptr
-	hPhantomLV            uintptr
-	hXmlWnd               uintptr
-	hXmlLV                uintptr
-	hXmlInfoLbl           uintptr
-	selectedCustomXmlPath string
-	hAppIcon              uintptr
-	hTooltip              uintptr
-	tooltipStrings        []*uint16
+	hMainWnd       uintptr
+	hPhantomWnd    uintptr
+	hPhantomLV     uintptr
+	hXmlWnd        uintptr
+	hXmlLV         uintptr
+	hXmlInfoLbl    uintptr
+	hAppIcon       uintptr
+	hTooltip       uintptr
+	tooltipStrings []*uint16
 
 	hFontTitle uintptr
 	hFontUI    uintptr
@@ -1212,36 +444,14 @@ var (
 	hEditLog  uintptr
 
 	stateMu              sync.Mutex
-	scannedRoms          []RomItem
-	phantomFolders       []PhantomFolderItem
-	xmlMappingCandidates []XmlMappingCandidate
+	scannedRoms          []aegiscore.RomItem
+	phantomFolders       []aegiscore.PhantomFolderItem
+	xmlMappingCandidates []aegiscore.XmlMappingCandidate
 	undoHistory          []UndoEntry
 	isBusy               bool
 	cancelRequested      int32
 	logHistory           []string
-
-	// Cache gamelist.xml mappings per folder (dirPath -> map[lowercaseFileName]GameTitle)
-	gamelistTitleCache = make(map[string]map[string]string)
-	// Cache full gamelist.xml entries per folder (dirPath -> map[lowercaseKey]GameEntryXML)
-	gamelistEntryCache = make(map[string]map[string]GameEntryXML)
-	// Cache detected sequential numbers per folder (dirPath -> map[lowercaseFileName]bool)
-	seqNumberedDirCache = make(map[string]map[string]bool)
-	libretroIndexCache  = make(map[string][]libretroEntry)
-	archiveVideoCache   = make(map[string][]archiveVideoEntry)
-	cacheMu             sync.Mutex
 )
-
-type libretroEntry struct {
-	FileName string
-	NormKey  string
-	Tokens   map[string]bool
-}
-
-type archiveVideoEntry struct {
-	FileName string
-	NormKey  string
-	Tokens   map[string]bool
-}
 
 func utf16Ptr(s string) *uint16 {
 	p, err := syscall.UTF16PtrFromString(s)
@@ -1338,16 +548,6 @@ func addControlTooltip(hwndParent, hCtrl uintptr, text string) {
 	}
 }
 
-func formatBytes(b int64) string {
-	if b < 1024 {
-		return fmt.Sprintf("%d Б", b)
-	}
-	if b < 1024*1024 {
-		return fmt.Sprintf("%.1f КБ", float64(b)/1024.0)
-	}
-	return fmt.Sprintf("%.2f МБ", float64(b)/(1024.0*1024.0))
-}
-
 // Strip Windows Mark-of-the-Web (Zone.Identifier) on self so SmartScreen never warns on subsequent launches
 func stripSelfZoneIdentifier() {
 	exePath, err := os.Executable()
@@ -1356,8 +556,18 @@ func stripSelfZoneIdentifier() {
 	}
 }
 
+// buildXmlMappingCandidatesForFolder передаёт ядру снимок текущего списка ромов.
+func buildXmlMappingCandidatesForFolder(folder string) []aegiscore.XmlMappingCandidate {
+	stateMu.Lock()
+	scanned := make([]aegiscore.RomItem, len(scannedRoms))
+	copy(scanned, scannedRoms)
+	stateMu.Unlock()
+	return aegiscore.BuildXMLMappingCandidatesForFolder(folder, scanned)
+}
+
 func main() {
 	runtime.LockOSThread()
+	aegiscore.SetLogger(appendLog)
 	stripSelfZoneIdentifier()
 	procCoInitializeEx.Call(0, 0x2)
 
@@ -2039,1198 +1249,8 @@ func getSelectedRegionPriority() []string {
 }
 
 // ============================================================================
-// REAL ROM INTERNAL HEADER & GAMELIST.XML TITLE EXTRACTOR (000001 / 0001 -> Real Name)
-// ============================================================================
-
-func decodeXMLEntities(s string) string {
-	s = strings.ReplaceAll(s, "&amp;", "&")
-	s = strings.ReplaceAll(s, "&apos;", "'")
-	s = strings.ReplaceAll(s, "&#39;", "'")
-	s = strings.ReplaceAll(s, "&quot;", "\"")
-	s = strings.ReplaceAll(s, "&lt;", "<")
-	s = strings.ReplaceAll(s, "&gt;", ">")
-	return strings.TrimSpace(s)
-}
-
-func extractXMLTagValue(block, tag string) string {
-	openTag := "<" + strings.ToLower(tag) + ">"
-	closeTag := "</" + strings.ToLower(tag) + ">"
-	lowerBlock := strings.ToLower(block)
-	startIdx := strings.Index(lowerBlock, openTag)
-	if startIdx == -1 {
-		return ""
-	}
-	valStart := startIdx + len(openTag)
-	endIdx := strings.Index(lowerBlock[valStart:], closeTag)
-	if endIdx == -1 {
-		return ""
-	}
-	return decodeXMLEntities(block[valStart : valStart+endIdx])
-}
-
-func isPureNumberOrGenericTitle(s string) bool {
-	trimmed := strings.TrimSpace(s)
-	if trimmed == "" {
-		return true
-	}
-	noTags := strings.TrimSpace(tagStripRegex.ReplaceAllString(trimmed, ""))
-	lower := strings.ToLower(noTags)
-	if lower == "007" {
-		return false
-	}
-	if pureNumberRegex.MatchString(lower) {
-		return true
-	}
-	switch lower {
-	case "playstation", "psx", "ps1", "cd-rom", "cdrom", "game", "rom", "untitled", "unknown", "new", "track", "track01", "data":
-		return true
-	}
-	return false
-}
-
-func normalizePS1Serial(raw string) string {
-	m := ps1SerialRegex.FindStringSubmatch(raw)
-	if len(m) == 4 {
-		return strings.ToUpper(m[1] + m[2] + m[3])
-	}
-	return ""
-}
-
-// Fault-tolerant gamelist.xml parser that NEVER fails on unescaped '&' or malformed XML in factory R36S cards,
-// checks backup files (gamelist_factory_backup.xml, gamelist.xml.bak, etc.), and auto-creates a factory backup!
-func loadGamelistMapsForDir(dir string) (map[string]string, map[string]GameEntryXML) {
-	cacheMu.Lock()
-	titleMap, tLoaded := gamelistTitleCache[dir]
-	entryMap, eLoaded := gamelistEntryCache[dir]
-	cacheMu.Unlock()
-
-	if tLoaded && eLoaded {
-		return titleMap, entryMap
-	}
-
-	titleMap = make(map[string]string)
-	entryMap = make(map[string]GameEntryXML)
-
-	// Candidate gamelist files in priority order (check factory backups first so if gamelist.xml was overwritten with 000001, backups win!)
-	candidateFiles := []string{
-		filepath.Join(dir, "gamelist_factory_backup.xml"),
-		filepath.Join(dir, "gamelist.xml.bak"),
-		filepath.Join(dir, "gamelist.bak"),
-		filepath.Join(dir, "gamelist_backup.xml"),
-		filepath.Join(dir, "gamelist.old"),
-		filepath.Join(dir, "gamelist.xml"),
-	}
-	// Also check parent directory if ROMs are inside a subfolder of a console folder
-	parentDir := filepath.Dir(dir)
-	if parentDir != dir {
-		candidateFiles = append(candidateFiles,
-			filepath.Join(parentDir, "gamelist_factory_backup.xml"),
-			filepath.Join(parentDir, "gamelist.xml.bak"),
-			filepath.Join(parentDir, "gamelist.xml"),
-		)
-	}
-
-	realNamesFoundInPrimary := 0
-	primaryGlPath := filepath.Join(dir, "gamelist.xml")
-	backupGlPath := filepath.Join(dir, "gamelist_factory_backup.xml")
-
-	for _, glPath := range candidateFiles {
-		data, err := os.ReadFile(glPath)
-		if err != nil || len(data) == 0 {
-			continue
-		}
-		blocks := xmlGameBlockRegex.FindAllStringSubmatch(string(data), -1)
-		for _, b := range blocks {
-			if len(b) < 2 {
-				continue
-			}
-			body := b[1]
-			rawPath := extractXMLTagValue(body, "path")
-			rawName := extractXMLTagValue(body, "name")
-			if rawPath == "" {
-				continue
-			}
-
-			cleanP := strings.ToLower(filepath.Base(strings.ReplaceAll(rawPath, "\\", "/")))
-			noExt := strings.TrimSuffix(cleanP, filepath.Ext(cleanP))
-
-			entry := GameEntryXML{
-				Path:        rawPath,
-				Name:        rawName,
-				Desc:        extractXMLTagValue(body, "desc"),
-				Image:       extractXMLTagValue(body, "image"),
-				Thumbnail:   extractXMLTagValue(body, "thumbnail"),
-				Marquee:     extractXMLTagValue(body, "marquee"),
-				Video:       extractXMLTagValue(body, "video"),
-				Rating:      extractXMLTagValue(body, "rating"),
-				ReleaseDate: extractXMLTagValue(body, "releasedate"),
-				Developer:   extractXMLTagValue(body, "developer"),
-				Publisher:   extractXMLTagValue(body, "publisher"),
-				Genre:       extractXMLTagValue(body, "genre"),
-				Region:      extractXMLTagValue(body, "region"),
-			}
-
-			if _, exists := entryMap[cleanP]; !exists {
-				entryMap[cleanP] = entry
-			}
-			if _, exists := entryMap[noExt]; !exists {
-				entryMap[noExt] = entry
-			}
-			coreK := extractCoreNumberKey(cleanP)
-			if coreK != "" {
-				if _, exists := entryMap[coreK]; !exists {
-					entryMap[coreK] = entry
-				}
-			}
-
-			// Strip leading index numbers from gamelist <name> like "000001. Tekken 3", EXCEPT 007 James Bond games!
-			cleanN := stripLeadingIndexExcept007(strings.TrimSpace(rawName))
-			// Only accept cleanN as a real title if it is NOT a pure number like "000001"!
-			if cleanP != "" && cleanN != "" && !isPureNumberOrGenericTitle(cleanN) {
-				if _, exists := titleMap[cleanP]; !exists {
-					titleMap[cleanP] = cleanN
-				}
-				if _, exists := titleMap[noExt]; !exists {
-					titleMap[noExt] = cleanN
-				}
-				if coreK != "" {
-					if _, exists := titleMap[coreK]; !exists {
-						titleMap[coreK] = cleanN
-					}
-				}
-				if strings.EqualFold(glPath, primaryGlPath) {
-					realNamesFoundInPrimary++
-				}
-			}
-		}
-	}
-
-	// If primary gamelist.xml has real factory titles and we haven't backed it up yet, save gamelist_factory_backup.xml!
-	if realNamesFoundInPrimary > 0 {
-		if _, err := os.Stat(backupGlPath); err != nil {
-			if origBytes, rErr := os.ReadFile(primaryGlPath); rErr == nil {
-				_ = os.WriteFile(backupGlPath, origBytes, 0644)
-			}
-		}
-	}
-
-	cacheMu.Lock()
-	gamelistTitleCache[dir] = titleMap
-	gamelistEntryCache[dir] = entryMap
-	cacheMu.Unlock()
-
-	return titleMap, entryMap
-}
-
-// Extracts normalized numeric key from filenames like "000001 (World).chd" -> "000001", "1 (USA).pbp" -> "000001"
-func extractCoreNumberKey(fileNameOrStem string) string {
-	base := strings.TrimSpace(strings.TrimSuffix(filepath.Base(fileNameOrStem), filepath.Ext(fileNameOrStem)))
-	noTags := strings.TrimSpace(tagStripRegex.ReplaceAllString(base, ""))
-	lower := strings.ToLower(noTags)
-	if pm := pureNumberRegex.FindStringSubmatch(lower); len(pm) >= 2 {
-		if n, err := strconv.Atoi(pm[1]); err == nil && n >= 0 && n <= 999999 {
-			return fmt.Sprintf("%06d", n)
-		}
-		return lower
-	}
-	return lower
-}
-
-func getGamelistTitleForFile(romPath string) string {
-	dir := filepath.Dir(romPath)
-	fileNameLower := strings.ToLower(filepath.Base(romPath))
-	baseNoExtLower := strings.ToLower(strings.TrimSuffix(filepath.Base(romPath), filepath.Ext(romPath)))
-	coreKey := extractCoreNumberKey(romPath)
-
-	// If user selected a custom XML file, check it first!
-	if selectedCustomXmlPath != "" {
-		customTMap, _ := parseSingleXmlFileMaps(selectedCustomXmlPath)
-		if title, ok := customTMap[fileNameLower]; ok && title != "" && !isPureNumberOrGenericTitle(title) {
-			return title
-		}
-		if title, ok := customTMap[baseNoExtLower]; ok && title != "" && !isPureNumberOrGenericTitle(title) {
-			return title
-		}
-		if coreKey != "" {
-			if title, ok := customTMap[coreKey]; ok && title != "" && !isPureNumberOrGenericTitle(title) {
-				return title
-			}
-		}
-	}
-
-	titleMap, _ := loadGamelistMapsForDir(dir)
-
-	if title, ok := titleMap[fileNameLower]; ok && title != "" && !isPureNumberOrGenericTitle(title) {
-		return title
-	}
-	if title, ok := titleMap[baseNoExtLower]; ok && title != "" && !isPureNumberOrGenericTitle(title) {
-		return title
-	}
-	if coreKey != "" {
-		if title, ok := titleMap[coreKey]; ok && title != "" && !isPureNumberOrGenericTitle(title) {
-			return title
-		}
-	}
-	// Fallback to embedded R36S factory gamelist.xml map (630 numbered PSX games 000001..000634)
-	if factoryTitle, ok := factoryR36sNumberMap[baseNoExtLower]; ok && factoryTitle != "" {
-		return factoryTitle
-	}
-	if coreKey != "" {
-		if factoryTitle, ok := factoryR36sNumberMap[coreKey]; ok && factoryTitle != "" {
-			return factoryTitle
-		}
-	}
-	return ""
-}
-
-// Extract real internal game title directly from binary ROM headers:
-// Supports PS1/PSP .PBP (PARAM.SFO + PSISOIMG), PS1 .CHD (deflate hunk decompression),
-// PS1 .BIN/.ISO/.IMG/.MDF/.CUE/.M3U (ISO9660 Root Directory LBA + SYSTEM.CNF + 350+ Serial DB + PS1 Memory Card Save Header),
-// GBA (0xA0), GB/GBC (0x134), SNES (0x7FC0/0xFFC0), Genesis (0x150), N64 (0x20), NDS (0x68 UTF-16 Banner).
-func extractInternalBinaryRomTitle(romPath, ext, consoleCode string) string {
-	f, err := os.Open(romPath)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-
-	// 1. Check PS1 / PSP EBOOT.PBP (PARAM.SFO header + PSISOIMG0000 TOC/DiscID)
-	if ext == ".pbp" {
-		hdr := make([]byte, 0x28)
-		if _, err := io.ReadFull(f, hdr); err == nil && string(hdr[0:4]) == "\x00PBP" {
-			sfoOffset := binary.LittleEndian.Uint32(hdr[0x08:0x0C])
-			dataOffset := binary.LittleEndian.Uint32(hdr[0x0C:0x10])
-			psarOffset := binary.LittleEndian.Uint32(hdr[0x24:0x28])
-
-			var sfoTitle, sfoDiscID string
-			if sfoOffset > 0 && dataOffset > sfoOffset && (dataOffset-sfoOffset) < 65536 {
-				sfoBuf := make([]byte, dataOffset-sfoOffset)
-				if _, err := f.ReadAt(sfoBuf, int64(sfoOffset)); err == nil {
-					sfoTitle, sfoDiscID = parseParamSFO(sfoBuf)
-				}
-			}
-
-			// Check if DISC_ID or PSAR header maps to a known PS1 game
-			serialKey := normalizePS1Serial(sfoDiscID)
-			if serialKey == "" {
-				serialKey = normalizePS1Serial(sfoTitle)
-			}
-			if serialKey == "" && psarOffset > 0 {
-				psarBuf := make([]byte, 2048)
-				if n, _ := f.ReadAt(psarBuf, int64(psarOffset)); n > 0 {
-					if m := ps1SerialRegex.FindSubmatch(psarBuf[:n]); len(m) == 4 {
-						serialKey = strings.ToUpper(string(m[1]) + string(m[2]) + string(m[3]))
-					}
-				}
-			}
-
-			if serialKey != "" {
-				if mapped, ok := ps1SerialToTitle[serialKey]; ok {
-					return mapped
-				}
-			}
-
-			// If PARAM.SFO TITLE is a real game title (NOT a number like "000001" and NOT a raw serial), use it!
-			if sfoTitle != "" && !isPureNumberOrGenericTitle(sfoTitle) && normalizePS1Serial(sfoTitle) == "" {
-				cleaned := cleanInternalHeaderString(sfoTitle)
-				if len(cleaned) >= 3 && !isPureNumberOrGenericTitle(cleaned) {
-					return cleaned
-				}
-			}
-
-			// Scan first 1 MB of PSAR stream inside PBP for PS1 Serial or Memory Card Title
-			if psarOffset > 0 {
-				psarScan := make([]byte, 1024*1024)
-				if n, _ := f.ReadAt(psarScan, int64(psarOffset)); n > 0 {
-					if t := extractPS1TitleFromRawBytes(psarScan[:n]); t != "" {
-						return t
-					}
-				}
-			}
-		}
-	}
-
-	// 2. Check PlayStation 1 (.chd, .bin, .iso, .img, .mdf, .cue, .m3u, .ccd)
-	if consoleCode == "psx" || ext == ".iso" || ext == ".bin" || ext == ".img" || ext == ".mdf" || ext == ".chd" || ext == ".cue" || ext == ".m3u" || ext == ".ccd" {
-		if ext == ".chd" {
-			if chdTitle := extractPS1TitleFromCHD(f); chdTitle != "" {
-				return chdTitle
-			}
-		}
-
-		targetFile := f
-		if ext == ".cue" || ext == ".m3u" || ext == ".ccd" {
-			textBytes, _ := os.ReadFile(romPath)
-			textStr := string(textBytes)
-			// Check if .cue or .m3u contains a PS1 serial or a real filename inside FILE "..."
-			if m := ps1SerialRegex.FindStringSubmatch(textStr); len(m) == 4 {
-				serialKey := strings.ToUpper(m[1] + m[2] + m[3])
-				if knownTitle, ok := ps1SerialToTitle[serialKey]; ok {
-					return knownTitle
-				}
-			}
-			// Find companion .bin / .img / .iso / .chd / .pbp in the same directory
-			romDir := filepath.Dir(romPath)
-			baseNoExt := strings.TrimSuffix(filepath.Base(romPath), filepath.Ext(romPath))
-			for _, compExt := range []string{".bin", ".BIN", ".img", ".IMG", ".iso", ".ISO", ".chd", ".CHD", ".pbp", ".PBP"} {
-				compPath := filepath.Join(romDir, baseNoExt+compExt)
-				if bf, err := os.Open(compPath); err == nil {
-					defer bf.Close()
-					if strings.EqualFold(compExt, ".chd") {
-						if chdTitle := extractPS1TitleFromCHD(bf); chdTitle != "" {
-							return chdTitle
-						}
-					}
-					targetFile = bf
-					break
-				}
-			}
-		}
-
-		if discTitle := extractPS1TitleFromDiscFile(targetFile); discTitle != "" {
-			return discTitle
-		}
-
-		// Fallback: check if any existing image/video in images/ or videos/ starts with this number and has a title attached
-		if mediaTitle := extractTitleFromCompanionMediaFile(romPath); mediaTitle != "" {
-			return mediaTitle
-		}
-	}
-
-	// 3. Game Boy Advance (.gba) -> offset 0xA0 (12 bytes ASCII)
-	if ext == ".gba" || consoleCode == "gba" {
-		buf := make([]byte, 16)
-		if _, err := f.ReadAt(buf, 0xA0); err == nil {
-			title := cleanInternalHeaderString(string(buf[:12]))
-			if len(title) >= 3 && !isPureNumberOrGenericTitle(title) {
-				return title
-			}
-		}
-	}
-
-	// 4. Game Boy / Game Boy Color (.gb, .gbc) -> offset 0x134 (15 bytes ASCII)
-	if ext == ".gb" || ext == ".gbc" || consoleCode == "gb" || consoleCode == "gbc" {
-		buf := make([]byte, 15)
-		if _, err := f.ReadAt(buf, 0x0134); err == nil {
-			title := cleanInternalHeaderString(string(buf))
-			if len(title) >= 3 && !isPureNumberOrGenericTitle(title) {
-				return title
-			}
-		}
-	}
-
-	// 5. Super Nintendo (.sfc, .smc) -> LoROM 0x7FC0 or HiROM 0xFFC0 (21 bytes ASCII)
-	if ext == ".sfc" || ext == ".smc" || consoleCode == "snes" {
-		fi, err := f.Stat()
-		if err == nil {
-			skip := int64(0)
-			if fi.Size()%1024 == 512 {
-				skip = 512
-			}
-			for _, off := range []int64{0x7FC0 + skip, 0xFFC0 + skip} {
-				buf := make([]byte, 21)
-				if _, err := f.ReadAt(buf, off); err == nil {
-					if isPrintableASCII(buf) {
-						title := cleanInternalHeaderString(string(buf))
-						if len(title) >= 3 && !isPureNumberOrGenericTitle(title) {
-							return title
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// 6. Sega Mega Drive / Genesis (.md, .gen, .bin) -> 0x150 (48 bytes Overseas Title) or 0x120
-	if ext == ".md" || ext == ".gen" || ext == ".smd" || consoleCode == "genesis" {
-		sig := make([]byte, 16)
-		if _, err := f.ReadAt(sig, 0x100); err == nil && strings.Contains(string(sig), "SEGA") {
-			for _, off := range []int64{0x150, 0x120} {
-				buf := make([]byte, 48)
-				if _, err := f.ReadAt(buf, off); err == nil {
-					title := cleanInternalHeaderString(string(buf))
-					if len(title) >= 3 && !isPureNumberOrGenericTitle(title) {
-						return title
-					}
-				}
-			}
-		}
-	}
-
-	// 7. Nintendo 64 (.z64, .n64, .v64) -> 0x20 (20 bytes ASCII)
-	if ext == ".z64" || ext == ".n64" || ext == ".v64" || consoleCode == "n64" {
-		buf := make([]byte, 20)
-		if _, err := f.ReadAt(buf, 0x20); err == nil && isPrintableASCII(buf) {
-			title := cleanInternalHeaderString(string(buf))
-			if len(title) >= 3 && !isPureNumberOrGenericTitle(title) {
-				return title
-			}
-		}
-	}
-
-	// 8. Nintendo DS (.nds) -> Banner Offset at 0x68 (uint32 LE), English UTF-16LE title at banner + 0x240
-	if ext == ".nds" || consoleCode == "nds" {
-		ptrBuf := make([]byte, 4)
-		if _, err := f.ReadAt(ptrBuf, 0x68); err == nil {
-			bannerOff := int64(binary.LittleEndian.Uint32(ptrBuf))
-			if bannerOff > 0 {
-				utf16Buf := make([]byte, 256)
-				if _, err := f.ReadAt(utf16Buf, bannerOff+0x240); err == nil {
-					u16s := make([]uint16, 128)
-					for i := 0; i < 128; i++ {
-						u16s[i] = binary.LittleEndian.Uint16(utf16Buf[i*2 : i*2+2])
-						if u16s[i] == 0 {
-							u16s = u16s[:i]
-							break
-						}
-					}
-					decoded := strings.ReplaceAll(string(utf16.Decode(u16s)), "\n", " - ")
-					title := cleanInternalHeaderString(decoded)
-					if len(title) >= 3 && !isPureNumberOrGenericTitle(title) {
-						return title
-					}
-				}
-			}
-		}
-	}
-
-	return ""
-}
-
-// Extract PS1 game title from .BIN / .ISO / .IMG / .MDF disc image by following ISO9660 Root Directory LBA -> SYSTEM.CNF & Boot EXE
-func extractPS1TitleFromDiscFile(f *os.File) string {
-	// Read first 256 KB to locate ISO9660 Primary Volume Descriptor ("\x01CD001")
-	headChunk := make([]byte, 256*1024)
-	n, _ := f.ReadAt(headChunk, 0)
-	if n <= 0 {
-		return ""
-	}
-	headChunk = headChunk[:n]
-
-	var volID string
-	idx := bytes.Index(headChunk, []byte("\x01CD001"))
-	if idx != -1 && idx+190 <= len(headChunk) {
-		volID = strings.TrimSpace(string(bytes.Trim(headChunk[idx+40:idx+72], "\x00 ")))
-
-		// Determine sector size (2352 for raw BIN/IMG/MDF vs 2048 for ISO)
-		sectorSize := int64(2048)
-		if idx > 34000 {
-			sectorSize = 2352
-		}
-
-		// ISO9660 Root Directory Record is at offset 156 of Primary Volume Descriptor; Extent LBA is at 156+2 = 158 (uint32 LE)
-		rootLBA := int64(binary.LittleEndian.Uint32(headChunk[idx+158 : idx+162]))
-		if rootLBA >= 16 && rootLBA < 450000 {
-			rootDirBuf := make([]byte, 64*1024)
-			rn, _ := f.ReadAt(rootDirBuf, rootLBA*sectorSize)
-			if rn > 0 {
-				rootDirBuf = rootDirBuf[:rn]
-				// 1. Check if the Root Directory entries contain SYSTEM.CNF or a PS1 Serial executable name (SLUS_xxx.xx;1)
-				if sysIdx := bytes.Index(bytes.ToUpper(rootDirBuf), []byte("SYSTEM.CNF")); sysIdx >= 33 {
-					sysLBA := int64(binary.LittleEndian.Uint32(rootDirBuf[sysIdx-31 : sysIdx-27]))
-					if sysLBA >= 16 && sysLBA < 450000 {
-						sysBuf := make([]byte, 4096)
-						if sn, _ := f.ReadAt(sysBuf, sysLBA*sectorSize); sn > 0 {
-							if m := ps1SerialRegex.FindSubmatch(sysBuf[:sn]); len(m) == 4 {
-								serialKey := strings.ToUpper(string(m[1]) + string(m[2]) + string(m[3]))
-								if known, ok := ps1SerialToTitle[serialKey]; ok {
-									return known
-								}
-							}
-						}
-					}
-				}
-
-				// 2. Scan Root Directory for any PS1 Serial filename (SLUS_xxx.xx, SCUS_xxx.xx, SLES_xxx.xx, etc.)
-				if m := ps1SerialRegex.FindSubmatchIndex(rootDirBuf); len(m) >= 8 {
-					prefix := string(rootDirBuf[m[2]:m[3]])
-					part1 := string(rootDirBuf[m[4]:m[5]])
-					part2 := string(rootDirBuf[m[6]:m[7]])
-					serialKey := strings.ToUpper(prefix + part1 + part2)
-					if known, ok := ps1SerialToTitle[serialKey]; ok {
-						return known
-					}
-					// If serial is not in our static dictionary, jump to the Boot Executable's LBA to read its PS1 Memory Card Save Header!
-					if m[0] >= 33 {
-						exeLBA := int64(binary.LittleEndian.Uint32(rootDirBuf[m[0]-31 : m[0]-27]))
-						if exeLBA >= 16 && exeLBA < 450000 {
-							exeBuf := make([]byte, 512*1024)
-							if en, _ := f.ReadAt(exeBuf, exeLBA*sectorSize); en > 0 {
-								if mcTitle := extractPS1MemoryCardTitle(exeBuf[:en]); mcTitle != "" {
-									return mcTitle
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Scan up to the first 6 MB of the disc image for PS1 Serial or PS1 Memory Card Save Header Title
-	const chunkSize = 1024 * 1024
-	buf := make([]byte, chunkSize)
-	var fallbackMemCardTitle string
-	for off := int64(0); off < 6*chunkSize; off += chunkSize {
-		rn, _ := f.ReadAt(buf, off)
-		if rn <= 0 {
-			break
-		}
-		slice := buf[:rn]
-		if m := ps1SerialRegex.FindSubmatch(slice); len(m) == 4 {
-			serialKey := strings.ToUpper(string(m[1]) + string(m[2]) + string(m[3]))
-			if known, ok := ps1SerialToTitle[serialKey]; ok {
-				return known
-			}
-		}
-		if fallbackMemCardTitle == "" {
-			fallbackMemCardTitle = extractPS1MemoryCardTitle(slice)
-		}
-	}
-
-	if fallbackMemCardTitle != "" {
-		return fallbackMemCardTitle
-	}
-
-	if volID != "" && len(volID) >= 3 && !isPureNumberOrGenericTitle(volID) && normalizePS1Serial(volID) == "" {
-		return cleanInternalHeaderString(volID)
-	}
-
-	return ""
-}
-
-// Decompress first hunks of MAME Compressed Hunks of Data (.CHD v5) to extract PS1 Serial, Memory Card Title, or ISO9660 Volume ID
-func extractPS1TitleFromCHD(f *os.File) string {
-	hdr := make([]byte, 124)
-	if _, err := f.ReadAt(hdr, 0); err != nil || string(hdr[0:8]) != "MComprHD" {
-		return ""
-	}
-	version := binary.BigEndian.Uint32(hdr[12:16])
-	if version == 5 {
-		hunkBytes := binary.BigEndian.Uint32(hdr[56:60])
-		unitBytes := binary.BigEndian.Uint32(hdr[60:64])
-		mapOffset := int64(binary.BigEndian.Uint64(hdr[40:48]))
-		if hunkBytes > 0 && hunkBytes <= 256*1024 && mapOffset > 0 {
-			frames := int(hunkBytes) / 2448
-			if unitBytes > 0 {
-				frames = int(hunkBytes) / int(unitBytes)
-			}
-			if frames <= 0 {
-				frames = 8
-			}
-			eccBytes := (frames + 7) / 8
-			compLenBytes := 2
-			if hunkBytes >= 65536 {
-				compLenBytes = 3
-			}
-			cdzlHdrLen := compLenBytes + eccBytes
-
-			const maxHunksToScan = 48
-			mapBuf := make([]byte, maxHunksToScan*12)
-			if mn, _ := f.ReadAt(mapBuf, mapOffset); mn >= 12 {
-				var decompStream bytes.Buffer
-				numHunks := mn / 12
-				for h := 0; h < numHunks; h++ {
-					entry := mapBuf[h*12 : (h+1)*12]
-					compType := entry[0]
-					compLen := int(entry[1])<<16 | int(entry[2])<<8 | int(entry[3])
-					blockOff := int64(entry[4])<<40 | int64(entry[5])<<32 | int64(entry[6])<<24 | int64(entry[7])<<16 | int64(entry[8])<<8 | int64(entry[9])
-					if compLen <= 4 || compLen > 256*1024 || blockOff <= 0 {
-						continue
-					}
-					cBuf := make([]byte, compLen)
-					if cn, _ := f.ReadAt(cBuf, blockOff); cn == compLen {
-						if compType == 4 {
-							decompStream.Write(cBuf)
-						} else if compType <= 3 {
-							// Try cdzl deflate offset first, then fallback offsets
-							for _, skip := range []int{cdzlHdrLen, 3, 4, 2, 0} {
-								if skip >= len(cBuf) {
-									continue
-								}
-								fr := flate.NewReader(bytes.NewReader(cBuf[skip:]))
-								out, _ := io.ReadAll(io.LimitReader(fr, int64(hunkBytes)))
-								_ = fr.Close()
-								if len(out) >= 2048 {
-									decompStream.Write(out)
-									break
-								}
-							}
-						}
-					}
-					if decompStream.Len() >= 512*1024 {
-						break
-					}
-				}
-				if decompStream.Len() > 0 {
-					if t := extractPS1TitleFromRawBytes(decompStream.Bytes()); t != "" {
-						return t
-					}
-				}
-			}
-		}
-	}
-
-	// Fallback raw scan on first 2 MB of CHD
-	raw := make([]byte, 2*1024*1024)
-	if n, _ := f.ReadAt(raw, 0); n > 0 {
-		if t := extractPS1TitleFromRawBytes(raw[:n]); t != "" {
-			return t
-		}
-	}
-	return ""
-}
-
-func extractPS1TitleFromRawBytes(data []byte) string {
-	if m := ps1SerialRegex.FindSubmatch(data); len(m) == 4 {
-		serialKey := strings.ToUpper(string(m[1]) + string(m[2]) + string(m[3]))
-		if known, ok := ps1SerialToTitle[serialKey]; ok {
-			return known
-		}
-	}
-	if mc := extractPS1MemoryCardTitle(data); mc != "" {
-		return mc
-	}
-	if idx := bytes.Index(data, []byte("\x01CD001")); idx != -1 && idx+72 <= len(data) {
-		volID := strings.TrimSpace(string(bytes.Trim(data[idx+40:idx+72], "\x00 ")))
-		if len(volID) >= 3 && !isPureNumberOrGenericTitle(volID) && normalizePS1Serial(volID) == "" {
-			return cleanInternalHeaderString(volID)
-		}
-	}
-	return ""
-}
-
-// Extract official game title from Sony PS1 Memory Card 128-byte Save Header ("SC" + 0x11/0x12/0x13 + Shift-JIS/ASCII Title)
-func extractPS1MemoryCardTitle(data []byte) string {
-	for i := 0; i+96 <= len(data); i++ {
-		if data[i] != 'S' || data[i+1] != 'C' {
-			continue
-		}
-		iconFlag := data[i+2]
-		blockCnt := data[i+3]
-		if (iconFlag != 0x11 && iconFlag != 0x12 && iconFlag != 0x13) || blockCnt < 1 || blockCnt > 15 {
-			continue
-		}
-		// Check reserved zero bytes at offset 68..79 to confirm genuine PS1 Memory Card header
-		zeroes := 0
-		for z := 68; z < 80; z++ {
-			if data[i+z] == 0 {
-				zeroes++
-			}
-		}
-		if zeroes < 8 {
-			continue
-		}
-
-		titleBytes := data[i+4 : i+68]
-		decoded := decodePS1ShiftJISOrASCII(titleBytes)
-		cleaned := cleanInternalHeaderString(decoded)
-		if len(cleaned) >= 4 && !isPureNumberOrGenericTitle(cleaned) && normalizePS1Serial(cleaned) == "" {
-			return cleaned
-		}
-	}
-	return ""
-}
-
-func decodePS1ShiftJISOrASCII(b []byte) string {
-	var out strings.Builder
-	for i := 0; i < len(b); i++ {
-		c := b[i]
-		if c == 0 {
-			break
-		}
-		// Shift-JIS 2-byte full-width ASCII characters (0x81 / 0x82)
-		if (c == 0x81 || c == 0x82) && i+1 < len(b) {
-			c2 := b[i+1]
-			i++
-			if c == 0x81 {
-				switch c2 {
-				case 0x40:
-					out.WriteByte(' ')
-				case 0x44:
-					out.WriteByte('.')
-				case 0x46:
-					out.WriteByte(':')
-				case 0x49:
-					out.WriteByte('!')
-				case 0x5B, 0x7C:
-					out.WriteByte('-')
-				case 0x5E:
-					out.WriteByte('/')
-				case 0x66:
-					out.WriteByte('\'')
-				case 0x95:
-					out.WriteByte('&')
-				default:
-					out.WriteByte(' ')
-				}
-			} else if c == 0x82 {
-				if c2 >= 0x4F && c2 <= 0x58 {
-					out.WriteByte('0' + (c2 - 0x4F))
-				} else if c2 >= 0x60 && c2 <= 0x79 {
-					out.WriteByte('A' + (c2 - 0x60))
-				} else if c2 >= 0x81 && c2 <= 0x9A {
-					out.WriteByte('a' + (c2 - 0x81))
-				}
-			}
-			continue
-		}
-		if c >= 32 && c <= 126 {
-			out.WriteByte(c)
-		} else {
-			break
-		}
-	}
-	return strings.TrimSpace(out.String())
-}
-
-// Check if any media file in images/ or videos/ starts with the ROM's number and has a real title attached (e.g. "000001 - Tekken 3.png")
-func extractTitleFromCompanionMediaFile(romPath string) string {
-	romDir := filepath.Dir(romPath)
-	baseNoExt := strings.ToLower(strings.TrimSuffix(filepath.Base(romPath), filepath.Ext(romPath)))
-	if !pureNumberRegex.MatchString(baseNoExt) {
-		return ""
-	}
-	for _, sub := range []string{"images", "downloaded_images", "download_images", "boxart", "videos"} {
-		mDir := filepath.Join(romDir, sub)
-		entries, err := os.ReadDir(mDir)
-		if err != nil {
-			continue
-		}
-		for _, e := range entries {
-			if e.IsDir() {
-				continue
-			}
-			nameNoExt := strings.TrimSuffix(e.Name(), filepath.Ext(e.Name()))
-			lower := strings.ToLower(nameNoExt)
-			for _, sfx := range []string{"-image", "-thumb", "-boxart", "-snap", "-marquee", "-video"} {
-				if strings.HasSuffix(lower, sfx) {
-					nameNoExt = nameNoExt[:len(nameNoExt)-len(sfx)]
-					lower = strings.ToLower(nameNoExt)
-					break
-				}
-			}
-			if strings.HasPrefix(lower, baseNoExt) && len(nameNoExt) > len(baseNoExt)+2 {
-				stripped := stripLeadingIndexExcept007(nameNoExt)
-				if stripped != "" && !isPureNumberOrGenericTitle(stripped) {
-					return stripped
-				}
-			}
-		}
-	}
-	return ""
-}
-
-// Parse Sony PARAM.SFO binary table (inside PS1/PSP .PBP files) to extract TITLE and DISC_ID
-func parseParamSFO(sfo []byte) (title string, discID string) {
-	if len(sfo) < 20 || string(sfo[0:4]) != "\x00PSF" {
-		return "", ""
-	}
-	keyTableStart := binary.LittleEndian.Uint32(sfo[0x08:0x0C])
-	dataTableStart := binary.LittleEndian.Uint32(sfo[0x0C:0x10])
-	numEntries := binary.LittleEndian.Uint32(sfo[0x10:0x14])
-	if numEntries > 256 || int(keyTableStart) >= len(sfo) || int(dataTableStart) >= len(sfo) {
-		return "", ""
-	}
-
-	for i := uint32(0); i < numEntries; i++ {
-		entryOff := 20 + i*16
-		if int(entryOff+16) > len(sfo) {
-			break
-		}
-		keyOff := uint32(binary.LittleEndian.Uint16(sfo[entryOff : entryOff+2]))
-		dataLen := binary.LittleEndian.Uint32(sfo[entryOff+4 : entryOff+8])
-		dataOff := binary.LittleEndian.Uint32(sfo[entryOff+12 : entryOff+16])
-
-		absKey := keyTableStart + keyOff
-		absData := dataTableStart + dataOff
-		if int(absKey) >= len(sfo) || int(absData+dataLen) > len(sfo) {
-			continue
-		}
-
-		// Read null-terminated key name
-		keyEnd := absKey
-		for int(keyEnd) < len(sfo) && sfo[keyEnd] != 0 {
-			keyEnd++
-		}
-		keyName := string(sfo[absKey:keyEnd])
-		val := strings.TrimRight(string(sfo[absData:absData+dataLen]), "\x00 ")
-
-		if keyName == "TITLE" && val != "" {
-			title = val
-		} else if keyName == "DISC_ID" && val != "" {
-			discID = val
-		}
-	}
-	return title, discID
-}
-
-func isPrintableASCII(b []byte) bool {
-	printable := 0
-	for _, c := range b {
-		if c == 0 {
-			break
-		}
-		if c >= 32 && c <= 126 {
-			printable++
-		} else {
-			return false
-		}
-	}
-	return printable >= 3
-}
-
-func cleanInternalHeaderString(raw string) string {
-	var b strings.Builder
-	for _, r := range raw {
-		if r >= 32 && r != 127 {
-			b.WriteRune(r)
-		}
-	}
-	s := strings.TrimSpace(b.String())
-	s = strings.ReplaceAll(s, "_", " ")
-	fields := strings.Fields(s)
-	s = strings.Join(fields, " ")
-	// Convert ALL-CAPS internal cartridge headers (like "SUPER MARIO WORLD") to Title Case
-	if s == strings.ToUpper(s) && len(s) > 4 {
-		words := strings.Fields(strings.ToLower(s))
-		for i, w := range words {
-			if w == "ii" || w == "iii" || w == "iv" || w == "vi" || w == "vii" || w == "viii" {
-				words[i] = strings.ToUpper(w)
-			} else if len(w) > 0 {
-				runes := []rune(w)
-				runes[0] = unicode.ToUpper(runes[0])
-				words[i] = string(runes)
-			}
-		}
-		return strings.Join(words, " ")
-	}
-	return s
-}
-
-// Explicit exception for Agent 007 (James Bond) games so "007" is never stripped or caught in an endless rename loop!
-func isJamesBond007Game(text string) bool {
-	lower := strings.ToLower(strings.TrimSpace(text))
-	if lower == "" {
-		return false
-	}
-	bondKeywords := []string{
-		"james bond", "agent 007", "goldeneye", "tomorrow never dies",
-		"world is not enough", "nightfire", "agent under fire",
-		"everything or nothing", "from russia with love", "007 racing",
-		"goldfinger", "licence to kill", "license to kill", "live and let die",
-		"view to a kill", "spy who loved me", "octopussy", "moonraker",
-		"quantum of solace", "blood stone", "007: ", "007 - ", "007 (",
-		"007 [", "007_", "duel 007", "007 duel",
-	}
-	for _, kw := range bondKeywords {
-		if strings.Contains(lower, kw) {
-			return true
-		}
-	}
-	return false
-}
-
-func countLettersInString(s string) int {
-	cnt := 0
-	for _, r := range s {
-		if unicode.IsLetter(r) {
-			cnt++
-		}
-	}
-	return cnt
-}
-
-// Strip leading catalog index numbers (e.g. "001 - Super Mario", "02. Contra"), EXCEPT when the number is "007"
-// OR when stripping the number would leave no real alphabetic title (preventing "000001 (World)" -> "(World)" bug)!
-func stripLeadingIndexExcept007(s string) string {
-	if isJamesBond007Game(s) {
-		return s
-	}
-	for i := 0; i < 2; i++ {
-		m := leadingNumRegex.FindStringSubmatchIndex(s)
-		if len(m) >= 4 {
-			numStr := s[m[2]:m[3]]
-			if numStr == "007" {
-				// Preserve "007" prefix for Agent 007 games!
-				break
-			}
-			remainder := strings.TrimSpace(s[m[1]:])
-			remWithoutTags := strings.TrimSpace(tagStripRegex.ReplaceAllString(remainder, ""))
-			if countLettersInString(remWithoutTags) < 2 {
-				// Do NOT strip the number if there is no alphabetic title after it!
-				break
-			}
-			s = remainder
-		} else {
-			break
-		}
-	}
-	return s
-}
-
-// Scan each folder for sequential numbered ROM filenames (1, 2, 3... / 01, 02... / 001, 002... / 0001, 0002...)
-// while excluding 007 James Bond games so they never loop.
-func buildSequentialNumberedCache(candidatePaths []string) {
-	byDir := make(map[string][]string)
-	for _, p := range candidatePaths {
-		dir := filepath.Dir(p)
-		byDir[dir] = append(byDir[dir], filepath.Base(p))
-	}
-
-	newCache := make(map[string]map[string]bool)
-
-	for dir, files := range byDir {
-		dirFlags := make(map[string]bool)
-		type numFile struct {
-			lowerName string
-			num       int
-			isPure    bool
-		}
-		var parsed []numFile
-		numSet := make(map[int]bool)
-
-		for _, fn := range files {
-			if isJamesBond007Game(fn) {
-				continue
-			}
-			ext := filepath.Ext(fn)
-			base := strings.TrimSpace(strings.TrimSuffix(fn, ext))
-			// Also strip region tags like "0001 (USA)" -> "0001" to check if the core name is just a number
-			baseWithoutTags := strings.TrimSpace(tagStripRegex.ReplaceAllString(base, ""))
-			lowerBase := strings.ToLower(baseWithoutTags)
-
-			if pm := pureNumberRegex.FindStringSubmatch(lowerBase); len(pm) >= 2 {
-				if n, err := strconv.Atoi(pm[1]); err == nil {
-					// If the file is literally named "007 (USA).nes" (already has region tag and is 007), don't treat as raw number
-					if lowerBase == "007" && base != baseWithoutTags {
-						continue
-					}
-					parsed = append(parsed, numFile{lowerName: strings.ToLower(fn), num: n, isPure: true})
-					numSet[n] = true
-					continue
-				}
-			}
-		}
-
-		// A file in this folder is considered a numbered ROM if:
-		// 1. It is part of a sequence of numbers in the same folder (e.g., n-1, n+1, n-2, n+2 exist in the folder, or >= 2 numbered ROMs in folder)
-		// 2. Or it is a pure number (like 0001.pbp, 01.bin) and not "007" standalone
-		hasSequenceInFolder := len(parsed) >= 2
-		for _, pf := range parsed {
-			isAdjacent := numSet[pf.num-1] || numSet[pf.num+1] || numSet[pf.num-2] || numSet[pf.num+2]
-			if pf.num == 7 && !hasSequenceInFolder && !isAdjacent {
-				// Standalone "007" without other sequential numbers in the folder -> treat as Agent 007!
-				continue
-			}
-			if pf.isPure || isAdjacent || hasSequenceInFolder {
-				dirFlags[pf.lowerName] = true
-			}
-		}
-
-		newCache[dir] = dirFlags
-	}
-
-	cacheMu.Lock()
-	seqNumberedDirCache = newCache
-	cacheMu.Unlock()
-}
-
-func isNumberedRomFile(fullPath, fileName, extractedTitle string) bool {
-	// Never mark as an unrenamed numbered ROM if the file is already named as a James Bond 007 title!
-	if isJamesBond007Game(fileName) {
-		return false
-	}
-	ext := filepath.Ext(fileName)
-	base := strings.TrimSpace(strings.TrimSuffix(fileName, ext))
-	baseWithoutTags := strings.TrimSpace(tagStripRegex.ReplaceAllString(base, ""))
-	lowerBase := strings.ToLower(baseWithoutTags)
-
-	// If the filename is "007" (or "007 (USA)") and the internal ROM header is ALSO a 007 Bond game,
-	// and the filename already contains tags or "007", prevent re-renaming loop!
-	if lowerBase == "007" && isJamesBond007Game(extractedTitle) && base != "007" && base != "0007" {
-		return false
-	}
-
-	dir := filepath.Dir(fullPath)
-	cacheMu.Lock()
-	dirMap, ok := seqNumberedDirCache[dir]
-	cacheMu.Unlock()
-	if ok {
-		if dirMap[strings.ToLower(fileName)] {
-			return true
-		}
-	}
-
-	if lowerBase == "007" {
-		return false
-	}
-	return pureNumberRegex.MatchString(lowerBase)
-}
-
-func isNumberedRomFileName(fileName string) bool {
-	if isJamesBond007Game(fileName) {
-		return false
-	}
-	base := strings.TrimSuffix(fileName, filepath.Ext(fileName))
-	baseWithoutTags := strings.TrimSpace(tagStripRegex.ReplaceAllString(base, ""))
-	lower := strings.ToLower(baseWithoutTags)
-	if lower == "007" {
-		return false
-	}
-	return pureNumberRegex.MatchString(lower)
-}
-
-// ============================================================================
 // CONSOLE DETECTION & DEDUPLICATION ENGINE
 // ============================================================================
-
-func detectConsoleCode(fullPath, ext string) string {
-	lowerPath := strings.ToLower(filepath.ToSlash(fullPath))
-	parts := strings.Split(lowerPath, "/")
-
-	for i := len(parts) - 2; i >= 0; i-- {
-		seg := parts[i]
-		switch seg {
-		case "famicom", "fc":
-			if ext == ".nes" || ext == ".unf" || ext == ".zip" {
-				return "famicom"
-			}
-		case "fds", "famicom disk system":
-			return "fds"
-		case "nes", "dendy":
-			if ext == ".nes" || ext == ".unf" || ext == ".zip" {
-				return "nes"
-			}
-		case "snes", "sfc", "superfamicom", "super nintendo":
-			return "snes"
-		case "gba", "game boy advance", "gameboy advance":
-			return "gba"
-		case "gbc", "game boy color", "gameboy color":
-			return "gbc"
-		case "gb", "game boy", "gameboy":
-			return "gb"
-		case "megadrive", "genesis", "md", "sega megadrive", "sega genesis":
-			return "genesis"
-		case "mastersystem", "sms":
-			return "mastersystem"
-		case "gamegear", "gg":
-			return "gamegear"
-		case "sega32x", "32x":
-			return "sega32x"
-		case "pcengine", "pce", "turbografx", "tg16":
-			return "pcengine"
-		case "psx", "ps1", "playstation":
-			return "psx"
-		case "psp":
-			return "psp"
-		case "nds", "ds":
-			return "nds"
-		case "n64", "nintendo64":
-			return "n64"
-		case "arcade", "mame", "fbneo", "neogeo", "cps", "cps1", "cps2", "cps3":
-			return "arcade"
-		}
-	}
-
-	if code, ok := extToDefaultConsole[ext]; ok {
-		return code
-	}
-	return "arcade"
-}
-
-func analyzeSubfolderContext(rootFolder, fullPath string) (relSubfolder string, isRusFolder bool, isTopFolder bool) {
-	rel, err := filepath.Rel(rootFolder, filepath.Dir(fullPath))
-	if err != nil || rel == "." {
-		rel = "(Корень)"
-	}
-	relSubfolder = rel
-
-	lowerRel := strings.ToLower(rel)
-	if strings.Contains(lowerRel, "rus") || strings.Contains(lowerRel, "рус") || strings.Contains(lowerRel, "perevod") || strings.Contains(lowerRel, "перевод") {
-		isRusFolder = true
-	}
-	if strings.Contains(lowerRel, "top") || strings.Contains(lowerRel, "best") || strings.Contains(lowerRel, "лучш") || strings.Contains(lowerRel, "hit") || strings.Contains(lowerRel, "100") {
-		isTopFolder = true
-	}
-	return
-}
-
-func buildComparisonKey(cleanTitle string) string {
-	s := strings.ToLower(cleanTitle)
-	s = stripLeadingIndexExcept007(s)
-
-	romanPairs := []struct{ rom, dig string }{
-		{" viii ", " 8 "}, {" vii ", " 7 "}, {" vi ", " 6 "},
-		{" iv ", " 4 "}, {" iii ", " 3 "}, {" ii ", " 2 "},
-	}
-	s = " " + s + " "
-	for _, rp := range romanPairs {
-		s = strings.ReplaceAll(s, rp.rom, rp.dig)
-	}
-
-	words := strings.FieldsFunc(s, func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
-	})
-
-	noiseWords := map[string]bool{
-		"the": true, "and": true, "version": true, "edition": true,
-		"rus": true, "russian": true, "ru": true, "eng": true, "english": true,
-		"usa": true, "eur": true, "europe": true, "japan": true, "jpn": true, "world": true,
-		"rev": true, "v1": true, "v2": true, "top": true, "top100": true,
-		"рус": true, "русская": true, "версия": true, "перевод": true,
-	}
-
-	var kept []string
-	for _, w := range words {
-		if noiseWords[w] {
-			continue
-		}
-		kept = append(kept, w)
-	}
-
-	res := strings.Join(kept, "")
-	if res == "" {
-		return strings.ReplaceAll(strings.ToLower(cleanTitle), " ", "")
-	}
-	return res
-}
-
-func extractCleanTitle(fileName string) string {
-	ext := filepath.Ext(fileName)
-	rawBase := strings.TrimSpace(strings.TrimSuffix(fileName, ext))
-
-	// First strip region/bracket tags like "(World)" or "(USA)" BEFORE checking if it's a pure number!
-	withoutTags := strings.TrimSpace(tagStripRegex.ReplaceAllString(rawBase, " "))
-	if pureNumberRegex.MatchString(strings.ToLower(withoutTags)) {
-		return withoutTags
-	}
-
-	base := stripLeadingIndexExcept007( withoutTags )
-	base = strings.ReplaceAll(base, "_", " ")
-	base = strings.ReplaceAll(base, ".", " ")
-
-	tokens := strings.Fields(base)
-	var filtered []string
-	for _, t := range tokens {
-		up := strings.ToUpper(t)
-		if up == "USA" || up == "EUR" || up == "EUROPE" || up == "JAPAN" || up == "JPN" ||
-			up == "WORLD" || up == "RUS" || up == "RUSSIAN" || up == "RU" ||
-			up == "V1" || up == "V1.0" || up == "V1.1" || up == "TOP100" ||
-			up == "РУС" || up == "РУССКАЯ" || up == "ВЕРСИЯ" {
-			continue
-		}
-		filtered = append(filtered, t)
-	}
-	candidate := strings.Join(filtered, " ")
-	if len(filtered) == 0 || countLettersInString(candidate) < 2 {
-		if withoutTags != "" {
-			return withoutTags
-		}
-		return rawBase
-	}
-	return candidate
-}
 
 func startScan(hwnd uintptr) {
 	stateMu.Lock()
@@ -3260,11 +1280,7 @@ func startScan(hwnd uintptr) {
 		return
 	}
 
-	cacheMu.Lock()
-	gamelistTitleCache = make(map[string]map[string]string)
-	gamelistEntryCache = make(map[string]map[string]GameEntryXML)
-	seqNumberedDirCache = make(map[string]map[string]bool)
-	cacheMu.Unlock()
+	aegiscore.ResetScanCaches()
 
 	priority := getSelectedRegionPriority()
 
@@ -3314,20 +1330,20 @@ func startScan(hwnd uintptr) {
 			}
 
 			ext := strings.ToLower(filepath.Ext(p))
-			if _, ok := extToDefaultConsole[ext]; ok || ext == ".zip" {
+			if _, ok := aegiscore.ExtToDefaultConsole[ext]; ok || ext == ".zip" {
 				candidatePaths = append(candidatePaths, p)
 			}
 			return nil
 		})
 
 		// First pass: detect sequential numbered ROM series in each folder (excluding 007 James Bond games!)
-		buildSequentialNumberedCache(candidatePaths)
+		aegiscore.BuildSequentialNumberedCache(candidatePaths)
 
 		totalCandidates := len(candidatePaths)
 		appendLog(fmt.Sprintf("Найдено ромов: %d. Анализ порядковых номеров (исключая 007), чтение заголовков ромов и сверка дублей...", totalCandidates))
 
 		jobsCh := make(chan string, totalCandidates+1)
-		resultsCh := make(chan RomItem, totalCandidates+1)
+		resultsCh := make(chan aegiscore.RomItem, totalCandidates+1)
 
 		var wg sync.WaitGroup
 		for w := 0; w < 8; w++ {
@@ -3338,7 +1354,7 @@ func startScan(hwnd uintptr) {
 					if atomic.LoadInt32(&cancelRequested) != 0 {
 						continue
 					}
-					if item, ok := inspectRomFile(rootFolder, p); ok {
+					if item, ok := aegiscore.InspectRomFile(rootFolder, p); ok {
 						resultsCh <- item
 					}
 				}
@@ -3355,7 +1371,7 @@ func startScan(hwnd uintptr) {
 			close(resultsCh)
 		}()
 
-		var results []RomItem
+		var results []aegiscore.RomItem
 		processed := 0
 		for item := range resultsCh {
 			results = append(results, item)
@@ -3379,7 +1395,7 @@ func startScan(hwnd uintptr) {
 			return results[i].FileName < results[j].FileName
 		})
 
-		results = deduplicateAcrossSubfolders(results, priority)
+		results = aegiscore.DeduplicateAcrossSubfolders(results, priority)
 
 		stateMu.Lock()
 		scannedRoms = results
@@ -3392,430 +1408,11 @@ func startScan(hwnd uintptr) {
 	}()
 }
 
-func inspectRomFile(rootFolder, path string) (RomItem, bool) {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return RomItem{}, false
-	}
-
-	ext := strings.ToLower(filepath.Ext(path))
-	crcTable := crc32.MakeTable(crc32.IEEE)
-
-	if ext == ".zip" {
-		zr, err := zip.OpenReader(path)
-		if err != nil {
-			return RomItem{}, false
-		}
-		defer zr.Close()
-
-		for _, zf := range zr.File {
-			if zf.FileInfo().IsDir() {
-				continue
-			}
-			innerExt := strings.ToLower(filepath.Ext(zf.Name))
-			if _, ok := extToDefaultConsole[innerExt]; !ok {
-				continue
-			}
-
-			rc, err := zf.Open()
-			if err != nil {
-				continue
-			}
-			data, err := io.ReadAll(rc)
-			rc.Close()
-			if err != nil {
-				continue
-			}
-
-			crcHex := fmt.Sprintf("%08X", crc32.Checksum(data, crcTable))
-			skip := detectHeaderSkip(innerExt, data)
-			hdrCrcHex := crcHex
-			if skip > 0 && len(data) > skip {
-				hdrCrcHex = fmt.Sprintf("%08X", crc32.Checksum(data[skip:], crcTable))
-			}
-			md5Sum := md5.Sum(data)
-			consoleCode := detectConsoleCode(path, innerExt)
-
-			return buildRomItem(rootFolder, path, fi.Name(), fi.Size(), ".zip", consoleCode, crcHex, hdrCrcHex, hex.EncodeToString(md5Sum[:])), true
-		}
-		return RomItem{}, false
-	}
-
-	if _, ok := extToDefaultConsole[ext]; !ok {
-		return RomItem{}, false
-	}
-
-	// For huge CD/ISO/PBP/CHD files (> 32 MB), hash the first 16 MB for fast CRC32 without stalling the disk
-	var crcHex, hdrCrcHex, md5Hex string
-	if fi.Size() > 32*1024*1024 {
-		f, err := os.Open(path)
-		if err != nil {
-			return RomItem{}, false
-		}
-		buf := make([]byte, 4*1024*1024)
-		n, _ := f.Read(buf)
-		f.Close()
-		crcHex = fmt.Sprintf("%08X", crc32.Checksum(buf[:n], crcTable))
-		hdrCrcHex = crcHex
-		md5Sum := md5.Sum(buf[:n])
-		md5Hex = hex.EncodeToString(md5Sum[:])
-	} else {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return RomItem{}, false
-		}
-		crcHex = fmt.Sprintf("%08X", crc32.Checksum(data, crcTable))
-		skip := detectHeaderSkip(ext, data)
-		hdrCrcHex = crcHex
-		if skip > 0 && len(data) > skip {
-			hdrCrcHex = fmt.Sprintf("%08X", crc32.Checksum(data[skip:], crcTable))
-		}
-		md5Sum := md5.Sum(data)
-		md5Hex = hex.EncodeToString(md5Sum[:])
-	}
-
-	consoleCode := detectConsoleCode(path, ext)
-	return buildRomItem(rootFolder, path, fi.Name(), fi.Size(), ext, consoleCode, crcHex, hdrCrcHex, md5Hex), true
-}
-
-func detectHeaderSkip(ext string, data []byte) int {
-	if ext == ".nes" && len(data) >= 16 && string(data[:4]) == "NES\x1a" {
-		return 16
-	}
-	if (ext == ".smc" || ext == ".sfc") && len(data)%1024 == 512 && len(data) > 512 {
-		return 512
-	}
-	return 0
-}
-
-func buildRomItem(rootFolder, fullPath, fileName string, size int64, ext, consoleCode, crcHex, hdrCrcHex, md5Hex string) RomItem {
-	relSub, isRusFolder, isTopFolder := analyzeSubfolderContext(rootFolder, fullPath)
-	isRusFile := rusTagRegex.MatchString(fileName) || isRusFolder
-
-	// Extract real game title from gamelist.xml OR internal binary ROM header (e.g. for 1.pbp, 02.bin, 0001.pbp, etc.)
-	gamelistTitle := getGamelistTitleForFile(fullPath)
-	internalHdrTitle := extractInternalBinaryRomTitle(fullPath, ext, consoleCode)
-
-	extractedTitle := ""
-	if gamelistTitle != "" {
-		extractedTitle = gamelistTitle
-	} else if internalHdrTitle != "" {
-		extractedTitle = internalHdrTitle
-	}
-
-	isNumbered := isNumberedRomFile(fullPath, fileName, extractedTitle)
-
-	cleanTitle := extractCleanTitle(fileName)
-	if (isNumbered || len(cleanTitle) <= 3) && extractedTitle != "" {
-		cleanTitle = extractCleanTitle(extractedTitle)
-	}
-	if extractedTitle == "" {
-		extractedTitle = cleanTitle
-	}
-
-	if rusTagRegex.MatchString(extractedTitle) {
-		isRusFile = true
-	}
-
-	region := parseRegion(fileName+" "+extractedTitle, isRusFile)
-	revision := parseRevision(fileName)
-	compKey := buildComparisonKey(cleanTitle)
-	isJunk := junkRegex.MatchString(fileName)
-
-	meta, ok := consoleCatalog[consoleCode]
-	if !ok {
-		meta = consoleCatalog["nes"]
-	}
-
-	canonExt := ext
-	if ext == ".smc" {
-		canonExt = ".sfc"
-	} else if ext == ".gen" || ext == ".smd" {
-		canonExt = ".md"
-	}
-
-	// CRITICAL FIX v5.0: Never append a fake "(World)" tag when region is unknown/World,
-	// and if CleanTitle is still a pure number, keep original fileName!
-	canonicalName := fileName
-	if !isPureNumberOrGenericTitle(cleanTitle) && countLettersInString(cleanTitle) >= 2 {
-		if isRusFile {
-			canonicalName = fmt.Sprintf("%s (RUS)%s", cleanTitle, canonExt)
-		} else if revision != "" && region != "World" {
-			canonicalName = fmt.Sprintf("%s (%s) (%s)%s", cleanTitle, region, revision, canonExt)
-		} else if region != "World" {
-			canonicalName = fmt.Sprintf("%s (%s)%s", cleanTitle, region, canonExt)
-		} else {
-			canonicalName = fmt.Sprintf("%s%s", cleanTitle, canonExt)
-		}
-	}
-
-	romDir := filepath.Dir(fullPath)
-	baseNoExt := strings.TrimSuffix(fileName, filepath.Ext(fileName))
-	imgRel, _, _, vidRel := resolveExistingMediaPathsForRom(romDir, baseNoExt, cleanTitle)
-
-	mediaStatus := "Нет медиа"
-	hasImg := imgRel != ""
-	hasVid := vidRel != ""
-	if hasImg && hasVid {
-		mediaStatus = "✔ Картинка + Видео"
-	} else if hasImg {
-		mediaStatus = "✔ Картинка"
-	}
-
-	status := "verified"
-	reason := "Оставить 1G1R"
-	if isJunk {
-		status = "junk_bad_dump"
-		reason = "Битый дамп [b]"
-	} else if isNumbered && !isPureNumberOrGenericTitle(cleanTitle) {
-		reason = "Порядковый № -> " + cleanTitle
-	} else if isNumbered {
-		reason = "Порядковый № (требуется парсинг)"
-	}
-
-	return RomItem{
-		FilePath:        fullPath,
-		SourceSubfolder: relSub,
-		FileName:        fileName,
-		ExtractedTitle:  extractedTitle,
-		CleanTitle:      cleanTitle,
-		ComparisonKey:   compKey,
-		CanonicalName:   canonicalName,
-		Extension:       ext,
-		ConsoleCode:     consoleCode,
-		Generation:      meta.GenerationFolder,
-		FileSize:        size,
-		CRC32:           crcHex,
-		HeaderlessCRC32: hdrCrcHex,
-		MD5:             md5Hex,
-		Region:          region,
-		IsRussian:       isRusFile,
-		IsFromTopFolder: isTopFolder,
-		IsNumberedFile:  isNumbered,
-		Revision:        revision,
-		Status:          status,
-		Is1G1RWinner:    !isJunk,
-		Reason:          reason,
-		MediaStatus:     mediaStatus,
-	}
-}
-
-func parseRegion(name string, isRus bool) string {
-	if isRus {
-		return "Russia"
-	}
-	m := regionRegex.FindStringSubmatch(name)
-	if len(m) > 1 {
-		r := strings.ToUpper(m[1])
-		switch r {
-		case "U", "US", "USA", "UE", "JU":
-			return "USA"
-		case "E", "EUR", "EUROPE", "EN,FR,DE":
-			return "Europe"
-		case "J", "JPN", "JAPAN", "EN,JA":
-			return "Japan"
-		case "W", "WORLD":
-			return "World"
-		case "RUSSIA", "RUS", "RU":
-			return "Russia"
-		default:
-			return m[1]
-		}
-	}
-	lower := strings.ToLower(name)
-	if strings.Contains(lower, "usa") {
-		return "USA"
-	}
-	if strings.Contains(lower, "eur") || strings.Contains(lower, "pal") {
-		return "Europe"
-	}
-	if strings.Contains(lower, "jap") || strings.Contains(lower, "jpn") {
-		return "Japan"
-	}
-	return "World"
-}
-
-func parseRevision(name string) string {
-	m := revisionRegex.FindStringSubmatch(name)
-	if len(m) > 1 {
-		return m[1]
-	}
-	return ""
-}
-
-// Check if two files in the same folder are companion files of the same CD game (e.g., 000001.cue + 000001.bin)
-func areCompanionDiscFiles(a, b RomItem) bool {
-	if !strings.EqualFold(filepath.Dir(a.FilePath), filepath.Dir(b.FilePath)) {
-		return false
-	}
-	baseA := strings.ToLower(strings.TrimSuffix(a.FileName, filepath.Ext(a.FileName)))
-	baseB := strings.ToLower(strings.TrimSuffix(b.FileName, filepath.Ext(b.FileName)))
-	if baseA != baseB {
-		return false
-	}
-	return !strings.EqualFold(a.Extension, b.Extension)
-}
-
-func deduplicateAcrossSubfolders(items []RomItem, priority []string) []RomItem {
-	seenHash := make(map[string]int)
-	for i := range items {
-		if items[i].Status == "junk_bad_dump" {
-			continue
-		}
-		hKey := items[i].ConsoleCode + "::crc::" + items[i].HeaderlessCRC32
-		if firstIdx, exists := seenHash[hKey]; exists {
-			if areCompanionDiscFiles(items[i], items[firstIdx]) {
-				continue
-			}
-			if scoreRomCandidate(items[i], priority) > scoreRomCandidate(items[firstIdx], priority) {
-				items[firstIdx].Status = "duplicate_clone"
-				items[firstIdx].Is1G1RWinner = false
-				items[firstIdx].Reason = fmt.Sprintf("Дубль по CRC32 (оставлен из %s)", items[i].SourceSubfolder)
-				seenHash[hKey] = i
-			} else {
-				items[i].Status = "duplicate_clone"
-				items[i].Is1G1RWinner = false
-				items[i].Reason = fmt.Sprintf("Дубль по CRC32 (оставлен из %s)", items[firstIdx].SourceSubfolder)
-			}
-		} else {
-			seenHash[hKey] = i
-		}
-	}
-
-	groups := make(map[string][]int)
-	for i, it := range items {
-		if it.Status == "verified" {
-			// Do not group unparsed numbered files together by title if their title is still a pure number!
-			if isPureNumberOrGenericTitle(it.CleanTitle) {
-				continue
-			}
-			gKey := it.ConsoleCode + "::title::" + it.ComparisonKey
-			groups[gKey] = append(groups[gKey], i)
-		}
-	}
-
-	for _, idxs := range groups {
-		if len(idxs) <= 1 {
-			continue
-		}
-		bestIdx := idxs[0]
-		bestScore := scoreRomCandidate(items[bestIdx], priority)
-		for _, idx := range idxs[1:] {
-			sc := scoreRomCandidate(items[idx], priority)
-			if sc > bestScore {
-				bestScore = sc
-				bestIdx = idx
-			}
-		}
-		winner := items[bestIdx]
-		for _, idx := range idxs {
-			if idx == bestIdx || areCompanionDiscFiles(items[idx], winner) {
-				items[idx].Is1G1RWinner = true
-				items[idx].Status = "verified"
-				if idx == bestIdx {
-					items[idx].Reason = fmt.Sprintf("Лучший из %d папок (%s)", len(idxs), winner.Region)
-				}
-			} else {
-				items[idx].Is1G1RWinner = false
-				items[idx].Status = "duplicate_clone"
-				items[idx].Reason = fmt.Sprintf("Дубль из [%s]", items[idx].SourceSubfolder)
-			}
-		}
-	}
-
-	byConsole := make(map[string][]int)
-	for i, it := range items {
-		if it.Status == "verified" && !isPureNumberOrGenericTitle(it.CleanTitle) {
-			byConsole[it.ConsoleCode] = append(byConsole[it.ConsoleCode], i)
-		}
-	}
-
-	for _, idxs := range byConsole {
-		for a := 0; a < len(idxs); a++ {
-			idxA := idxs[a]
-			if items[idxA].Status != "verified" {
-				continue
-			}
-			for b := a + 1; b < len(idxs); b++ {
-				idxB := idxs[b]
-				if items[idxB].Status != "verified" {
-					continue
-				}
-				if areCompanionDiscFiles(items[idxA], items[idxB]) {
-					continue
-				}
-				if areTitlesSameGame(items[idxA].CleanTitle, items[idxB].CleanTitle, items[idxA].ComparisonKey, items[idxB].ComparisonKey) {
-					if scoreRomCandidate(items[idxB], priority) > scoreRomCandidate(items[idxA], priority) {
-						items[idxA].Status = "duplicate_clone"
-						items[idxA].Is1G1RWinner = false
-						items[idxA].Reason = fmt.Sprintf("Повтор (оставлен %s)", items[idxB].FileName)
-						break
-					} else {
-						items[idxB].Status = "duplicate_clone"
-						items[idxB].Is1G1RWinner = false
-						items[idxB].Reason = fmt.Sprintf("Повтор (оставлен %s)", items[idxA].FileName)
-					}
-				}
-			}
-		}
-	}
-
-	return items
-}
-
-func areTitlesSameGame(titleA, titleB, keyA, keyB string) bool {
-	if keyA == keyB {
-		return true
-	}
-	if strings.EqualFold(strings.TrimSpace(titleA), strings.TrimSpace(titleB)) {
-		return true
-	}
-	toksA := tokenizeNormalized(titleA)
-	toksB := tokenizeNormalized(titleB)
-	if len(toksA) < 2 || len(toksB) < 2 {
-		return false
-	}
-	common := 0
-	for t := range toksA {
-		if toksB[t] {
-			common++
-		}
-	}
-	union := len(toksA) + len(toksB) - common
-	if union == 0 {
-		return false
-	}
-	return float64(common)/float64(union) >= 0.85
-}
-
-func scoreRomCandidate(r RomItem, priority []string) int {
-	score := 0
-	for i, reg := range priority {
-		if strings.EqualFold(r.Region, reg) {
-			score += (len(priority) - i) * 100
-			break
-		}
-	}
-	if r.IsRussian && len(priority) > 0 && strings.EqualFold(priority[0], "Russia") {
-		score += 60
-	}
-	if r.Revision != "" {
-		score += 15
-	}
-	if r.IsFromTopFolder {
-		score += 10
-	}
-	if r.Extension != ".zip" {
-		score += 5
-	}
-	return score
-}
-
 func populateListView() {
 	procSendMessageW.Call(hListView, LVM_DELETEALLITEMS, 0, 0)
 
 	stateMu.Lock()
-	items := make([]RomItem, len(scannedRoms))
+	items := make([]aegiscore.RomItem, len(scannedRoms))
 	copy(items, scannedRoms)
 	stateMu.Unlock()
 
@@ -3874,7 +1471,7 @@ func populateListView() {
 
 	summary := fmt.Sprintf(
 		"Всего: %d | Уникальных 1G1R: %d | Порядковых номеров (1, 2, 000001... кроме 007): %d | Дублей: %d | Освободится: %s",
-		len(items), cleanCount, numberedCount, cloneCount, formatBytes(reclaimBytes),
+		len(items), cleanCount, numberedCount, cloneCount, aegiscore.FormatBytes(reclaimBytes),
 	)
 	procSetWindowTextW.Call(hLblStats, uintptr(unsafe.Pointer(utf16Ptr(summary))))
 	procSendMessageW.Call(hProgress, PBM_SETPOS, 100, 0)
@@ -3902,7 +1499,7 @@ func startRenameNumberedRoms(hwnd uintptr) {
 		return
 	}
 	isBusy = true
-	items := make([]RomItem, len(scannedRoms))
+	items := make([]aegiscore.RomItem, len(scannedRoms))
 	copy(items, scannedRoms)
 	stateMu.Unlock()
 	atomic.StoreInt32(&cancelRequested, 0)
@@ -3943,8 +1540,8 @@ func startRenameNumberedRoms(hwnd uintptr) {
 			if atomic.LoadInt32(&cancelRequested) != 0 {
 				break
 			}
-			if meta, ok := consoleCatalog[cCode]; ok {
-				_ = getOrLoadLibretroIndex(meta.LibretroSystem)
+			if meta, ok := aegiscore.ConsoleCatalog[cCode]; ok {
+				_ = aegiscore.GetOrLoadLibretroIndex(meta.LibretroSystem)
 			}
 		}
 
@@ -3968,7 +1565,7 @@ func startRenameNumberedRoms(hwnd uintptr) {
 			}
 
 			// Explicit 007 James Bond exception: if the file on disk is already named as a 007 game, skip it so it NEVER loops!
-			if isJamesBond007Game(r.FileName) {
+			if aegiscore.IsJamesBond007Game(r.FileName) {
 				appendLog(fmt.Sprintf("[ИСКЛЮЧЕНИЕ 007] Пропущена игра про агента 007 (защита от зацикливания): %s", r.FileName))
 				r.IsNumberedFile = false
 				continue
@@ -3980,24 +1577,24 @@ func startRenameNumberedRoms(hwnd uintptr) {
 			}
 
 			// Re-attempt lookup in custom XML, embedded factory XML map (using core number key for "000001 (World).chd"), or binary extraction
-			if isPureNumberOrGenericTitle(r.CleanTitle) {
+			if aegiscore.IsPureNumberOrGenericTitle(r.CleanTitle) {
 				oldBaseLow := strings.ToLower(strings.TrimSuffix(r.FileName, filepath.Ext(r.FileName)))
-				coreKey := extractCoreNumberKey(r.FileName)
-				resolvedTitle := getGamelistTitleForFile(r.FilePath)
+				coreKey := aegiscore.ExtractCoreNumberKey(r.FileName)
+				resolvedTitle := aegiscore.GamelistTitleForFile(r.FilePath)
 				if resolvedTitle == "" {
-					resolvedTitle = factoryR36sNumberMap[oldBaseLow]
+					resolvedTitle = aegiscore.FactoryR36SNumberMap[oldBaseLow]
 				}
 				if resolvedTitle == "" && coreKey != "" {
-					resolvedTitle = factoryR36sNumberMap[coreKey]
+					resolvedTitle = aegiscore.FactoryR36SNumberMap[coreKey]
 				}
 				if resolvedTitle == "" {
-					resolvedTitle = extractInternalBinaryRomTitle(r.FilePath, r.Extension, r.ConsoleCode)
+					resolvedTitle = aegiscore.ExtractInternalBinaryRomTitle(r.FilePath, r.Extension, r.ConsoleCode)
 				}
-				if resolvedTitle != "" && !isPureNumberOrGenericTitle(resolvedTitle) {
+				if resolvedTitle != "" && !aegiscore.IsPureNumberOrGenericTitle(resolvedTitle) {
 					r.ExtractedTitle = resolvedTitle
-					r.CleanTitle = extractCleanTitle(resolvedTitle)
-					r.ComparisonKey = buildComparisonKey(r.CleanTitle)
-					r.Region = parseRegion(resolvedTitle, r.IsRussian)
+					r.CleanTitle = aegiscore.ExtractCleanTitle(resolvedTitle)
+					r.ComparisonKey = aegiscore.BuildComparisonKey(r.CleanTitle)
+					r.Region = aegiscore.ParseRegion(resolvedTitle, r.IsRussian)
 					if r.IsRussian {
 						r.CanonicalName = fmt.Sprintf("%s (RUS)%s", r.CleanTitle, r.Extension)
 					} else if r.Region != "World" {
@@ -4009,11 +1606,11 @@ func startRenameNumberedRoms(hwnd uintptr) {
 			}
 
 			// Only expand via Libretro index if we already have a non-numeric title!
-			if !isPureNumberOrGenericTitle(r.CleanTitle) && countLettersInString(r.CleanTitle) >= 2 {
-				meta := consoleCatalog[r.ConsoleCode]
-				if matched := findBestLibretroMatch(meta.LibretroSystem, r.CleanTitle, r.ComparisonKey, r.Region); matched != "" {
-					expanded := extractCleanTitle(matched)
-					if expanded != "" && !isPureNumberOrGenericTitle(expanded) && countLettersInString(expanded) >= 2 {
+			if !aegiscore.IsPureNumberOrGenericTitle(r.CleanTitle) && aegiscore.CountLettersInString(r.CleanTitle) >= 2 {
+				meta := aegiscore.ConsoleCatalog[r.ConsoleCode]
+				if matched := aegiscore.FindBestLibretroMatch(meta.LibretroSystem, r.CleanTitle, r.ComparisonKey, r.Region); matched != "" {
+					expanded := aegiscore.ExtractCleanTitle(matched)
+					if expanded != "" && !aegiscore.IsPureNumberOrGenericTitle(expanded) && aegiscore.CountLettersInString(expanded) >= 2 {
 						r.CleanTitle = expanded
 						r.ExtractedTitle = expanded
 						if r.IsRussian {
@@ -4027,10 +1624,10 @@ func startRenameNumberedRoms(hwnd uintptr) {
 				}
 			}
 
-			safeNewName := sanitizeFileName(r.CanonicalName)
+			safeNewName := aegiscore.SanitizeFileName(r.CanonicalName)
 			newBaseCheck := strings.TrimSuffix(strings.ToLower(safeNewName), filepath.Ext(safeNewName))
-			newBaseNoTags := strings.TrimSpace(tagStripRegex.ReplaceAllString(newBaseCheck, ""))
-			if strings.EqualFold(r.FileName, safeNewName) || isPureNumberOrGenericTitle(newBaseNoTags) || countLettersInString(newBaseNoTags) < 2 {
+			newBaseNoTags := strings.TrimSpace(aegiscore.TagStripRegex.ReplaceAllString(newBaseCheck, ""))
+			if strings.EqualFold(r.FileName, safeNewName) || aegiscore.IsPureNumberOrGenericTitle(newBaseNoTags) || aegiscore.CountLettersInString(newBaseNoTags) < 2 {
 				continue
 			}
 
@@ -4045,7 +1642,7 @@ func startRenameNumberedRoms(hwnd uintptr) {
 			// Prevent duplicate game titles from colliding by appending [000593]
 			_, statErr := os.Stat(targetPath)
 			if (statErr == nil && !strings.EqualFold(r.FilePath, targetPath)) || (usedNamesPerDir[romDir][strings.ToLower(safeNewName)] && !strings.EqualFold(r.FileName, safeNewName)) {
-				safeNewName = sanitizeFileName(fmt.Sprintf("%s [%s]%s", newBase, oldBase, filepath.Ext(safeNewName)))
+				safeNewName = aegiscore.SanitizeFileName(fmt.Sprintf("%s [%s]%s", newBase, oldBase, filepath.Ext(safeNewName)))
 				targetPath = filepath.Join(romDir, safeNewName)
 				newBase = strings.TrimSuffix(safeNewName, filepath.Ext(safeNewName))
 			}
@@ -4054,7 +1651,7 @@ func startRenameNumberedRoms(hwnd uintptr) {
 			if err := os.Rename(r.FilePath, targetPath); err == nil {
 				undoBatch = append(undoBatch, UndoEntry{FromPath: targetPath, ToPath: r.FilePath})
 				// Also rename companion .bin if this was a .cue, or .cue if this was a .bin, and sync companion RomItem!
-				compOldPath, compNewPath := renameCompanionCueBin(romDir, oldBase, newBase, r.Extension)
+				compOldPath, compNewPath := aegiscore.RenameCompanionCueBin(romDir, oldBase, newBase, r.Extension)
 				if compOldPath != "" && compNewPath != "" {
 					undoBatch = append(undoBatch, UndoEntry{FromPath: compNewPath, ToPath: compOldPath})
 					for cIdx := range items {
@@ -4069,7 +1666,7 @@ func startRenameNumberedRoms(hwnd uintptr) {
 					}
 				}
 				// Also rename existing images, marquees, and videos from 000001.png / 000001-image.png -> RealName-image.png!
-				relocateExistingMediaForRom(romDir, romDir, oldBase, newBase)
+				aegiscore.RelocateExistingMediaForRom(romDir, romDir, oldBase, newBase)
 
 				appendLog(fmt.Sprintf("[НОМЕР -> ИМЯ] %s  ==>  %s", r.FileName, filepath.Base(targetPath)))
 				r.FilePath = targetPath
@@ -4081,7 +1678,7 @@ func startRenameNumberedRoms(hwnd uintptr) {
 
 		// Update MediaStatus for all items and write gamelist.xml for ALL ROMs in each console folder
 		// so that every ROM on disk has its real name and verified existing image/thumbnail path!
-		byDir := make(map[string][]RomItem)
+		byDir := make(map[string][]aegiscore.RomItem)
 		for idx := range items {
 			it := &items[idx]
 			if _, err := os.Stat(it.FilePath); err != nil {
@@ -4089,7 +1686,7 @@ func startRenameNumberedRoms(hwnd uintptr) {
 			}
 			romDir := filepath.Dir(it.FilePath)
 			baseNoExt := strings.TrimSuffix(it.FileName, filepath.Ext(it.FileName))
-			imgRel, _, _, vidRel := resolveExistingMediaPathsForRom(romDir, baseNoExt, it.CleanTitle)
+			imgRel, _, _, vidRel := aegiscore.ResolveExistingMediaPathsForRom(romDir, baseNoExt, it.CleanTitle)
 			if imgRel != "" && vidRel != "" {
 				it.MediaStatus = "✔ Картинка + Видео"
 			} else if imgRel != "" {
@@ -4098,7 +1695,7 @@ func startRenameNumberedRoms(hwnd uintptr) {
 			byDir[romDir] = append(byDir[romDir], *it)
 		}
 		for consoleDir, dirRoms := range byDir {
-			writeArkOSGamelistXML(consoleDir, dirRoms)
+			aegiscore.WriteArkOSGamelistXML(consoleDir, dirRoms)
 			appendLog(fmt.Sprintf("[ПРИВЯЗКА GAMELIST.XML] Восстановлены имена и пути к существующим картинкам в: %s (%d файлов)", consoleDir, len(dirRoms)))
 		}
 
@@ -4113,231 +1710,10 @@ func startRenameNumberedRoms(hwnd uintptr) {
 	}()
 }
 
-func renameCompanionCueBin(romDir, oldBase, newBase, ext string) (oldCompanionPath string, newCompanionPath string) {
-	if strings.EqualFold(ext, ".bin") {
-		oldCue := filepath.Join(romDir, oldBase+".cue")
-		newCue := filepath.Join(romDir, newBase+".cue")
-		if cueData, err := os.ReadFile(oldCue); err == nil {
-			updatedCue := strings.ReplaceAll(string(cueData), oldBase+".bin", newBase+".bin")
-			updatedCue = strings.ReplaceAll(updatedCue, oldBase+".BIN", newBase+".bin")
-			_ = os.WriteFile(newCue, []byte(updatedCue), 0644)
-			if !strings.EqualFold(oldCue, newCue) {
-				_ = os.Remove(oldCue)
-			}
-			return oldCue, newCue
-		}
-	} else if strings.EqualFold(ext, ".cue") {
-		oldBin := filepath.Join(romDir, oldBase+".bin")
-		newBin := filepath.Join(romDir, newBase+".bin")
-		if _, err := os.Stat(oldBin); err == nil {
-			_ = os.Rename(oldBin, newBin)
-			newCue := filepath.Join(romDir, newBase+".cue")
-			if cueData, err := os.ReadFile(newCue); err == nil {
-				updatedCue := strings.ReplaceAll(string(cueData), oldBase+".bin", newBase+".bin")
-				updatedCue = strings.ReplaceAll(updatedCue, oldBase+".BIN", newBase+".bin")
-				_ = os.WriteFile(newCue, []byte(updatedCue), 0644)
-			}
-			return oldBin, newBin
-		}
-	}
-	return "", ""
-}
-
 // ============================================================================
 // BUTTON 6: INTERACTIVE PHANTOM / UNUSED FOLDERS FINDER & CHECKBOX CLEANER
 // Protects all R36S (ArkOS / DarkOS) system & console folders so SD card mounting never breaks!
 // ============================================================================
-
-var standardMediaDirs = map[string]bool{
-	"images":   true,
-	"marquees": true,
-	"videos":   true,
-}
-
-// Critical R36S (ArkOS / DarkOS / EmuELEC) system & console folders on EASYROMS that MUST NEVER be deleted!
-var protectedR36SDirs = map[string]bool{
-	"bios": true, "tools": true, "themes": true, "ports": true,
-	"launchimages": true, "bgmusic": true, "retroarch": true,
-	"saves": true, "savestates": true, "backup": true, "backups": true,
-	"anbernic": true, "arkos": true, "darkos": true, "emuelec": true,
-	"system": true, "config": true, "cheats": true, "overlays": true,
-	"shaders": true, "bezels": true, "music": true, "movies": true,
-	"kodi": true, "scummvm": true, "dos": true, "pico8": true, "pico-8": true,
-	"tic80": true, "openbor": true, "easyrpg": true, "solarushd": true,
-	"nes": true, "famicom": true, "fc": true, "fds": true,
-	"snes": true, "sfc": true, "superfamicom": true,
-	"gb": true, "gbc": true, "gba": true, "nds": true, "n64": true,
-	"virtualboy": true, "gamegear": true, "gg": true,
-	"mastersystem": true, "sms": true, "genesis": true, "megadrive": true, "md": true,
-	"segacd": true, "mega-cd": true, "sega32x": true, "32x": true,
-	"saturn": true, "dreamcast": true, "dc": true,
-	"psx": true, "ps1": true, "psp": true,
-	"atari2600": true, "atari5200": true, "atari7800": true, "lynx": true, "jaguar": true,
-	"pcengine": true, "pce": true, "pcenginecd": true, "tg16": true, "supergrafx": true,
-	"neogeo": true, "neogeocd": true, "ngp": true, "ngpc": true,
-	"wonderswan": true, "wonderswancolor": true,
-	"arcade": true, "fbneo": true, "mame": true, "mame2003": true, "mame2003-plus": true,
-	"cps1": true, "cps2": true, "cps3": true,
-	"amiga": true, "c64": true, "msx": true, "msx2": true,
-	"vectrex": true, "coleco": true, "intellivision": true, "zxspectrum": true,
-}
-
-var knownPhantomDirReasons = map[string]string{
-	"download_images":   "Фантомный дубликат (верный каталог R36S — «images», этот не нужен)",
-	"downloaded_images": "Фантомный каталог старого скрепера (верный каталог — «images»)",
-	"downloaded_media":  "Лишний каталог стороннего скрепера (не используется ArkOS/DarkOS)",
-	"media":             "Нестандартная папка (ArkOS/DarkOS берет обложки из «images»)",
-	"boxart":            "Дублирующая папка обложек (верная папка — «images»)",
-	"boxarts":           "Дублирующая папка обложек (верная папка — «images»)",
-	"snap":              "Старая папка скриншотов (не используется в gamelist.xml)",
-	"snaps":             "Старая папка скриншотов (не используется в gamelist.xml)",
-	"wheel":             "Старая папка логотипов (в R36S используется «marquees»)",
-	"wheels":            "Старая папка логотипов (в R36S используется «marquees»)",
-	"banners":           "Нестандартная папка баннеров (в R36S используется «marquees»)",
-	"mix":               "Временная папка миксов скрепера (не нужна)",
-	"manuals":           "Папка PDF-мануалов (занимает место на флешке)",
-	"covers":            "Нестандартная папка обложек (верная папка — «images»)",
-	"screenshots":       "Лишняя папка скриншотов (верная папка — «images»)",
-	"temp":              "Временная папка",
-	"tmp":               "Временная папка",
-	"top 100":           "Вложенная подпапка ромов (ромы должны быть в основном каталоге)",
-	"top100":            "Вложенная подпапка ромов (ромы должны быть в основном каталоге)",
-	"rus":               "Вложенная подпапка ромов (ромы должны быть в основном каталоге)",
-}
-
-func scanForPhantomFolders(rootFolder string) []PhantomFolderItem {
-	var found []PhantomFolderItem
-
-	_ = filepath.Walk(rootFolder, func(p string, fi os.FileInfo, err error) error {
-		if err != nil || !fi.IsDir() {
-			return nil
-		}
-		if filepath.Clean(p) == filepath.Clean(rootFolder) {
-			return nil
-		}
-
-		name := fi.Name()
-		lower := strings.ToLower(name)
-
-		if strings.HasPrefix(name, ".") || name == "$RECYCLE.BIN" || name == "System Volume Information" {
-			return filepath.SkipDir
-		}
-
-		// Skip the 3 official valid R36S media directories!
-		if standardMediaDirs[lower] {
-			return filepath.SkipDir
-		}
-
-		// Never touch protected R36S system or console directories (bios, tools, ports, themes, gba, psx, etc.)!
-		if protectedR36SDirs[lower] {
-			return nil
-		}
-		if _, isConsole := consoleCatalog[lower]; isConsole {
-			return nil
-		}
-		if lower == "organized" || strings.HasPrefix(lower, "1_8bit") || strings.HasPrefix(lower, "2_16bit") || strings.HasPrefix(lower, "3_portable") || strings.HasPrefix(lower, "4_32_64bit") {
-			return nil
-		}
-
-		// Calculate files & bytes inside this candidate subfolder
-		fileCount := 0
-		var totalBytes int64
-		hasRom := false
-		hasMedia := false
-
-		entries, readErr := os.ReadDir(p)
-		if readErr == nil {
-			for _, e := range entries {
-				if !e.IsDir() {
-					fileCount++
-					if info, sErr := e.Info(); sErr == nil {
-						totalBytes += info.Size()
-					}
-					ext := strings.ToLower(filepath.Ext(e.Name()))
-					if _, ok := extToDefaultConsole[ext]; ok || ext == ".zip" {
-						hasRom = true
-					}
-					if ext == ".png" || ext == ".jpg" || ext == ".mp4" {
-						hasMedia = true
-					}
-				}
-			}
-		}
-
-		rel, relErr := filepath.Rel(rootFolder, p)
-		if relErr != nil {
-			rel = p
-		}
-
-		if reason, isKnownPhantom := knownPhantomDirReasons[lower]; isKnownPhantom {
-			found = append(found, PhantomFolderItem{
-				FullPath:       p,
-				RelativePath:   rel,
-				FolderName:     name,
-				Reason:         reason,
-				FileCount:      fileCount,
-				TotalBytes:     totalBytes,
-				HasUsefulMedia: hasMedia,
-				DefaultChecked: !hasRom, // Auto-check if no unextracted ROMs inside
-			})
-			return filepath.SkipDir
-		}
-
-		if lower == "_duplicates_1g1r" || lower == "_baddumps_junk" {
-			found = append(found, PhantomFolderItem{
-				FullPath:       p,
-				RelativePath:   rel,
-				FolderName:     name,
-				Reason:         "Карантин отсеянных дубликатов и битых ромов (можно очистить)",
-				FileCount:      fileCount,
-				TotalBytes:     totalBytes,
-				HasUsefulMedia: false,
-				DefaultChecked: true,
-			})
-			return filepath.SkipDir
-		}
-
-		// Only flag empty folders if they are subfolders inside a console directory and NOT root EASYROMS folders
-		parentBase := strings.ToLower(filepath.Base(filepath.Dir(p)))
-		_, parentIsConsole := consoleCatalog[parentBase]
-		if len(entries) == 0 && parentIsConsole && !protectedR36SDirs[lower] {
-			found = append(found, PhantomFolderItem{
-				FullPath:       p,
-				RelativePath:   rel,
-				FolderName:     name,
-				Reason:         "Пустая вложенная подпапка (0 файлов)",
-				FileCount:      0,
-				TotalBytes:     0,
-				HasUsefulMedia: false,
-				DefaultChecked: true,
-			})
-			return filepath.SkipDir
-		}
-
-		// Any other non-standard subfolder inside a console folder
-		if parentIsConsole {
-			reason := "Нестандартная подпапка внутри каталога консоли"
-			if hasRom {
-				reason = "Подпапка с ромами (нажмите кнопку 2, чтобы вытащить ромы в корень консоли)"
-			}
-			found = append(found, PhantomFolderItem{
-				FullPath:       p,
-				RelativePath:   rel,
-				FolderName:     name,
-				Reason:         reason,
-				FileCount:      fileCount,
-				TotalBytes:     totalBytes,
-				HasUsefulMedia: hasMedia,
-				DefaultChecked: !hasRom,
-			})
-			return filepath.SkipDir
-		}
-
-		return nil
-	})
-
-	return found
-}
 
 func openPhantomFoldersDialog(hwnd uintptr) {
 	rootFolder := strings.TrimSpace(getWindowText(hEditPath))
@@ -4345,7 +1721,7 @@ func openPhantomFoldersDialog(hwnd uintptr) {
 		return
 	}
 
-	found := scanForPhantomFolders(rootFolder)
+	found := aegiscore.ScanForPhantomFolders(rootFolder)
 	stateMu.Lock()
 	phantomFolders = found
 	stateMu.Unlock()
@@ -4428,7 +1804,7 @@ func createPhantomDialogControls(hDlg uintptr) {
 	}
 
 	stateMu.Lock()
-	list := make([]PhantomFolderItem, len(phantomFolders))
+	list := make([]aegiscore.PhantomFolderItem, len(phantomFolders))
 	copy(list, phantomFolders)
 	stateMu.Unlock()
 
@@ -4444,7 +1820,7 @@ func createPhantomDialogControls(hDlg uintptr) {
 			pf.FolderName,
 			pf.Reason,
 			fmt.Sprintf("%d", pf.FileCount),
-			formatBytes(pf.TotalBytes),
+			aegiscore.FormatBytes(pf.TotalBytes),
 		}
 		for sIdx, txt := range subs {
 			sub := LVITEMW{
@@ -4513,7 +1889,7 @@ func isListViewItemChecked(hLV uintptr, index int) bool {
 
 func deleteCheckedPhantomFolders(hDlg uintptr) {
 	stateMu.Lock()
-	list := make([]PhantomFolderItem, len(phantomFolders))
+	list := make([]aegiscore.PhantomFolderItem, len(phantomFolders))
 	copy(list, phantomFolders)
 	stateMu.Unlock()
 
@@ -4562,7 +1938,7 @@ func deleteCheckedPhantomFolders(hDlg uintptr) {
 
 	msg := fmt.Sprintf(
 		"Очистка фантомных папок завершена!\n\nУдалено лишних папок: %d\nСохранено полезных картинок в верную папку «images»: %d\nОсвобождено места: %s",
-		deletedDirs, rescuedImages, formatBytes(freedBytes),
+		deletedDirs, rescuedImages, aegiscore.FormatBytes(freedBytes),
 	)
 	procMessageBoxW.Call(hMainWnd, uintptr(unsafe.Pointer(utf16Ptr(msg))), uintptr(unsafe.Pointer(utf16Ptr("Фантомные папки удалены"))), MB_OK|MB_ICONINFORMATION)
 }
@@ -4617,16 +1993,8 @@ func phantomWndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 // HIERARCHY BUILDER, ORPHANED MEDIA CLEANER & R36S SCRAPER
 // ============================================================================
 
-func resolveHierarchyBaseRoot(selectedRoot string) string {
-	baseName := strings.ToLower(filepath.Base(filepath.Clean(selectedRoot)))
-	if _, isConsoleDir := consoleCatalog[baseName]; isConsoleDir {
-		return filepath.Dir(filepath.Clean(selectedRoot))
-	}
-	return filepath.Clean(selectedRoot)
-}
-
-func resolveWinnerTargetDir(selectedRoot string, modeIdx uintptr, r RomItem) string {
-	baseRoot := resolveHierarchyBaseRoot(selectedRoot)
+func resolveWinnerTargetDir(selectedRoot string, modeIdx uintptr, r aegiscore.RomItem) string {
+	baseRoot := aegiscore.ResolveHierarchyBaseRoot(selectedRoot)
 	switch modeIdx {
 	case 0:
 		return filepath.Join(baseRoot, "Organized", r.Generation, r.ConsoleCode)
@@ -4644,7 +2012,7 @@ func startOrganize(hwnd uintptr) {
 		return
 	}
 	isBusy = true
-	items := make([]RomItem, len(scannedRoms))
+	items := make([]aegiscore.RomItem, len(scannedRoms))
 	copy(items, scannedRoms)
 	stateMu.Unlock()
 
@@ -4673,7 +2041,7 @@ func startOrganize(hwnd uintptr) {
 		movedCount := 0
 		removedDupsCount := 0
 		errorCount := 0
-		baseRoot := resolveHierarchyBaseRoot(rootFolder)
+		baseRoot := aegiscore.ResolveHierarchyBaseRoot(rootFolder)
 
 		// PHASE 1: Vacate all duplicates and junk first so root console files never collide with subfolder winners
 		for idx := range items {
@@ -4742,7 +2110,7 @@ func startOrganize(hwnd uintptr) {
 			oldRomDir := filepath.Dir(r.FilePath)
 			oldBaseNoExt := strings.TrimSuffix(r.FileName, filepath.Ext(r.FileName))
 
-			safeCanonical := sanitizeFileName(r.CanonicalName)
+			safeCanonical := aegiscore.SanitizeFileName(r.CanonicalName)
 			if strings.EqualFold(filepath.Ext(r.FileName), ".zip") && !strings.EqualFold(filepath.Ext(safeCanonical), ".zip") {
 				safeCanonical = strings.TrimSuffix(safeCanonical, filepath.Ext(safeCanonical)) + ".zip"
 			}
@@ -4750,7 +2118,7 @@ func startOrganize(hwnd uintptr) {
 			targetPath := filepath.Join(targetDir, safeCanonical)
 			newBaseNoExt := strings.TrimSuffix(safeCanonical, filepath.Ext(safeCanonical))
 
-			relocateExistingMediaForRom(oldRomDir, targetDir, oldBaseNoExt, newBaseNoExt)
+			aegiscore.RelocateExistingMediaForRom(oldRomDir, targetDir, oldBaseNoExt, newBaseNoExt)
 
 			if strings.EqualFold(filepath.Clean(r.FilePath), filepath.Clean(targetPath)) {
 				continue
@@ -4769,16 +2137,16 @@ func startOrganize(hwnd uintptr) {
 			} else {
 				movedCount++
 				undoBatch = append(undoBatch, UndoEntry{FromPath: targetPath, ToPath: r.FilePath})
-				renameCompanionCueBin(oldRomDir, oldBaseNoExt, newBaseNoExt, r.Extension)
+				aegiscore.RenameCompanionCueBin(oldRomDir, oldBaseNoExt, newBaseNoExt, r.Extension)
 				r.FilePath = targetPath
 				r.FileName = filepath.Base(targetPath)
-				relSub, _, _ := analyzeSubfolderContext(baseRoot, targetPath)
+				relSub, _, _ := aegiscore.AnalyzeSubfolderContext(baseRoot, targetPath)
 				r.SourceSubfolder = relSub
 				appendLog(fmt.Sprintf("[В ОСНОВНОЙ КАТАЛОГ] %s -> %s", r.FileName, relSub))
 			}
 		}
 
-		removedDirs := removeEmptySubfolders(rootFolder)
+		removedDirs := aegiscore.RemoveEmptySubfolders(rootFolder)
 		if removedDirs > 0 {
 			appendLog(fmt.Sprintf("Очищено опустевших подкаталогов: %d", removedDirs))
 		}
@@ -4788,7 +2156,7 @@ func startOrganize(hwnd uintptr) {
 		undoHistory = undoBatch
 		stateMu.Unlock()
 
-		deletedOrphans, _ := cleanOrphanedMediaInternal(baseRoot)
+		deletedOrphans, _ := aegiscore.CleanOrphanedMedia(baseRoot)
 		if deletedOrphans > 0 {
 			appendLog(fmt.Sprintf("Авто-очистка медиа: удалено лишних картинок/баннеров/видео без рома: %d", deletedOrphans))
 		}
@@ -4804,245 +2172,6 @@ func startOrganize(hwnd uintptr) {
 
 		procPostMessageW.Call(hwnd, WM_APP_ORGANIZE_DONE, uintptr(movedCount), uintptr(removedDupsCount))
 	}()
-}
-
-// Resolve actual existing media files on disk for a ROM so gamelist.xml NEVER points to non-existent -image.png/-thumb.png files!
-func resolveExistingMediaPathsForRom(consoleDir, baseNoExt, cleanTitle string) (imgRel, thumbRel, marqueeRel, videoRel string) {
-	if consoleDir == "" {
-		return "", "", "", ""
-	}
-
-	checkRelFile := func(rel string) string {
-		rel = strings.TrimSpace(rel)
-		if rel == "" {
-			return ""
-		}
-		cleanRel := strings.TrimPrefix(strings.ReplaceAll(rel, "\\", "/"), "./")
-		cleanRel = strings.TrimPrefix(cleanRel, "/")
-		fullPath := filepath.Join(consoleDir, filepath.FromSlash(cleanRel))
-		if fi, err := os.Stat(fullPath); err == nil && !fi.IsDir() && fi.Size() > 0 {
-			return "./" + cleanRel
-		}
-		return ""
-	}
-
-	// 1. Check if gamelist.xml (or backup) already has valid existing paths for this ROM
-	_, entryMap := loadGamelistMapsForDir(consoleDir)
-	for _, keyCandidate := range []string{strings.ToLower(baseNoExt), strings.ToLower(cleanTitle), strings.ToLower(sanitizeFileName(cleanTitle))} {
-		if keyCandidate == "" {
-			continue
-		}
-		if ge, ok := entryMap[keyCandidate]; ok {
-			if imgRel == "" {
-				imgRel = checkRelFile(ge.Image)
-			}
-			if thumbRel == "" {
-				thumbRel = checkRelFile(ge.Thumbnail)
-			}
-			if marqueeRel == "" {
-				marqueeRel = checkRelFile(ge.Marquee)
-			}
-			if videoRel == "" {
-				videoRel = checkRelFile(ge.Video)
-			}
-		}
-	}
-
-	// 2. Probe candidate base names (current ROM base, sanitized title, stripped numeric prefix)
-	var candidateBases []string
-	seenBase := make(map[string]bool)
-	addCandidate := func(b string) {
-		b = strings.TrimSpace(b)
-		if b == "" {
-			return
-		}
-		low := strings.ToLower(b)
-		if !seenBase[low] {
-			seenBase[low] = true
-			candidateBases = append(candidateBases, b)
-		}
-	}
-	addCandidate(baseNoExt)
-	if cleanTitle != "" {
-		addCandidate(sanitizeFileName(cleanTitle))
-		addCandidate(cleanTitle)
-	}
-
-	imgDirs := []string{"images", "downloaded_images", "download_images", "boxart", "snap", "covers"}
-	imgSuffixes := []string{"-image.png", ".png", "-image.jpg", ".jpg", ".jpeg", "-boxart.png", "-boxart.jpg", "-snap.png", "-thumb.png", "-thumb.jpg"}
-	thumbSuffixes := []string{"-thumb.png", "-thumb.jpg", "-image.png", ".png", ".jpg", ".jpeg", "-snap.png"}
-
-	if imgRel == "" {
-		for _, b := range candidateBases {
-			for _, d := range imgDirs {
-				for _, sfx := range imgSuffixes {
-					if found := checkRelFile(d + "/" + b + sfx); found != "" {
-						imgRel = found
-						break
-					}
-				}
-				if imgRel != "" {
-					break
-				}
-			}
-			if imgRel != "" {
-				break
-			}
-		}
-	}
-
-	if thumbRel == "" {
-		for _, b := range candidateBases {
-			for _, d := range imgDirs {
-				for _, sfx := range thumbSuffixes {
-					if found := checkRelFile(d + "/" + b + sfx); found != "" {
-						thumbRel = found
-						break
-					}
-				}
-				if thumbRel != "" {
-					break
-				}
-			}
-			if thumbRel != "" {
-				break
-			}
-		}
-	}
-	// Fallback: if image exists on disk, use it as thumbnail too so R36S grid/boxart view never shows an empty image!
-	if thumbRel == "" && imgRel != "" {
-		thumbRel = imgRel
-	}
-	if imgRel == "" && thumbRel != "" {
-		imgRel = thumbRel
-	}
-
-	marqueeDirs := []string{"marquees", "banners", "wheels", "images", "downloaded_images"}
-	marqueeSuffixes := []string{"-marquee.png", "-marquee.jpg", "-banner.png", "-wheel.png", ".png", ".jpg"}
-	if marqueeRel == "" {
-		for _, b := range candidateBases {
-			for _, d := range marqueeDirs {
-				for _, sfx := range marqueeSuffixes {
-					// Avoid picking normal boxart in "images/" as marquee unless it has -marquee/-banner/-wheel suffix
-					if (d == "images" || d == "downloaded_images") && (sfx == ".png" || sfx == ".jpg") {
-						continue
-					}
-					if found := checkRelFile(d + "/" + b + sfx); found != "" {
-						marqueeRel = found
-						break
-					}
-				}
-				if marqueeRel != "" {
-					break
-				}
-			}
-			if marqueeRel != "" {
-				break
-			}
-		}
-	}
-
-	videoDirs := []string{"videos", "snap", "images"}
-	videoSuffixes := []string{"-video.mp4", ".mp4"}
-	if videoRel == "" {
-		for _, b := range candidateBases {
-			for _, d := range videoDirs {
-				for _, sfx := range videoSuffixes {
-					if found := checkRelFile(d + "/" + b + sfx); found != "" {
-						videoRel = found
-						break
-					}
-				}
-				if videoRel != "" {
-					break
-				}
-			}
-			if videoRel != "" {
-				break
-			}
-		}
-	}
-
-	return imgRel, thumbRel, marqueeRel, videoRel
-}
-
-// Relocate & rename media from both standard ("images") and phantom ("download_images", "downloaded_images", "boxart") folders
-// while preserving image file extensions (.png / .jpg) and keeping both plain and -image/-thumb names for 100% R36S compatibility!
-func relocateExistingMediaForRom(oldRomDir, newRomDir, oldBase, newBase string) {
-	mediaSpecs := []struct {
-		srcSubDir string
-		dstSubDir string
-		suffix    string
-	}{
-		{"images", "images", "-image.png"},
-		{"images", "images", "-thumb.png"},
-		{"images", "images", "-marquee.png"},
-		{"images", "images", "-image.jpg"},
-		{"images", "images", "-thumb.jpg"},
-		{"images", "images", "-marquee.jpg"},
-		{"images", "images", ".png"},
-		{"images", "images", ".bmp"},
-		{"images", "images", ".jpg"},
-		{"images", "images", ".jpeg"},
-		{"downloaded_images", "images", "-image.png"},
-		{"downloaded_images", "images", "-thumb.png"},
-		{"downloaded_images", "images", ".png"},
-		{"downloaded_images", "images", ".jpg"},
-		{"downloaded_images", "images", ".jpeg"},
-		{"download_images", "images", "-image.png"},
-		{"download_images", "images", ".png"},
-		{"download_images", "images", ".jpg"},
-		{"boxart", "images", ".png"},
-		{"boxart", "images", ".jpg"},
-		{"snap", "images", ".png"},
-		{"snap", "images", ".jpg"},
-		{"marquees", "marquees", "-marquee.png"},
-		{"marquees", "marquees", ".png"},
-		{"marquees", "marquees", ".jpg"},
-		{"wheels", "marquees", ".png"},
-		{"videos", "videos", "-video.mp4"},
-		{"videos", "videos", ".mp4"},
-		{"snap", "videos", ".mp4"},
-	}
-
-	// Also rename companion .srm save file if present
-	oldSrm := filepath.Join(oldRomDir, oldBase+".srm")
-	newSrm := filepath.Join(newRomDir, newBase+".srm")
-	if _, err := os.Stat(oldSrm); err == nil && !strings.EqualFold(oldSrm, newSrm) {
-		_ = os.Rename(oldSrm, newSrm)
-	}
-
-	for _, ms := range mediaSpecs {
-		src := filepath.Join(oldRomDir, ms.srcSubDir, oldBase+ms.suffix)
-		if fi, err := os.Stat(src); err == nil && !fi.IsDir() {
-			ext := filepath.Ext(ms.suffix)
-			dstSuffix := ms.suffix
-			if (ms.suffix == ".png" || ms.suffix == ".bmp" || ms.suffix == ".jpg" || ms.suffix == ".jpeg") && ms.dstSubDir == "images" {
-				dstSuffix = "-image" + ext
-			} else if (ms.suffix == ".png" || ms.suffix == ".jpg") && ms.dstSubDir == "marquees" {
-				dstSuffix = "-marquee" + ext
-			} else if ms.suffix == ".mp4" {
-				dstSuffix = "-video.mp4"
-			}
-			targetDir := filepath.Join(newRomDir, ms.dstSubDir)
-			_ = os.MkdirAll(targetDir, 0755)
-			dst := filepath.Join(targetDir, newBase+dstSuffix)
-			if !strings.EqualFold(filepath.Clean(src), filepath.Clean(dst)) {
-				_ = os.Rename(src, dst)
-			}
-			// Also ensure plain name (e.g. images/<newBase>.png) and -thumb exist so any R36S theme finds the picture
-			if ms.dstSubDir == "images" && dstSuffix != "-marquee"+ext {
-				plainDst := filepath.Join(targetDir, newBase+ext)
-				if _, err := os.Stat(plainDst); err != nil {
-					_ = copyLocalFile(dst, plainDst)
-				}
-				thumbDst := filepath.Join(targetDir, newBase+"-thumb"+ext)
-				if _, err := os.Stat(thumbDst); err != nil {
-					_ = copyLocalFile(dst, thumbDst)
-				}
-			}
-		}
-	}
 }
 
 func startCleanOrphanedMedia(hwnd uintptr) {
@@ -5075,129 +2204,16 @@ func startCleanOrphanedMedia(hwnd uintptr) {
 	appendLog("Запущено сканирование баннеров, картинок и видео по каждому рому...")
 
 	go func() {
-		baseRoot := resolveHierarchyBaseRoot(rootFolder)
-		deletedCount, freedBytes := cleanOrphanedMediaInternal(baseRoot)
+		baseRoot := aegiscore.ResolveHierarchyBaseRoot(rootFolder)
+		deletedCount, freedBytes := aegiscore.CleanOrphanedMedia(baseRoot)
 		if filepath.Clean(baseRoot) != filepath.Clean(rootFolder) {
-			d2, b2 := cleanOrphanedMediaInternal(rootFolder)
+			d2, b2 := aegiscore.CleanOrphanedMedia(rootFolder)
 			deletedCount += d2
 			freedBytes += b2
 		}
 
 		procPostMessageW.Call(hwnd, WM_APP_CLEAN_MEDIA_DONE, uintptr(deletedCount), uintptr(freedBytes))
 	}()
-}
-
-func cleanOrphanedMediaInternal(searchRoot string) (deletedFiles int, freedBytes int64) {
-	mediaFolderNames := map[string]bool{
-		"images":            true,
-		"download_images":   true,
-		"downloaded_images": true,
-		"marquees":          true,
-		"banners":           true,
-		"videos":            true,
-		"snap":              true,
-		"boxart":            true,
-		"wheels":            true,
-	}
-
-	var mediaDirs []string
-	_ = filepath.Walk(searchRoot, func(p string, fi os.FileInfo, err error) error {
-		if err != nil || !fi.IsDir() {
-			return nil
-		}
-		name := fi.Name()
-		if name == "_Duplicates_1G1R" || name == "_BadDumps_Junk" {
-			return filepath.SkipDir
-		}
-		if mediaFolderNames[strings.ToLower(name)] {
-			mediaDirs = append(mediaDirs, p)
-			return filepath.SkipDir
-		}
-		return nil
-	})
-
-	mediaSuffixes := []string{
-		"-image", "-thumb", "-marquee", "-video", "-banner", "-boxart", "-snap", "-wheel", "-fanart",
-	}
-
-	for _, mDir := range mediaDirs {
-		consoleDir := filepath.Dir(mDir)
-
-		activeRomBases := make(map[string]string)
-		activeRomNorms := make(map[string]string)
-
-		dirEntries, err := os.ReadDir(consoleDir)
-		if err != nil {
-			continue
-		}
-		for _, de := range dirEntries {
-			if de.IsDir() {
-				continue
-			}
-			ext := strings.ToLower(filepath.Ext(de.Name()))
-			if _, isRom := extToDefaultConsole[ext]; isRom || ext == ".zip" {
-				base := strings.TrimSuffix(de.Name(), filepath.Ext(de.Name()))
-				activeRomBases[strings.ToLower(base)] = base
-				norm := buildComparisonKey(extractCleanTitle(de.Name()))
-				if norm != "" {
-					activeRomNorms[norm] = base
-				}
-			}
-		}
-
-		mFiles, err := os.ReadDir(mDir)
-		if err != nil {
-			continue
-		}
-		for _, mf := range mFiles {
-			if mf.IsDir() {
-				continue
-			}
-			mPath := filepath.Join(mDir, mf.Name())
-			mExt := strings.ToLower(filepath.Ext(mf.Name()))
-			if mExt != ".png" && mExt != ".jpg" && mExt != ".jpeg" && mExt != ".mp4" && mExt != ".avi" && mExt != ".mkv" && mExt != ".gif" {
-				continue
-			}
-
-			baseNoExt := strings.TrimSuffix(mf.Name(), filepath.Ext(mf.Name()))
-			strippedBase := baseNoExt
-			matchedSuffix := ""
-			for _, sfx := range mediaSuffixes {
-				if strings.HasSuffix(strings.ToLower(strippedBase), sfx) {
-					strippedBase = strippedBase[:len(strippedBase)-len(sfx)]
-					matchedSuffix = sfx
-					break
-				}
-			}
-
-			if _, exists := activeRomBases[strings.ToLower(strippedBase)]; exists {
-				continue
-			}
-
-			mediaNorm := buildComparisonKey(extractCleanTitle(strippedBase))
-			if targetRomBase, exists := activeRomNorms[mediaNorm]; exists && mediaNorm != "" {
-				newMediaName := targetRomBase + matchedSuffix + mExt
-				newMediaPath := filepath.Join(mDir, newMediaName)
-				if _, statErr := os.Stat(newMediaPath); statErr != nil {
-					_ = os.Rename(mPath, newMediaPath)
-					appendLog(fmt.Sprintf("[ПРИВЯЗАНО МЕДИА] %s -> %s", mf.Name(), newMediaName))
-					continue
-				}
-			}
-
-			var fSize int64
-			if fi, statErr := mf.Info(); statErr == nil {
-				fSize = fi.Size()
-			}
-			if err := os.Remove(mPath); err == nil {
-				deletedFiles++
-				freedBytes += fSize
-				appendLog(fmt.Sprintf("[УДАЛЕНО ЛИШНЕЕ МЕДИА] %s\\%s (ром отсутствует)", filepath.Base(mDir), mf.Name()))
-			}
-		}
-	}
-
-	return deletedFiles, freedBytes
 }
 
 func startScrape(hwnd uintptr) {
@@ -5217,7 +2233,7 @@ func runScraperInternal(hwnd uintptr) {
 		return
 	}
 	isBusy = true
-	items := make([]RomItem, len(scannedRoms))
+	items := make([]aegiscore.RomItem, len(scannedRoms))
 	copy(items, scannedRoms)
 	stateMu.Unlock()
 
@@ -5258,15 +2274,15 @@ func runScraperInternal(hwnd uintptr) {
 	}
 
 	for cCode := range uniqueConsoles {
-		meta, ok := consoleCatalog[cCode]
+		meta, ok := aegiscore.ConsoleCatalog[cCode]
 		if !ok {
 			continue
 		}
 		appendLog(fmt.Sprintf("Загрузка базы имен и баннеров Libretro для %s...", meta.DisplayName))
-		_ = getOrLoadLibretroIndex(meta.LibretroSystem)
+		_ = aegiscore.GetOrLoadLibretroIndex(meta.LibretroSystem)
 		if downloadVideos && meta.ArchiveVideoID != "" {
 			appendLog(fmt.Sprintf("Загрузка базы коротких видео (.mp4) R36S для %s...", meta.DisplayName))
-			_ = getOrLoadArchiveVideoIndex(meta.ArchiveVideoID)
+			_ = aegiscore.GetOrLoadArchiveVideoIndex(meta.ArchiveVideoID)
 		}
 	}
 
@@ -5275,9 +2291,9 @@ func runScraperInternal(hwnd uintptr) {
 
 	for pos, idx := range winnerIndices {
 		r := &items[idx]
-		meta, ok := consoleCatalog[r.ConsoleCode]
+		meta, ok := aegiscore.ConsoleCatalog[r.ConsoleCode]
 		if !ok {
-			meta = consoleCatalog["nes"]
+			meta = aegiscore.ConsoleCatalog["nes"]
 		}
 
 		romDir := filepath.Dir(r.FilePath)
@@ -5289,10 +2305,10 @@ func runScraperInternal(hwnd uintptr) {
 		_ = os.MkdirAll(marqueesDir, 0755)
 		_ = os.MkdirAll(videosDir, 0755)
 
-		matchedLibretroName := findBestLibretroMatch(meta.LibretroSystem, r.CleanTitle, r.ComparisonKey, r.Region)
+		matchedLibretroName := aegiscore.FindBestLibretroMatch(meta.LibretroSystem, r.CleanTitle, r.ComparisonKey, r.Region)
 		if matchedLibretroName != "" {
-			cleanMatchedTitle := extractCleanTitle(matchedLibretroName)
-			if cleanMatchedTitle != "" && !pureNumberRegex.MatchString(cleanMatchedTitle) {
+			cleanMatchedTitle := aegiscore.ExtractCleanTitle(matchedLibretroName)
+			if cleanMatchedTitle != "" && !aegiscore.PureNumberRegex.MatchString(cleanMatchedTitle) {
 				r.CleanTitle = cleanMatchedTitle
 			}
 		}
@@ -5305,7 +2321,7 @@ func runScraperInternal(hwnd uintptr) {
 		videoTarget := filepath.Join(videosDir, romBaseNoExt+"-video.mp4")
 
 		// Check if valid media already exists on disk for this ROM
-		existingImg, existingThumb, existingMarquee, existingVid := resolveExistingMediaPathsForRom(romDir, romBaseNoExt, r.CleanTitle)
+		existingImg, existingThumb, existingMarquee, existingVid := aegiscore.ResolveExistingMediaPathsForRom(romDir, romBaseNoExt, r.CleanTitle)
 		gotBoxart := existingImg != ""
 		gotMarquee := existingMarquee != ""
 		gotVideo := existingVid != ""
@@ -5318,40 +2334,40 @@ func runScraperInternal(hwnd uintptr) {
 			snapURL := fmt.Sprintf("https://thumbnails.libretro.com/%s/Named_Snaps/%s", sysEsc, fileEsc)
 			titleURL := fmt.Sprintf("https://thumbnails.libretro.com/%s/Named_Titles/%s", sysEsc, fileEsc)
 
-			if !gotBoxart && downloadFileHTTP(boxURL, imgTarget, 15*time.Second) {
+			if !gotBoxart && aegiscore.DownloadFileHTTP(boxURL, imgTarget, 15*time.Second) {
 				gotBoxart = true
 			}
-			if existingThumb == "" && downloadFileHTTP(snapURL, thumbTarget, 15*time.Second) {
+			if existingThumb == "" && aegiscore.DownloadFileHTTP(snapURL, thumbTarget, 15*time.Second) {
 				if !gotBoxart {
-					_ = copyLocalFile(thumbTarget, imgTarget)
+					_ = aegiscore.CopyLocalFile(thumbTarget, imgTarget)
 					gotBoxart = true
 				}
 			} else if gotBoxart && existingThumb == "" {
 				if _, err := os.Stat(imgTarget); err == nil {
-					_ = copyLocalFile(imgTarget, thumbTarget)
+					_ = aegiscore.CopyLocalFile(imgTarget, thumbTarget)
 				}
 			}
 
-			if !gotMarquee && downloadFileHTTP(titleURL, marqueeTarget, 15*time.Second) {
+			if !gotMarquee && aegiscore.DownloadFileHTTP(titleURL, marqueeTarget, 15*time.Second) {
 				gotMarquee = true
 			}
 		}
 
 		if !gotBoxart {
-			_ = generateFallbackCoverPNG(imgTarget, r.CleanTitle, strings.ToUpper(r.ConsoleCode), r.Region, 400, 400)
-			_ = copyLocalFile(imgTarget, thumbTarget)
+			_ = aegiscore.GenerateFallbackCoverPNG(imgTarget, r.CleanTitle, strings.ToUpper(r.ConsoleCode), r.Region, 400, 400)
+			_ = aegiscore.CopyLocalFile(imgTarget, thumbTarget)
 			gotBoxart = true
 		}
 		if !gotMarquee {
-			_ = generateFallbackCoverPNG(marqueeTarget, r.CleanTitle, strings.ToUpper(r.ConsoleCode), "BANNER", 400, 140)
+			_ = aegiscore.GenerateFallbackCoverPNG(marqueeTarget, r.CleanTitle, strings.ToUpper(r.ConsoleCode), "BANNER", 400, 140)
 			gotMarquee = true
 		}
 
 		if !gotVideo && downloadVideos && meta.ArchiveVideoID != "" {
-			matchedVidFile := findBestArchiveVideoMatch(meta.ArchiveVideoID, r.CleanTitle, r.ComparisonKey)
+			matchedVidFile := aegiscore.FindBestArchiveVideoMatch(meta.ArchiveVideoID, r.CleanTitle, r.ComparisonKey)
 			if matchedVidFile != "" {
 				vidURL := fmt.Sprintf("https://archive.org/download/%s/%s", meta.ArchiveVideoID, url.PathEscape(matchedVidFile))
-				if downloadFileHTTP(vidURL, videoTarget, 35*time.Second) {
+				if aegiscore.DownloadFileHTTP(vidURL, videoTarget, 35*time.Second) {
 					gotVideo = true
 					videoCount++
 				}
@@ -5371,14 +2387,14 @@ func runScraperInternal(hwnd uintptr) {
 		procPostMessageW.Call(hwnd, WM_APP_PROGRESS, uintptr(pct), 0)
 	}
 
-	byDir := make(map[string][]RomItem)
+	byDir := make(map[string][]aegiscore.RomItem)
 	for _, it := range items {
 		d := filepath.Dir(it.FilePath)
 		byDir[d] = append(byDir[d], it)
 	}
 
 	for consoleDir, dirRoms := range byDir {
-		writeArkOSGamelistXML(consoleDir, dirRoms)
+		aegiscore.WriteArkOSGamelistXML(consoleDir, dirRoms)
 		appendLog(fmt.Sprintf("[GAMELIST.XML] Обновлен список игр R36S в: %s (%d игр)", consoleDir, len(dirRoms)))
 	}
 
@@ -5387,449 +2403,6 @@ func runScraperInternal(hwnd uintptr) {
 	stateMu.Unlock()
 
 	procPostMessageW.Call(hwnd, WM_APP_SCRAPE_DONE, uintptr(scrapedCount), uintptr(videoCount))
-}
-
-func writeArkOSGamelistXML(consoleDir string, roms []RomItem) {
-	// 1. Always preserve a backup of the original factory gamelist.xml before modifying it!
-	origGamelistPath := filepath.Join(consoleDir, "gamelist.xml")
-	backupGamelistPath := filepath.Join(consoleDir, "gamelist_factory_backup.xml")
-	if _, err := os.Stat(backupGamelistPath); err != nil {
-		if origBytes, readErr := os.ReadFile(origGamelistPath); readErr == nil && len(origBytes) > 32 {
-			_ = os.WriteFile(backupGamelistPath, origBytes, 0644)
-		}
-	}
-
-	titleMap, existingEntries := loadGamelistMapsForDir(consoleDir)
-
-	// Deduplicate by lowercase FileName and skip raw companion .bin tracks if a .cue/.m3u exists for the same base
-	cueBases := make(map[string]bool)
-	for _, r := range roms {
-		ext := strings.ToLower(filepath.Ext(r.FileName))
-		if ext == ".cue" || ext == ".m3u" || ext == ".ccd" {
-			base := strings.ToLower(strings.TrimSuffix(r.FileName, filepath.Ext(r.FileName)))
-			cueBases[base] = true
-		}
-	}
-
-	seenFiles := make(map[string]bool)
-	var gl GameListXML
-
-	for _, r := range roms {
-		if _, err := os.Stat(r.FilePath); err != nil {
-			continue
-		}
-		lowFile := strings.ToLower(r.FileName)
-		if seenFiles[lowFile] {
-			continue
-		}
-		ext := strings.ToLower(filepath.Ext(r.FileName))
-		baseNoExt := strings.TrimSuffix(r.FileName, filepath.Ext(r.FileName))
-		if (ext == ".bin" || ext == ".img" || ext == ".sub") && cueBases[strings.ToLower(baseNoExt)] {
-			continue
-		}
-		seenFiles[lowFile] = true
-
-		displayName := strings.TrimSpace(r.CleanTitle)
-		// Never write a raw number like "000001" over a real title from gamelist or binary header!
-		if displayName == "" || pureNumberRegex.MatchString(displayName) {
-			if savedTitle, ok := titleMap[strings.ToLower(baseNoExt)]; ok && savedTitle != "" && !pureNumberRegex.MatchString(savedTitle) {
-				displayName = savedTitle
-			} else if hdrTitle := extractInternalBinaryRomTitle(r.FilePath, ext, r.ConsoleCode); hdrTitle != "" && !pureNumberRegex.MatchString(hdrTitle) {
-				displayName = hdrTitle
-			} else if displayName == "" {
-				displayName = baseNoExt
-			}
-		}
-
-		if r.IsRussian && !strings.Contains(strings.ToUpper(displayName), "[RUS]") {
-			displayName += " [RUS]"
-		}
-
-		meta := consoleCatalog[r.ConsoleCode]
-		desc := fmt.Sprintf(
-			"Игра: %s | Консоль: %s (%s) | Регион: %s | CRC32: %s.",
-			displayName, meta.DisplayName, r.Generation, r.Region, r.HeaderlessCRC32,
-		)
-		rating := "0.9"
-		genre := meta.DisplayName
-
-		if prev, ok := existingEntries[strings.ToLower(baseNoExt)]; ok {
-			if strings.TrimSpace(prev.Desc) != "" && !strings.Contains(prev.Desc, "Подготовлено AegisROM") {
-				desc = prev.Desc
-			}
-			if strings.TrimSpace(prev.Rating) != "" {
-				rating = prev.Rating
-			}
-			if strings.TrimSpace(prev.Genre) != "" {
-				genre = prev.Genre
-			}
-		}
-
-		// Resolve actual existing media files on disk so we NEVER write broken -image.png/-thumb.png paths!
-		imgRel, thumbRel, marqueeRel, videoRel := resolveExistingMediaPathsForRom(consoleDir, baseNoExt, displayName)
-
-		entry := GameEntryXML{
-			Path:      "./" + r.FileName,
-			Name:      displayName,
-			Desc:      desc,
-			Image:     imgRel,
-			Thumbnail: thumbRel,
-			Marquee:   marqueeRel,
-			Video:     videoRel,
-			Rating:    rating,
-			Genre:     genre,
-			Region:    r.Region,
-		}
-
-		gl.Games = append(gl.Games, entry)
-	}
-
-	// Also preserve any existing entries in gamelist.xml for files in consoleDir that weren't in roms slice
-	for _, prev := range existingEntries {
-		cleanP := strings.TrimPrefix(strings.ReplaceAll(strings.TrimSpace(prev.Path), "\\", "/"), "./")
-		cleanP = strings.TrimPrefix(cleanP, "/")
-		fName := filepath.Base(cleanP)
-		if fName == "" || fName == "." || seenFiles[strings.ToLower(fName)] {
-			continue
-		}
-		fullP := filepath.Join(consoleDir, fName)
-		if _, err := os.Stat(fullP); err != nil {
-			continue
-		}
-		seenFiles[strings.ToLower(fName)] = true
-		baseNoExt := strings.TrimSuffix(fName, filepath.Ext(fName))
-		fExt := strings.ToLower(filepath.Ext(fName))
-		cCode := detectConsoleCode(fullP, fExt)
-
-		name := strings.TrimSpace(prev.Name)
-		if name == "" || pureNumberRegex.MatchString(name) {
-			if hdr := extractInternalBinaryRomTitle(fullP, fExt, cCode); hdr != "" && !pureNumberRegex.MatchString(hdr) {
-				name = hdr
-			} else if name == "" {
-				name = baseNoExt
-			}
-		}
-		imgRel, thumbRel, marqueeRel, videoRel := resolveExistingMediaPathsForRom(consoleDir, baseNoExt, name)
-		prev.Path = "./" + fName
-		prev.Name = name
-		if imgRel != "" {
-			prev.Image = imgRel
-		}
-		if thumbRel != "" {
-			prev.Thumbnail = thumbRel
-		}
-		if marqueeRel != "" {
-			prev.Marquee = marqueeRel
-		}
-		if videoRel != "" {
-			prev.Video = videoRel
-		}
-		gl.Games = append(gl.Games, prev)
-	}
-
-	// Clear gamelist cache for this dir so subsequent scans read the updated XML
-	cacheMu.Lock()
-	delete(gamelistTitleCache, filepath.Clean(consoleDir))
-	delete(gamelistEntryCache, filepath.Clean(consoleDir))
-	cacheMu.Unlock()
-
-	xmlBytes, err := xml.MarshalIndent(gl, "", "  ")
-	if err == nil {
-		fullXML := append([]byte(xml.Header), xmlBytes...)
-		_ = os.WriteFile(origGamelistPath, fullXML, 0644)
-	}
-}
-
-func tokenizeNormalized(s string) map[string]bool {
-	res := make(map[string]bool)
-	var cur strings.Builder
-	for _, r := range strings.ToLower(s) {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			cur.WriteRune(r)
-		} else if cur.Len() > 0 {
-			tok := cur.String()
-			if len(tok) > 1 && tok != "the" && tok != "and" && tok != "version" {
-				res[tok] = true
-			}
-			cur.Reset()
-		}
-	}
-	if cur.Len() > 0 {
-		tok := cur.String()
-		if len(tok) > 1 && tok != "the" && tok != "and" && tok != "version" {
-			res[tok] = true
-		}
-	}
-	return res
-}
-
-func getOrLoadLibretroIndex(libretroSystem string) []libretroEntry {
-	cacheMu.Lock()
-	if cached, ok := libretroIndexCache[libretroSystem]; ok {
-		cacheMu.Unlock()
-		return cached
-	}
-	cacheMu.Unlock()
-
-	indexURL := fmt.Sprintf("https://thumbnails.libretro.com/%s/Named_Boxarts/", url.PathEscape(libretroSystem))
-	client := &http.Client{Timeout: 20 * time.Second}
-	resp, err := client.Get(indexURL)
-	if err != nil {
-		return nil
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil
-	}
-
-	matches := hrefPngRegex.FindAllStringSubmatch(string(body), -1)
-	var entries []libretroEntry
-	for _, m := range matches {
-		if len(m) < 2 {
-			continue
-		}
-		decoded, err := url.QueryUnescape(m[1])
-		if err != nil {
-			continue
-		}
-		noExt := strings.TrimSuffix(decoded, ".png")
-		clean := extractCleanTitle(noExt)
-		entries = append(entries, libretroEntry{
-			FileName: noExt,
-			NormKey:  buildComparisonKey(clean),
-			Tokens:   tokenizeNormalized(clean),
-		})
-	}
-
-	cacheMu.Lock()
-	libretroIndexCache[libretroSystem] = entries
-	cacheMu.Unlock()
-	return entries
-}
-
-func findBestLibretroMatch(libretroSystem, cleanTitle, compKey, preferredRegion string) string {
-	entries := getOrLoadLibretroIndex(libretroSystem)
-	if len(entries) == 0 {
-		return fmt.Sprintf("%s (%s)", cleanTitle, preferredRegion)
-	}
-
-	var exactCandidates []string
-	for _, e := range entries {
-		if e.NormKey == compKey {
-			exactCandidates = append(exactCandidates, e.FileName)
-		}
-	}
-	if len(exactCandidates) > 0 {
-		for _, c := range exactCandidates {
-			if strings.Contains(strings.ToLower(c), strings.ToLower(preferredRegion)) {
-				return c
-			}
-		}
-		for _, c := range exactCandidates {
-			if strings.Contains(c, "(USA") || strings.Contains(c, "(World") {
-				return c
-			}
-		}
-		return exactCandidates[0]
-	}
-
-	targetTokens := tokenizeNormalized(cleanTitle)
-	if len(targetTokens) == 0 {
-		return ""
-	}
-
-	bestName := ""
-	bestScore := 0.0
-
-	for _, e := range entries {
-		if len(e.Tokens) == 0 {
-			continue
-		}
-		common := 0
-		for t := range targetTokens {
-			if e.Tokens[t] {
-				common++
-			}
-		}
-		if common == 0 {
-			continue
-		}
-		union := len(targetTokens) + len(e.Tokens) - common
-		score := float64(common) / float64(union)
-		if strings.Contains(e.FileName, "(USA") {
-			score += 0.05
-		}
-		if score > bestScore {
-			bestScore = score
-			bestName = e.FileName
-		}
-	}
-
-	if bestScore >= 0.55 {
-		return bestName
-	}
-	return ""
-}
-
-func getOrLoadArchiveVideoIndex(archiveID string) []archiveVideoEntry {
-	cacheMu.Lock()
-	if cached, ok := archiveVideoCache[archiveID]; ok {
-		cacheMu.Unlock()
-		return cached
-	}
-	cacheMu.Unlock()
-
-	metaURL := fmt.Sprintf("https://archive.org/metadata/%s/files", archiveID)
-	client := &http.Client{Timeout: 20 * time.Second}
-	resp, err := client.Get(metaURL)
-	if err != nil {
-		return nil
-	}
-	defer resp.Body.Close()
-
-	var payload struct {
-		Result []struct {
-			Name string `json:"name"`
-		} `json:"result"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil
-	}
-
-	var entries []archiveVideoEntry
-	for _, f := range payload.Result {
-		if !strings.HasSuffix(strings.ToLower(f.Name), ".mp4") || strings.HasSuffix(strings.ToLower(f.Name), ".ia.mp4") {
-			continue
-		}
-		clean := extractCleanTitle(f.Name)
-		entries = append(entries, archiveVideoEntry{
-			FileName: f.Name,
-			NormKey:  buildComparisonKey(clean),
-			Tokens:   tokenizeNormalized(clean),
-		})
-	}
-
-	cacheMu.Lock()
-	archiveVideoCache[archiveID] = entries
-	cacheMu.Unlock()
-	return entries
-}
-
-func findBestArchiveVideoMatch(archiveID, cleanTitle, compKey string) string {
-	entries := getOrLoadArchiveVideoIndex(archiveID)
-	if len(entries) == 0 {
-		return ""
-	}
-
-	for _, e := range entries {
-		if e.NormKey == compKey {
-			return e.FileName
-		}
-	}
-
-	targetTokens := tokenizeNormalized(cleanTitle)
-	if len(targetTokens) == 0 {
-		return ""
-	}
-
-	bestFile := ""
-	bestScore := 0.0
-	for _, e := range entries {
-		if len(e.Tokens) == 0 {
-			continue
-		}
-		common := 0
-		for t := range targetTokens {
-			if e.Tokens[t] {
-				common++
-			}
-		}
-		if common == 0 {
-			continue
-		}
-		union := len(targetTokens) + len(e.Tokens) - common
-		score := float64(common) / float64(union)
-		if score > bestScore {
-			bestScore = score
-			bestFile = e.FileName
-		}
-	}
-
-	if bestScore >= 0.55 {
-		return bestFile
-	}
-	return ""
-}
-
-func downloadFileHTTP(rawURL, destPath string, timeout time.Duration) bool {
-	if fi, err := os.Stat(destPath); err == nil && fi.Size() > 256 {
-		return true
-	}
-	client := &http.Client{Timeout: timeout}
-	resp, err := client.Get(rawURL)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return false
-	}
-	out, err := os.Create(destPath)
-	if err != nil {
-		return false
-	}
-	written, err := io.Copy(out, resp.Body)
-	out.Close()
-	if err != nil || written < 256 {
-		_ = os.Remove(destPath)
-		return false
-	}
-	return true
-}
-
-func copyLocalFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
-}
-
-func generateFallbackCoverPNG(destPath, title, consoleName, badge string, width, height int) error {
-	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			border := x < 6 || x >= width-6 || y < 6 || y >= height-6
-			if border {
-				img.Set(x, y, color.RGBA{R: 16, G: 185, B: 129, A: 255})
-			} else if y < 44 {
-				img.Set(x, y, color.RGBA{R: 30, G: 41, B: 59, A: 255})
-			} else {
-				r := uint8(15 + (y*20)/height)
-				g := uint8(23 + (x*20)/width)
-				b := uint8(42 + (y*35)/height)
-				img.Set(x, y, color.RGBA{R: r, G: g, B: b, A: 255})
-			}
-		}
-	}
-	f, err := os.Create(destPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return png.Encode(f, img)
 }
 
 func executeUndo(hwnd uintptr) {
@@ -5857,7 +2430,7 @@ func executeUndo(hwnd uintptr) {
 	}
 
 	rootFolder := strings.TrimSpace(getWindowText(hEditPath))
-	_ = removeEmptySubfolders(rootFolder)
+	_ = aegiscore.RemoveEmptySubfolders(rootFolder)
 
 	stateMu.Lock()
 	isBusy = false
@@ -5866,68 +2439,6 @@ func executeUndo(hwnd uintptr) {
 	procEnableWindow.Call(hBtnUndo, 0)
 	appendLog(fmt.Sprintf("Откат завершен. Восстановлено файлов на прежние места: %d.", restored))
 	startScan(hwnd)
-}
-
-func removeEmptySubfolders(root string) int {
-	removed := 0
-	var dirs []string
-	_ = filepath.Walk(root, func(p string, fi os.FileInfo, err error) error {
-		if err == nil && fi.IsDir() && filepath.Clean(p) != filepath.Clean(root) {
-			base := strings.ToLower(fi.Name())
-			// NEVER delete R36S media folders or R36S system/console directories!
-			if standardMediaDirs[base] || protectedR36SDirs[base] {
-				return nil
-			}
-			if _, isConsole := consoleCatalog[base]; isConsole {
-				return nil
-			}
-			dirs = append(dirs, p)
-		}
-		return nil
-	})
-	sort.Slice(dirs, func(i, j int) bool {
-		return len(dirs[i]) > len(dirs[j])
-	})
-	for _, d := range dirs {
-		entries, err := os.ReadDir(d)
-		if err == nil && len(entries) == 0 {
-			if os.Remove(d) == nil {
-				removed++
-			}
-		}
-	}
-	return removed
-}
-
-// Repair broken gamelist.xml bindings and restore empty pictures/names in a console folder
-func repairGamelistAndMediaBindingsInDir(consoleDir string) int {
-	entries, err := os.ReadDir(consoleDir)
-	if err != nil {
-		return 0
-	}
-	var romsInDir []RomItem
-	for _, de := range entries {
-		if de.IsDir() {
-			continue
-		}
-		ext := strings.ToLower(filepath.Ext(de.Name()))
-		if _, ok := extToDefaultConsole[ext]; ok || ext == ".zip" {
-			fPath := filepath.Join(consoleDir, de.Name())
-			fi, err := de.Info()
-			if err != nil || fi.Size() == 0 {
-				continue
-			}
-			item, ok := inspectRomFile(consoleDir, fPath)
-			if ok {
-				romsInDir = append(romsInDir, item)
-			}
-		}
-	}
-	if len(romsInDir) == 0 {
-		return 0
-	}
-	writeArkOSGamelistXML(consoleDir, romsInDir)
-	return len(romsInDir)
 }
 
 // ============================================================================
@@ -5957,7 +2468,7 @@ func startRepairR36SSDCard(hwnd uintptr) {
 		return
 	}
 
-	baseRoot := resolveHierarchyBaseRoot(rawPath)
+	baseRoot := aegiscore.ResolveHierarchyBaseRoot(rawPath)
 	lowerBase := strings.ToLower(filepath.Base(baseRoot))
 	if lowerBase == "organized" || strings.HasPrefix(lowerBase, "1_8bit") || strings.HasPrefix(lowerBase, "2_16bit") || strings.HasPrefix(lowerBase, "3_portable") || strings.HasPrefix(lowerBase, "4_32_64bit") {
 		baseRoot = filepath.Dir(baseRoot)
@@ -6059,7 +2570,7 @@ func startRepairR36SSDCard(hwnd uintptr) {
 		// 3. Repair gamelist.xml and image bindings in rawPath and in console folders
 		repairedBindings := 0
 		if filepath.Clean(rawPath) != filepath.Clean(baseRoot) {
-			n := repairGamelistAndMediaBindingsInDir(rawPath)
+			n := aegiscore.RepairGamelistAndMediaBindingsInDir(rawPath)
 			if n > 0 {
 				repairedBindings += n
 				appendLog(fmt.Sprintf("[ВОССТАНОВЛЕНЫ ПРИВЯЗКИ GAMELIST.XML И КАРТИНОК] %s (%d игр)", rawPath, n))
@@ -6074,9 +2585,9 @@ func startRepairR36SSDCard(hwnd uintptr) {
 			if filepath.Clean(cDir) == filepath.Clean(rawPath) {
 				continue
 			}
-			if _, isCon := consoleCatalog[strings.ToLower(re.Name())]; isCon {
+			if _, isCon := aegiscore.ConsoleCatalog[strings.ToLower(re.Name())]; isCon {
 				if _, err := os.Stat(filepath.Join(cDir, "gamelist.xml")); err == nil {
-					n := repairGamelistAndMediaBindingsInDir(cDir)
+					n := aegiscore.RepairGamelistAndMediaBindingsInDir(cDir)
 					if n > 0 {
 						repairedBindings += n
 						appendLog(fmt.Sprintf("[ВОССТАНОВЛЕНЫ ПРИВЯЗКИ GAMELIST.XML И КАРТИНОК] %s (%d игр)", cDir, n))
@@ -6109,68 +2620,10 @@ func runChkdskOnDrive(hwnd uintptr, path string) {
 	}
 }
 
-func sanitizeFileName(name string) string {
-	invalid := []string{"<", ">", ":", "\"", "/", "\\", "|", "?", "*"}
-	res := name
-	for _, ch := range invalid {
-		res = strings.ReplaceAll(res, ch, "_")
-	}
-	return strings.TrimSpace(res)
-}
-
 // ============================================================================
 // UNIFIED INTERACTIVE XML & DEEP HEADER MAPPING INSPECTOR (v5.0)
 // Matches "000001 (World).chd" and "000001.chd" against custom XML, gamelist.xml & binary headers!
 // ============================================================================
-
-func parseSingleXmlFileMaps(xmlPath string) (map[string]string, map[string]GameEntryXML) {
-	tMap := make(map[string]string)
-	eMap := make(map[string]GameEntryXML)
-	data, err := os.ReadFile(xmlPath)
-	if err != nil || len(data) == 0 {
-		return tMap, eMap
-	}
-	blocks := xmlGameBlockRegex.FindAllStringSubmatch(string(data), -1)
-	for _, b := range blocks {
-		if len(b) < 2 {
-			continue
-		}
-		body := b[1]
-		rawPath := extractXMLTagValue(body, "path")
-		rawName := extractXMLTagValue(body, "name")
-		if rawPath == "" {
-			continue
-		}
-		cleanP := strings.ToLower(filepath.Base(strings.ReplaceAll(rawPath, "\\", "/")))
-		noExt := strings.TrimSuffix(cleanP, filepath.Ext(cleanP))
-		coreK := extractCoreNumberKey(cleanP)
-
-		entry := GameEntryXML{
-			Path:      rawPath,
-			Name:      rawName,
-			Image:     extractXMLTagValue(body, "image"),
-			Thumbnail: extractXMLTagValue(body, "thumbnail"),
-			Marquee:   extractXMLTagValue(body, "marquee"),
-			Video:     extractXMLTagValue(body, "video"),
-			Genre:     extractXMLTagValue(body, "genre"),
-		}
-		eMap[cleanP] = entry
-		eMap[noExt] = entry
-		if coreK != "" {
-			eMap[coreK] = entry
-		}
-
-		cleanN := stripLeadingIndexExcept007(strings.TrimSpace(rawName))
-		if cleanN != "" && !isPureNumberOrGenericTitle(cleanN) {
-			tMap[cleanP] = cleanN
-			tMap[noExt] = cleanN
-			if coreK != "" {
-				tMap[coreK] = cleanN
-			}
-		}
-	}
-	return tMap, eMap
-}
 
 func promptSelectXmlFile(hwndOwner uintptr) string {
 	fileBuf := make([]uint16, 1024)
@@ -6200,273 +2653,12 @@ func promptSelectXmlFile(hwndOwner uintptr) string {
 	if ret != 0 {
 		chosen := syscall.UTF16ToString(fileBuf)
 		if chosen != "" {
-			selectedCustomXmlPath = chosen
+			aegiscore.SetCustomXMLPath(chosen)
 			appendLog("📂 Выбран пользовательский XML-файл для сопоставления: " + chosen)
 			return chosen
 		}
 	}
 	return ""
-}
-
-func buildXmlMappingCandidatesForFolder(folder string) []XmlMappingCandidate {
-	// Index real ROM files on disk in folder, folder/psx, folder/ps1, and scannedRoms
-	// by their normalized core number key (so "000001 (World).chd" maps to "000001"!)
-	type diskRomInfo struct {
-		fileName       string
-		fullPath       string
-		coreKey        string
-		extractedTitle string
-	}
-	diskByCore := make(map[string]diskRomInfo)
-	diskByLower := make(map[string]diskRomInfo)
-
-	stateMu.Lock()
-	localScanned := make([]RomItem, len(scannedRoms))
-	copy(localScanned, scannedRoms)
-	stateMu.Unlock()
-
-	for _, r := range localScanned {
-		ck := extractCoreNumberKey(r.FileName)
-		info := diskRomInfo{
-			fileName:       r.FileName,
-			fullPath:       r.FilePath,
-			coreKey:        ck,
-			extractedTitle: r.ExtractedTitle,
-		}
-		diskByLower[strings.ToLower(r.FileName)] = info
-		diskByLower[strings.ToLower(strings.TrimSuffix(r.FileName, filepath.Ext(r.FileName)))] = info
-		if ck != "" {
-			diskByCore[ck] = info
-		}
-	}
-
-	// Also directly scan disk in folder, folder/psx, folder/ps1 so even if user hasn't clicked "1. Scan", we find "000001 (World).chd"!
-	for _, candDir := range []string{folder, filepath.Join(folder, "psx"), filepath.Join(folder, "ps1")} {
-		if candDir == "" {
-			continue
-		}
-		entries, err := os.ReadDir(candDir)
-		if err != nil {
-			continue
-		}
-		for _, e := range entries {
-			if e.IsDir() {
-				continue
-			}
-			ext := strings.ToLower(filepath.Ext(e.Name()))
-			if _, ok := extToDefaultConsole[ext]; !ok && ext != ".zip" {
-				continue
-			}
-			ck := extractCoreNumberKey(e.Name())
-			low := strings.ToLower(e.Name())
-			if _, exists := diskByLower[low]; !exists {
-				info := diskRomInfo{
-					fileName: e.Name(),
-					fullPath: filepath.Join(candDir, e.Name()),
-					coreKey:  ck,
-				}
-				diskByLower[low] = info
-				diskByLower[strings.TrimSuffix(low, ext)] = info
-				if ck != "" {
-					if _, cExists := diskByCore[ck]; !cExists {
-						diskByCore[ck] = info
-					}
-				}
-			}
-		}
-	}
-
-	titleMap, entryMap := loadGamelistMapsForDir(folder)
-	if selectedCustomXmlPath != "" {
-		cTMap, cEMap := parseSingleXmlFileMaps(selectedCustomXmlPath)
-		for k, v := range cTMap {
-			titleMap[k] = v
-		}
-		for k, v := range cEMap {
-			entryMap[k] = v
-		}
-	}
-
-	type rawPair struct {
-		diskFileName string
-		coreKey      string
-		title        string
-		hasOnDisk    bool
-		hasImg       bool
-		hasVid       bool
-		sourceLabel  string
-	}
-	var pairs []rawPair
-	seenCore := make(map[string]bool)
-
-	// 1. Collect from custom XML or folder's gamelist.xml if present
-	for k, ge := range entryMap {
-		if strings.Contains(k, ".") {
-			fName := filepath.Base(strings.ReplaceAll(strings.TrimSpace(ge.Path), "\\", "/"))
-			ext := strings.ToLower(filepath.Ext(fName))
-			if ext == ".srm" || strings.Contains(strings.ToLower(ge.Name), "zzz(notgame)") {
-				continue
-			}
-			ck := extractCoreNumberKey(fName)
-			if ck == "" {
-				ck = strings.ToLower(strings.TrimSuffix(fName, filepath.Ext(fName)))
-			}
-			if seenCore[ck] {
-				continue
-			}
-			t := titleMap[ck]
-			if t == "" {
-				t = titleMap[strings.ToLower(fName)]
-			}
-			if t == "" {
-				t = factoryR36sNumberMap[ck]
-			}
-			if t == "" || isPureNumberOrGenericTitle(t) {
-				continue
-			}
-			seenCore[ck] = true
-
-			actualName := fName
-			hasDisk := false
-			if dInfo, ok := diskByCore[ck]; ok {
-				actualName = dInfo.fileName
-				hasDisk = true
-			} else if dInfo, ok := diskByLower[strings.ToLower(fName)]; ok {
-				actualName = dInfo.fileName
-				hasDisk = true
-			}
-
-			srcLbl := "В базе XML"
-			if hasDisk {
-				srcLbl = "✔ Найден в папке (XML)"
-			}
-			pairs = append(pairs, rawPair{
-				diskFileName: actualName,
-				coreKey:      ck,
-				title:        t,
-				hasOnDisk:    hasDisk,
-				hasImg:       ge.Image != "" || ge.Thumbnail != "",
-				hasVid:       ge.Video != "",
-				sourceLabel:  srcLbl,
-			})
-		}
-	}
-
-	// 2. Also include embedded R36S factory XML mappings (630 numbered PSX games 000001..000634)
-	var keys []string
-	for k := range factoryR36sNumberMap {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		if seenCore[k] {
-			continue
-		}
-		t := factoryR36sNumberMap[k]
-		actualName := k + ".chd"
-		hasDisk := false
-		if dInfo, ok := diskByCore[k]; ok {
-			actualName = dInfo.fileName
-			hasDisk = true
-		}
-		seenCore[k] = true
-		srcLbl := "В базе XML (630 игр)"
-		if hasDisk {
-			srcLbl = "✔ Найден в папке (000001/World)"
-		}
-		pairs = append(pairs, rawPair{
-			diskFileName: actualName,
-			coreKey:      k,
-			title:        t,
-			hasOnDisk:    hasDisk,
-			hasImg:       true,
-			hasVid:       true,
-			sourceLabel:  srcLbl,
-		})
-	}
-
-	// 3. Also include any numbered ROMs on disk resolved via deep binary header inspection!
-	for ck, dInfo := range diskByCore {
-		if seenCore[ck] {
-			continue
-		}
-		hdrTitle := dInfo.extractedTitle
-		if hdrTitle == "" || isPureNumberOrGenericTitle(hdrTitle) {
-			ext := strings.ToLower(filepath.Ext(dInfo.fullPath))
-			hdrTitle = extractInternalBinaryRomTitle(dInfo.fullPath, ext, detectConsoleCode(dInfo.fullPath, ext))
-		}
-		if hdrTitle != "" && !isPureNumberOrGenericTitle(hdrTitle) && countLettersInString(hdrTitle) >= 2 {
-			seenCore[ck] = true
-			pairs = append(pairs, rawPair{
-				diskFileName: dInfo.fileName,
-				coreKey:      ck,
-				title:        hdrTitle,
-				hasOnDisk:    true,
-				hasImg:       false,
-				hasVid:       false,
-				sourceLabel:  "✔ Заголовок диска (Deep Header)",
-			})
-		}
-	}
-
-	// Sort so ROMs actually found in the user's folder appear at the very top!
-	sort.Slice(pairs, func(i, j int) bool {
-		if pairs[i].hasOnDisk != pairs[j].hasOnDisk {
-			return pairs[i].hasOnDisk
-		}
-		return pairs[i].diskFileName < pairs[j].diskFileName
-	})
-
-	anyMatchedOnDisk := false
-	for _, p := range pairs {
-		if p.hasOnDisk {
-			anyMatchedOnDisk = true
-			break
-		}
-	}
-
-	// Count duplicate titles so we disambiguate with [000593]
-	titleCounts := make(map[string]int)
-	for _, p := range pairs {
-		cleanT := strings.TrimSpace(strings.ReplaceAll(p.title, "(World)", ""))
-		safeBase := strings.ToLower(sanitizeFileName(cleanT))
-		titleCounts[safeBase]++
-	}
-	titleSeen := make(map[string]int)
-
-	var result []XmlMappingCandidate
-	for _, p := range pairs {
-		ext := filepath.Ext(p.diskFileName)
-		if ext == "" {
-			ext = ".chd"
-		}
-		cleanT := strings.TrimSpace(strings.ReplaceAll(p.title, "(World)", ""))
-		safeBase := sanitizeFileName(cleanT)
-		lowSafe := strings.ToLower(safeBase)
-		titleSeen[lowSafe]++
-		if titleCounts[lowSafe] > 1 && titleSeen[lowSafe] > 1 {
-			safeBase = sanitizeFileName(fmt.Sprintf("%s [%s]", safeBase, p.coreKey))
-		}
-		newFile := safeBase + ext
-
-		defaultChk := true
-		if anyMatchedOnDisk {
-			defaultChk = p.hasOnDisk
-		}
-
-		result = append(result, XmlMappingCandidate{
-			OldFileName:    p.diskFileName,
-			CoreKey:        p.coreKey,
-			CleanTitle:     cleanT,
-			NewFileName:    newFile,
-			HasRomOnDisk:   p.hasOnDisk,
-			HasImage:       p.hasImg,
-			HasVideo:       p.hasVid,
-			DefaultChecked: defaultChk,
-			SourceLabel:    p.sourceLabel,
-		})
-	}
-	return result
 }
 
 func populateXmlListView() {
@@ -6476,7 +2668,7 @@ func populateXmlListView() {
 	procSendMessageW.Call(hXmlLV, LVM_DELETEALLITEMS, 0, 0)
 
 	stateMu.Lock()
-	list := make([]XmlMappingCandidate, len(xmlMappingCandidates))
+	list := make([]aegiscore.XmlMappingCandidate, len(xmlMappingCandidates))
 	copy(list, xmlMappingCandidates)
 	stateMu.Unlock()
 
@@ -6514,8 +2706,8 @@ func populateXmlListView() {
 
 	if hXmlInfoLbl != 0 {
 		xmlSrc := "Встроенная база R36S PSX (630 игр) + Заголовки дисков"
-		if selectedCustomXmlPath != "" {
-			xmlSrc = "Выбранный файл: " + filepath.Base(selectedCustomXmlPath)
+		if customXML := aegiscore.CustomXMLPath(); customXML != "" {
+			xmlSrc = "Выбранный файл: " + filepath.Base(customXML)
 		}
 		infoTxt := fmt.Sprintf("Источник: %s | Сопоставлено с файлами в вашей папке (включая 000001 (World).chd): %d | Всего записей: %d. Без лишних приписок (World)!", xmlSrc, matchedCount, len(list))
 		procSetWindowTextW.Call(hXmlInfoLbl, uintptr(unsafe.Pointer(utf16Ptr(infoTxt))))
@@ -6556,8 +2748,7 @@ func openXmlInspectorDialog(hwnd uintptr) {
 func createXmlDialogControls(hDlg uintptr) {
 	btnBrowseXml, _, _ := procCreateWindowExW.Call(
 		0, uintptr(unsafe.Pointer(utf16Ptr("BUTTON"))),
-		uintptr(unsafe.Pointer(utf16Ptr("📂 Выбрать свой .XML файл с диска (gamelist.xml)...")),
-		),
+		uintptr(unsafe.Pointer(utf16Ptr("📂 Выбрать свой .XML файл с диска (gamelist.xml)..."))),
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,
 		20, 14, 410, 38, hDlg, ID_XML_BTN_BROWSE, 0, 0,
 	)
@@ -6650,7 +2841,7 @@ func createXmlDialogControls(hDlg uintptr) {
 
 func applyCheckedXmlMappings(hDlg uintptr) {
 	stateMu.Lock()
-	list := make([]XmlMappingCandidate, len(xmlMappingCandidates))
+	list := make([]aegiscore.XmlMappingCandidate, len(xmlMappingCandidates))
 	copy(list, xmlMappingCandidates)
 	stateMu.Unlock()
 
@@ -6676,7 +2867,7 @@ func applyCheckedXmlMappings(hDlg uintptr) {
 		oldBase := strings.TrimSuffix(m.OldFileName, filepath.Ext(m.OldFileName))
 		coreKey := m.CoreKey
 		if coreKey == "" {
-			coreKey = extractCoreNumberKey(m.OldFileName)
+			coreKey = aegiscore.ExtractCoreNumberKey(m.OldFileName)
 		}
 		newBase := strings.TrimSuffix(m.NewFileName, filepath.Ext(m.NewFileName))
 
@@ -6733,10 +2924,10 @@ func applyCheckedXmlMappings(hDlg uintptr) {
 
 		if err := os.Rename(srcPath, dstPath); err == nil {
 			undoBatch = append(undoBatch, UndoEntry{FromPath: dstPath, ToPath: srcPath})
-			_, _ = renameCompanionCueBin(romDir, actualOldBase, newBase, actualExt)
-			relocateExistingMediaForRom(romDir, romDir, actualOldBase, newBase)
+			_, _ = aegiscore.RenameCompanionCueBin(romDir, actualOldBase, newBase, actualExt)
+			aegiscore.RelocateExistingMediaForRom(romDir, romDir, actualOldBase, newBase)
 			if coreKey != "" && !strings.EqualFold(coreKey, actualOldBase) {
-				relocateExistingMediaForRom(romDir, romDir, coreKey, newBase)
+				aegiscore.RelocateExistingMediaForRom(romDir, romDir, coreKey, newBase)
 			}
 			renamedRoms++
 			appendLog(fmt.Sprintf("[XML ПЕРЕИМЕНОВАНИЕ] %s  ==>  %s", filepath.Base(srcPath), filepath.Base(dstPath)))
@@ -6744,7 +2935,7 @@ func applyCheckedXmlMappings(hDlg uintptr) {
 	}
 
 	if renamedRoms > 0 {
-		_ = repairGamelistAndMediaBindingsInDir(rootFolder)
+		_ = aegiscore.RepairGamelistAndMediaBindingsInDir(rootFolder)
 		stateMu.Lock()
 		undoHistory = undoBatch
 		stateMu.Unlock()
@@ -6784,7 +2975,7 @@ func xmlWndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 			}
 		case ID_XML_BTN_MATCHED:
 			stateMu.Lock()
-			list := make([]XmlMappingCandidate, len(xmlMappingCandidates))
+			list := make([]aegiscore.XmlMappingCandidate, len(xmlMappingCandidates))
 			copy(list, xmlMappingCandidates)
 			stateMu.Unlock()
 			for i, item := range list {
@@ -7013,9 +3204,9 @@ func wndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 			procEnableWindow.Call(hBtnScrape, 1)
 		}
 		procSendMessageW.Call(hProgress, PBM_SETPOS, 100, 0)
-		summary := fmt.Sprintf("Очистка медиа завершена: удалено лишних картинок/баннеров/видео без рома: %d (освобождено %s).", int(wParam), formatBytes(int64(lParam)))
+		summary := fmt.Sprintf("Очистка медиа завершена: удалено лишних картинок/баннеров/видео без рома: %d (освобождено %s).", int(wParam), aegiscore.FormatBytes(int64(lParam)))
 		procSetWindowTextW.Call(hLblStats, uintptr(unsafe.Pointer(utf16Ptr(summary))))
-		msgText := fmt.Sprintf("Проверка баннеров, картинок и видео завершена!\n\nУдалено лишних (осиротевших) медиафайлов, для которых больше нет рома: %d\nОсвобождено места: %s", int(wParam), formatBytes(int64(lParam)))
+		msgText := fmt.Sprintf("Проверка баннеров, картинок и видео завершена!\n\nУдалено лишних (осиротевших) медиафайлов, для которых больше нет рома: %d\nОсвобождено места: %s", int(wParam), aegiscore.FormatBytes(int64(lParam)))
 		procMessageBoxW.Call(hwnd, uintptr(unsafe.Pointer(utf16Ptr(msgText))), uintptr(unsafe.Pointer(utf16Ptr("Очистка медиа R36S — AegisROM v4.3"))), MB_OK|MB_ICONINFORMATION)
 		return 0
 

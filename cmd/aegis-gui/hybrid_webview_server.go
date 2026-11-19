@@ -4,9 +4,9 @@
 package main
 
 import (
+	"aegisgui/aegiscore"
 	"aegisgui/cmd/winsetup"
 	"archive/zip"
-	"bytes"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -185,170 +185,6 @@ func promptSelectChdmanExecutable() (string, error) {
 	}
 	_ = os.WriteFile(filepath.Join(toolsDir, "chdman_path.txt"), []byte(chosen), 0644)
 	return chosen, nil
-}
-
-// Strips raw 2352-byte or 2448-byte (2352+96 subchannel) CD sectors (MODE1 +16 or MODE2/XA +24) to pure 2048-byte ISO9660.
-func stripBin2352FileToIso(binPath, isoPath string) error {
-	src, err := os.Open(binPath)
-	if err != nil {
-		return err
-	}
-	defer src.Close()
-
-	st, err := src.Stat()
-	if err != nil {
-		return err
-	}
-	if st.Size() < 32768 {
-		return fmt.Errorf("входной образ диска слишком мал (%d Б)", st.Size())
-	}
-
-	head := make([]byte, 96*1024)
-	nHead, _ := io.ReadFull(src, head)
-	head = head[:nHead]
-
-	syncPattern := []byte{0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00}
-	sectorSize := 2048
-	if len(head) >= 2460 && bytes.HasPrefix(head, syncPattern) && bytes.Equal(head[2448:2460], syncPattern) {
-		sectorSize = 2448
-	} else if len(head) >= 2364 && bytes.HasPrefix(head, syncPattern) && bytes.Equal(head[2352:2364], syncPattern) {
-		sectorSize = 2352
-	} else if st.Size()%2448 == 0 && st.Size()%2352 != 0 {
-		sectorSize = 2448
-	} else if st.Size()%2352 == 0 {
-		sectorSize = 2352
-	}
-
-	if _, err := src.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-
-	dst, err := os.Create(isoPath)
-	if err != nil {
-		return err
-	}
-	defer dst.Close()
-
-	if sectorSize == 2048 {
-		_, err = io.Copy(dst, src)
-		return err
-	}
-
-	dataOffset := 24
-	pvdBase := 16 * sectorSize
-	if len(head) >= pvdBase+30 && bytes.Equal(head[pvdBase+17:pvdBase+22], []byte("CD001")) {
-		dataOffset = 16
-	}
-
-	const sectorsBatch = 2048
-	inBuf := make([]byte, sectorsBatch*sectorSize)
-	outBuf := make([]byte, sectorsBatch*2048)
-
-	for {
-		n, readErr := io.ReadFull(src, inBuf)
-		sectors := n / sectorSize
-		if sectors > 0 {
-			for s := 0; s < sectors; s++ {
-				srcOff := s*sectorSize + dataOffset
-				copy(outBuf[s*2048:(s+1)*2048], inBuf[srcOff:srcOff+2048])
-			}
-			if _, wErr := dst.Write(outBuf[:sectors*2048]); wErr != nil {
-				return wErr
-			}
-		}
-		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
-			break
-		}
-		if readErr != nil {
-			return readErr
-		}
-	}
-	return nil
-}
-
-// Normalizes .mdf / standalone .img (2448B CloneCD/Alcohol -> 2352B, or 2352B copy) into a clean .cue + .bin pair for chdman.exe.
-func normalizeDiscImageToCueAndBin(srcPath, cuePath, binPath string) error {
-	src, err := os.Open(srcPath)
-	if err != nil {
-		return err
-	}
-	defer src.Close()
-
-	st, err := src.Stat()
-	if err != nil {
-		return err
-	}
-	if st.Size() < 32768 {
-		return fmt.Errorf("файл образа %s слишком мал (%d Б)", filepath.Base(srcPath), st.Size())
-	}
-
-	head := make([]byte, 96*1024)
-	nHead, _ := io.ReadFull(src, head)
-	head = head[:nHead]
-
-	syncPattern := []byte{0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00}
-	sectorSize := 2048
-	if len(head) >= 2460 && bytes.HasPrefix(head, syncPattern) && bytes.Equal(head[2448:2460], syncPattern) {
-		sectorSize = 2448
-	} else if len(head) >= 2364 && bytes.HasPrefix(head, syncPattern) && bytes.Equal(head[2352:2364], syncPattern) {
-		sectorSize = 2352
-	} else if st.Size()%2448 == 0 && st.Size()%2352 != 0 {
-		sectorSize = 2448
-	} else if st.Size()%2352 == 0 {
-		sectorSize = 2352
-	}
-
-	modeStr := "MODE2/2352"
-	if sectorSize == 2048 {
-		modeStr = "MODE1/2048"
-	} else {
-		pvdBase := 16 * sectorSize
-		if len(head) >= pvdBase+30 && bytes.Equal(head[pvdBase+17:pvdBase+22], []byte("CD001")) {
-			modeStr = "MODE1/2352"
-		}
-	}
-
-	if _, err := src.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-	dst, err := os.Create(binPath)
-	if err != nil {
-		return err
-	}
-	if sectorSize == 2448 {
-		const sectorsBatch = 2048
-		inBuf := make([]byte, sectorsBatch*2448)
-		outBuf := make([]byte, sectorsBatch*2352)
-		for {
-			n, readErr := io.ReadFull(src, inBuf)
-			sectors := n / 2448
-			if sectors > 0 {
-				for s := 0; s < sectors; s++ {
-					copy(outBuf[s*2352:(s+1)*2352], inBuf[s*2448:s*2448+2352])
-				}
-				if _, wErr := dst.Write(outBuf[:sectors*2352]); wErr != nil {
-					_ = dst.Close()
-					return wErr
-				}
-			}
-			if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
-				break
-			}
-			if readErr != nil {
-				_ = dst.Close()
-				return readErr
-			}
-		}
-	} else {
-		if _, err := io.Copy(dst, src); err != nil {
-			_ = dst.Close()
-			return err
-		}
-	}
-	_ = dst.Close()
-
-	cueBody := fmt.Sprintf("FILE \"%s\" BINARY\r\n  TRACK 01 %s\r\n    INDEX 01 00:00:00\r\n", filepath.Base(binPath), modeStr)
-	return os.WriteFile(cuePath, []byte(cueBody), 0644)
 }
 
 type EmulatorConfigFile struct {
@@ -898,7 +734,7 @@ func runHybridModernDesktopApp() bool {
 				if strings.HasSuffix(lowEntry, ".mds") || strings.HasSuffix(lowEntry, ".mdf") || strings.HasSuffix(lowEntry, ".img") {
 					normCue := filepath.Join(tmpDir, baseName+"_norm.cue")
 					normBin := filepath.Join(tmpDir, baseName+"_norm.bin")
-					if nErr := normalizeDiscImageToCueAndBin(rawPayload, normCue, normBin); nErr == nil {
+					if nErr := aegiscore.NormalizeDiscImageToCueAndBin(rawPayload, normCue, normBin); nErr == nil {
 						chdInputPath = normCue
 					}
 				}
@@ -939,7 +775,7 @@ func runHybridModernDesktopApp() bool {
 				http.Error(w, "chdman extractcd error: "+runErr.Error()+"\n"+string(cmdOut), http.StatusInternalServerError)
 				return
 			}
-			if err := stripBin2352FileToIso(tmpBin, outIso); err != nil {
+			if err := aegiscore.StripBin2352ToISO(tmpBin, outIso); err != nil {
 				http.Error(w, "strip bin->iso error: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -1292,9 +1128,9 @@ func runHybridModernDesktopApp() bool {
 		defer resp.Body.Close()
 		var rawFeed struct {
 			Ports map[string]struct {
-				Name   string   `json:"name"`
-				Items  []string `json:"items"`
-				Attr   struct {
+				Name  string   `json:"name"`
+				Items []string `json:"items"`
+				Attr  struct {
 					Title   string                 `json:"title"`
 					Desc    string                 `json:"desc"`
 					Genres  []string               `json:"genres"`
@@ -1323,28 +1159,28 @@ func runHybridModernDesktopApp() bool {
 			return
 		}
 		type pmItem struct {
-			ID                     string   `json:"id"`
-			Slug                   string   `json:"slug"`
-			Title                  string   `json:"title"`
-			Desc                   string   `json:"desc"`
-			Genres                 []string `json:"genres"`
-			ReadyToRun             bool     `json:"readyToRun"`
-			Porter                 []string `json:"porter"`
-			Runtime                []string `json:"runtime"`
-			Requirements           []string `json:"requirements"`
-			InstructionsRaw        string   `json:"instructionsRaw"`
-			InstructionsMd         string   `json:"instructionsMd"`
-			RequiredDataTargetPath string   `json:"requiredDataTargetPath"`
-			RequiredDataHint       string   `json:"requiredDataHint"`
-			Items                  []string `json:"items"`
-			AvailDevices           []string `json:"availDevices"`
+			ID                      string   `json:"id"`
+			Slug                    string   `json:"slug"`
+			Title                   string   `json:"title"`
+			Desc                    string   `json:"desc"`
+			Genres                  []string `json:"genres"`
+			ReadyToRun              bool     `json:"readyToRun"`
+			Porter                  []string `json:"porter"`
+			Runtime                 []string `json:"runtime"`
+			Requirements            []string `json:"requirements"`
+			InstructionsRaw         string   `json:"instructionsRaw"`
+			InstructionsMd          string   `json:"instructionsMd"`
+			RequiredDataTargetPath  string   `json:"requiredDataTargetPath"`
+			RequiredDataHint        string   `json:"requiredDataHint"`
+			Items                   []string `json:"items"`
+			AvailDevices            []string `json:"availDevices"`
 			SupportedConsolesPretty []string `json:"supportedConsolesPretty"`
-			CoverUrl               string   `json:"coverUrl"`
-			ScreenshotUrl          string   `json:"screenshotUrl"`
-			DownloadUrl            string   `json:"downloadUrl"`
-			SizeBytes              int64    `json:"sizeBytes"`
-			DateUpdated            string   `json:"dateUpdated"`
-			MD5                    string   `json:"md5"`
+			CoverUrl                string   `json:"coverUrl"`
+			ScreenshotUrl           string   `json:"screenshotUrl"`
+			DownloadUrl             string   `json:"downloadUrl"`
+			SizeBytes               int64    `json:"sizeBytes"`
+			DateUpdated             string   `json:"dateUpdated"`
+			MD5                     string   `json:"md5"`
 		}
 		games := make([]pmItem, 0, len(rawFeed.Ports))
 		for key, entry := range rawFeed.Ports {
@@ -1496,11 +1332,11 @@ func runHybridModernDesktopApp() bool {
 			if prefRegion == "" {
 				prefRegion = "USA"
 			}
-			matchedName := findBestLibretroMatch(item.LibretroSystem, item.CleanTitle, item.ComparisonKey, prefRegion)
+			matchedName := aegiscore.FindBestLibretroMatch(item.LibretroSystem, item.CleanTitle, item.ComparisonKey, prefRegion)
 			if matchedName == "" {
 				matchedName = fmt.Sprintf("%s (USA)", item.CleanTitle)
 			}
-			canonicalTitle := extractCleanTitle(matchedName)
+			canonicalTitle := aegiscore.ExtractCleanTitle(matchedName)
 			if canonicalTitle == "" {
 				canonicalTitle = item.CleanTitle
 			}
@@ -1514,7 +1350,7 @@ func runHybridModernDesktopApp() bool {
 
 			videoURL := ""
 			if item.ArchiveVideoID != "" {
-				matchedVid := findBestArchiveVideoMatch(item.ArchiveVideoID, item.CleanTitle, item.ComparisonKey)
+				matchedVid := aegiscore.FindBestArchiveVideoMatch(item.ArchiveVideoID, item.CleanTitle, item.ComparisonKey)
 				if matchedVid != "" {
 					videoURL = fmt.Sprintf("https://archive.org/download/%s/%s", item.ArchiveVideoID, url.PathEscape(matchedVid))
 				}

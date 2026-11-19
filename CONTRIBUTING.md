@@ -34,7 +34,7 @@
 
 | Область | Файлы |
 |---|---|
-| Бэкенд | `cmd/`, `server.ts`, `go.mod` |
+| Бэкенд | `aegiscore/`, `cmd/`, `server.ts`, `go.mod` |
 | Фронтенд | `src/`, `index.html`, `vite.config.ts` |
 | Дизайн | `src/components/`, `src/index.css`, `public/` (иконки, манифест) |
 | Архитектура | структура пакетов, `docs/architecture.md` |
