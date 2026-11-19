@@ -26,7 +26,7 @@
    git push origin v0.5.5
    ```
 
-4. Workflow проверит, что тег стоит на коммите из `main` и совпадает с версией в `package.json`, соберёт `Setup.exe`, `Portable.exe`, сканер и `.zip` и создаст релиз с автоматическими release notes. Версии `0.x` помечаются как pre-release.
+4. Workflow проверит, что тег стоит на коммите из `main` и совпадает с версией в `package.json`, соберёт `Setup.exe`, `Portable.exe`, сканер и `.zip` и создаст релиз с автоматическими release notes. Релиз помечается как Latest, поэтому ссылка `releases/latest` всегда ведёт на него (pre-release GitHub в `latest` не учитывает, поэтому флаг не ставится).
 
 Без терминала: GitHub → **Releases** → **Draft a new release** → в поле тега ввести `v0.5.5`, target `main` → **Publish**. Тег создастся и запустит тот же workflow, файлы добавятся в релиз через несколько минут.
 

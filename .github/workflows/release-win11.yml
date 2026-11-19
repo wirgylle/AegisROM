@@ -73,7 +73,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          prerelease: ${{ startsWith(github.ref_name, 'v0.') }}
+          make_latest: true
           generate_release_notes: true
           files: |
             public/downloads/AegisROM-Setup-v*-Win11-x64.exe
