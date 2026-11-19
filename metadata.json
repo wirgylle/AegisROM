@@ -1,6 +1,0 @@
-{
-  "name": "AegisROM",
-  "description": "High-speed retro ROM manager, No-Intro/Redump DAT hash verifier, 1G1R deduplicator, metadata scraper, and multi-threaded Go scanner engine.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

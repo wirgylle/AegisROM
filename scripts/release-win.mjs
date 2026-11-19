@@ -70,7 +70,19 @@ function main() {
 
   // 2. Sync dist -> cmd/aegis-gui/webdist (clears stale hashed assets)
   syncDirClean(DIST_DIR, WEBDIST_DIR);
-  console.log(`Synced ${DIST_DIR} -> ${WEBDIST_DIR}`);
+  // Never embed release binaries into AegisROM.exe: Vite copies public/downloads
+  // into dist, so without this each release would carry the previous one inside.
+  const webdistDownloads = path.join(WEBDIST_DIR, 'downloads');
+  if (fs.existsSync(webdistDownloads)) {
+    for (const entry of fs.readdirSync(webdistDownloads)) {
+      if (/\.(exe|zip|gz)$/i.test(entry)) {
+        fs.unlinkSync(path.join(webdistDownloads, entry));
+      }
+    }
+  }
+  // Keep the placeholder tracked by git so `go:embed all:webdist` works in a clean clone.
+  fs.writeFileSync(path.join(WEBDIST_DIR, '.gitkeep'), '');
+  console.log(`Synced ${DIST_DIR} -> ${WEBDIST_DIR} (binaries excluded)`);
 
   // 3. Regenerate Win32 manifest & ICO/SYSO resources for both aegis-gui & aegis-setup
   run(`"${goBin}" run ./cmd/gen-rsrc`);
