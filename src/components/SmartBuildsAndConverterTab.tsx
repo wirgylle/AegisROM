@@ -1860,7 +1860,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
       {/* ================================================================== */}
       <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-slate-200 dark:border-slate-800 pb-3">
         <div>
-          <h2 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
             {t('builds.headerTitle')}
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
@@ -1929,7 +1929,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
       {/* ================================================================== */}
       <div className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 rounded-xl p-3 space-y-2 text-xs">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2 font-extrabold text-slate-800 dark:text-slate-100">
+          <div className="flex items-center gap-2 font-semibold text-slate-800 dark:text-slate-100">
             <HardDrive className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
             <span>{t('builds.flash.title')}</span>
           </div>
@@ -1981,7 +1981,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
               </label>
             </div>
 
-            <div className="font-mono font-extrabold text-emerald-700 dark:text-emerald-400">
+            <div className="font-mono font-semibold text-emerald-700 dark:text-emerald-400">
               {tf('builds.flash.available', {
                 gb: activeFlashBudget.netAvailableGB,
                 mb: activeFlashBudget.netAvailableMB,
@@ -1996,7 +1996,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
       {/* ================================================================== */}
       <div className="bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/70 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2.5 text-xs">
         <div className="flex items-center gap-2.5 min-w-0">
-          <span className="px-2.5 py-1 rounded-lg bg-blue-600 text-white font-mono font-extrabold shrink-0">
+          <span className="px-2.5 py-1 rounded-lg bg-blue-600 text-white font-mono font-semibold shrink-0">
             {tf('builds.staging.queueBadge', { count: queuedGames.length })}
           </span>
           <div className="min-w-0">
@@ -2027,7 +2027,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
             onClick={handleSaveBuildSnapshotClick}
             disabled={queuedGames.length === 0 && queuedPortMasterGames.length === 0}
             title={t('builds.staging.saveTip')}
-            className="px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold flex items-center gap-1.5 cursor-pointer shadow-2xs disabled:opacity-40"
+            className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 px-2.5 py-1.5 rounded-lg font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
           >
             <Save className="w-3.5 h-3.5" />
             <span>{t('builds.staging.saveBtn')}</span>
@@ -2045,7 +2045,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
           )}
           <button
             onClick={() => setBuildsSubTab('converter_export')}
-            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center gap-1.5 cursor-pointer shadow-2xs"
+            className="bg-accent hover:bg-accent-hover text-white px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 cursor-pointer"
           >
             <span>{t('builds.staging.goConvertBtn')}</span>
             <ArrowRight className="w-3.5 h-3.5" />
@@ -2121,7 +2121,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <span
-                          className={`px-2 py-0.5 rounded-md text-[11px] font-extrabold ${preset.badgeColor}`}
+                          className={`px-2 py-0.5 rounded-md text-[11px] font-semibold ${preset.badgeColor}`}
                         >
                           {t(`preset.${preset.id}.badge`, preset.badgeText)}
                         </span>
@@ -2160,7 +2160,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
                       </div>
                     </div>
 
-                    <div className="text-sm font-extrabold text-slate-900 dark:text-slate-100">
+                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                       {t(`preset.${preset.id}.title`, preset.title)}
                     </div>
                     <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
@@ -2205,7 +2205,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
 
                     <button
                       onClick={() => handleApplyPresetToQueue(preset, 'replace_and_convert')}
-                      className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                      className="bg-accent hover:bg-accent-hover text-white px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer"
                     >
                       <span>
                         {effectivePresetTier > 0
@@ -2230,7 +2230,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
           {/* AUTO-BUILDER BANNER */}
           <div className="bg-amber-50/80 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800/80 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2.5 text-xs">
             <div className="space-y-0.5 min-w-0">
-              <div className="font-extrabold text-amber-950 dark:text-amber-200 flex items-center gap-1.5">
+              <div className="font-semibold text-amber-950 dark:text-amber-200 flex items-center gap-1.5">
                 <Dices className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
                 <span>{t('builds.lucky.title')}</span>
               </div>
@@ -2261,7 +2261,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
               <button
                 type="button"
                 onClick={() => handleLuckyRandomAutoBuild(true)}
-                className="px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-xs flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                className="px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-semibold text-xs flex items-center gap-1.5 cursor-pointer shadow-2xs"
               >
                 <Dices className="w-3.5 h-3.5" />
                 <span>
@@ -2276,7 +2276,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
           {/* Multi-Filter Control Box */}
           <div className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="text-xs font-extrabold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+              <div className="text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                 <Filter className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                 <span>{tf('builds.custom.stepTitle', { pass: filterPassCount })}</span>
               </div>
@@ -2426,7 +2426,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
                   type="button"
                   onClick={handleAddCheckedCandidatesToQueue}
                   disabled={checkedCandidatesCount === 0}
-                  className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-2xs disabled:opacity-40"
+                  className="bg-accent hover:bg-accent-hover text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>{tf('builds.custom.addCheckedBtn', { count: checkedCandidatesCount })}</span>
@@ -2436,7 +2436,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
                   type="button"
                   onClick={handleAddAllFilteredToQueue}
                   disabled={filteredCandidates.length === 0}
-                  className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-2xs disabled:opacity-40"
+                  className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>{tf('builds.custom.addAllBtn', { count: filteredCandidates.length })}</span>
@@ -2553,7 +2553,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
           <div className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-extrabold text-slate-800 dark:text-slate-200 mb-1">
+                <label className="block text-xs font-semibold text-slate-800 dark:text-slate-200 mb-1">
                   {t('builds.conv.buildNameLabel')}
                 </label>
                 <input
@@ -2565,7 +2565,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
               </div>
 
               <div>
-                <label className="block text-xs font-extrabold text-slate-800 dark:text-slate-200 mb-1">
+                <label className="block text-xs font-semibold text-slate-800 dark:text-slate-200 mb-1">
                   {t('builds.conv.targetSystemLabel')}
                 </label>
                 <select
@@ -2593,7 +2593,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
 
             {/* Step 2: Per-Console Format Converter Matrix */}
             <div className="space-y-1.5">
-              <div className="text-xs font-extrabold text-slate-800 dark:text-slate-200">
+              <div className="text-xs font-semibold text-slate-800 dark:text-slate-200">
                 {t('builds.conv.matrixTitle')}
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">
@@ -2606,7 +2606,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
                       key={cCode}
                       className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700"
                     >
-                      <div className="font-mono font-extrabold text-[11px] text-slate-700 dark:text-slate-300 mb-1">
+                      <div className="font-mono font-semibold text-[11px] text-slate-700 dark:text-slate-300 mb-1">
                         {tf('builds.conv.consoleFmtPrefix', { console: cCode })}
                       </div>
                       <select
@@ -2687,7 +2687,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
                     (conversionPlanRows.length === 0 && queuedPortMasterGames.length === 0) ||
                     activeRunning
                   }
-                  className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+                  className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 px-3 py-2 rounded-xl font-bold text-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
                 >
                   <Save className="w-3.5 h-3.5" />
                   <span>{t('builds.staging.saveBtn')}</span>
@@ -2710,7 +2710,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
                     (conversionPlanRows.length === 0 && queuedPortMasterGames.length === 0) ||
                     activeRunning
                   }
-                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-40"
+                  className="bg-accent hover:bg-accent-hover text-white px-4 py-2 rounded-xl font-semibold text-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
                 >
                   <FolderOutput className="w-4 h-4" />
                   <span>{t('builds.conv.exportNowBtn')}</span>
@@ -2727,7 +2727,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
             return (
               <div className="border border-indigo-300 dark:border-indigo-800 rounded-xl p-3.5 bg-indigo-50/50 dark:bg-indigo-950/30 space-y-2.5 text-xs">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="font-extrabold text-indigo-900 dark:text-indigo-200 flex items-center gap-1.5">
+                  <div className="font-semibold text-indigo-900 dark:text-indigo-200 flex items-center gap-1.5">
                     <Package className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
                     <span>
                       {tf('builds.conv.pmSectionTitle', {
@@ -2922,7 +2922,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
         <div className="space-y-3.5 text-xs">
           <div className="p-3.5 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 flex flex-wrap items-center justify-between gap-2.5">
             <div className="space-y-0.5 max-w-2xl">
-              <div className="font-extrabold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+              <div className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
                 <History className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
                 <span>{t('builds.saved.sectionTitle')}</span>
               </div>
@@ -2934,7 +2934,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
               type="button"
               onClick={handleSaveBuildSnapshotClick}
               disabled={queuedGames.length === 0 && queuedPortMasterGames.length === 0}
-              className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+              className="bg-accent hover:bg-accent-hover text-white px-3.5 py-2 rounded-xl font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
             >
               <Save className="w-3.5 h-3.5" />
               <span>{t('builds.saved.saveCurrentBtn')}</span>
@@ -2963,7 +2963,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="space-y-1 min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-sm font-extrabold text-slate-900 dark:text-slate-100">
+                          <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                             {build.name}
                           </span>
                           <span className="px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 font-bold text-[10px]">
@@ -3005,10 +3005,10 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
                         <button
                           type="button"
                           onClick={() => setSyncModalBuild(build)}
-                          className={`px-3 py-1.5 rounded-lg font-extrabold flex items-center gap-1.5 cursor-pointer ${
+                          className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 cursor-pointer ${
                             pendingDiffs.length > 0
                               ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-2xs'
-                              : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                              : 'bg-emerald-600 text-white'
                           }`}
                         >
                           <GitCompare className="w-3.5 h-3.5" />

@@ -16,7 +16,7 @@ export const EN = {
   'header.themeLight': 'Light',
   'header.themeLabel': 'Theme',
   'header.langLabel': 'Language',
-  'header.sections': 'Sections v0.5 (Beta)',
+  'header.sections': 'Sections',
 
   // Library
   'lib.title': 'Library',
@@ -71,7 +71,7 @@ export const EN = {
   'buildModal.discsNote': 'Multi-disc game: all discs and the .M3U playlist will be added together.',
 
   // Sidebar categories
-  'cat.title': 'Library Categories',
+  'cat.title': 'Categories',
   'cat.byConsole': 'By Console',
   'cat.byBitness': 'By Bitness',
   'cat.byGenre': 'By Genre',
@@ -100,14 +100,14 @@ export const EN = {
   'tools.lib.addFolder': 'Add Folder (Append)',
   'tools.lib.importDbXml': 'Import DB/XML',
   'tools.lib.exportDbXml': 'Export DB/XML',
-  'tools.lib.scraperTitle': 'Smart Media Scraper (~1.5 KB Stub Check)',
+  'tools.lib.scraperTitle': 'Check covers and videos',
   'tools.lib.scraperDesc': 'Verifies real covers and videos: keeps valid files, automatically re-downloads broken template stubs (~1.5 KB) and missing media.',
   'tools.lib.runScraper': 'Run Smart Scraper',
-  'tools.lib.run1G1R': '1G1R Duplicate Cleanup',
+  'tools.lib.run1G1R': 'Remove duplicates (1G1R)',
   'tools.lib.onlineRename': 'Online ROM Rename (Constructor)',
   'tools.lib.xmlRename': 'Rename via XML (Constructor)',
   'tools.lib.xmlTemplate': 'Download XML Template',
-  'tools.lib.cleanupPhantom': 'Clean Phantom Folders & Extra Media',
+  'tools.lib.cleanupPhantom': 'Remove empty folders and unused media',
   'tools.lib.multiDiscGroup': 'Group Multi-Disc Games + .M3U',
   'tools.lib.autoMultiDiscLabel': 'Auto subfolder + .M3U for multi-disc games',
   'tools.lib.undoBtn': 'Undo',
@@ -125,7 +125,7 @@ export const EN = {
   'tools.lib.renameOnSort': 'Rename files via Constructor while sorting',
   'tools.lib.autoScrape': 'Run cover scraper after sorting',
   'tools.lib.scrapeVideos': 'Download short gameplay videos (.mp4)',
-  'tools.lib.deleteDupsPerm': 'Delete 1G1R duplicates permanently (no backup)',
+  'tools.lib.deleteDupsPerm': 'Delete duplicates without backup',
 
   // Simulated task progress messages
   'tools.sim.scraper1': 'Auditing images/ & videos/: checking real files and detecting ~1.5 KB stubs...',
@@ -237,7 +237,7 @@ export const EN = {
   'ctor.presetHint.clean_only': 'Tekken 3.chd',
 
   // Inspector & Cover Video
-  'insp.header': 'Game Inspector (Cover + Hover Video Preview)',
+  'insp.header': 'Game details',
   'insp.oldFile': 'Source File:',
   'insp.cleanFile': 'Clean Name:',
   'insp.multiDiscFolder': 'Folder + .M3U:',
@@ -731,7 +731,7 @@ export const EN = {
 
   'insp.pcTestDownloadedLog': 'Downloaded PC test .CMD script for PortMaster "{title}" ({emu}).',
   'cover.titleTip': 'Move cursor over cover art — animated preview video plays (no clicks needed)',
-  'cover.hoverVideoHint': 'Hover cursor — short video',
+  'cover.hoverVideoHint': 'Hover to play preview',
   'cover.shortVideoBadge': 'Short video',
   'cover.unmuteTip': 'Unmute',
   'cover.muteTip': 'Mute',
@@ -744,7 +744,7 @@ export const EN = {
   'env.scanPcBtn': 'Auto-Detect Emulators on PC',
   'env.scanningPcBtn': 'Scanning PC...',
   'env.scanPcTip': 'Scan Program Files, AppData, RetroArch, DuckStation, PCSX2, Dolphin, PPSSPP, WSL2',
-  'env.nativeReadyBadge': 'Desktop AegisROM.exe mode: one-click game launch & EXE file picker active',
+  'env.nativeReadyBadge': 'Desktop app: games launch in one click, emulator EXE can be picked from disk',
   'env.browserNoticeBadge': 'Browser preview mode: generate ready .CMD launchers or run AegisROM.exe for direct EXE execution',
   'env.platformFilter': 'Platform / Console:',
   'env.allPlatforms': 'All Platforms ({count})',
@@ -943,7 +943,7 @@ export const EN = {
   'builds.subtab.custom': '2. Build Your Own (Filter ➔ Checkboxes)',
   'builds.subtab.converter': '3. Converter ({count})',
   'builds.subtab.saved': '4. My Builds & Sync ({count})',
-  'builds.flash.title': 'Fit Build to Flash Drive Size (subtracting OS & used space):',
+  'builds.flash.title': 'Memory card size:',
   'builds.flash.noLimit': 'No Limit',
   'builds.flash.nominal': 'Nominal:',
   'builds.flash.realFs': 'Real FAT32/exFAT:',

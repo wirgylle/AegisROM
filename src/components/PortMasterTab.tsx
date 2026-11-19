@@ -371,10 +371,10 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
       <div className="p-3.5 rounded-xl border border-indigo-300 dark:border-indigo-800 bg-indigo-50/70 dark:bg-indigo-950/30 flex flex-wrap items-center justify-between gap-3">
         <div className="space-y-1 max-w-2xl">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="px-2 py-0.5 rounded-md bg-indigo-600 text-white font-mono font-extrabold text-[11px]">
+            <span className="px-2 py-0.5 rounded-md bg-indigo-600 text-white font-mono font-semibold text-[11px]">
               PortMaster ★
             </span>
-            <h3 className="text-sm font-extrabold text-slate-900 dark:text-slate-100">
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
               {t('pm.bannerTitle')}
             </h3>
           </div>
@@ -404,7 +404,7 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
             type="button"
             onClick={() => fetchCatalog(true)}
             disabled={isLoading}
-            className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold flex items-center gap-1.5 cursor-pointer shadow-2xs disabled:opacity-50"
+            className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 px-3.5 py-2 rounded-xl font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
             <span>{t('pm.refreshBtn')}</span>
@@ -545,7 +545,7 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
                   {/* Title, Badges, Description */}
                   <div className="flex-1 min-w-0 space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-extrabold text-slate-900 dark:text-slate-100">
+                      <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                         {port.title}
                       </span>
                       {port.readyToRun ? (
@@ -625,7 +625,7 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
                         onClick={() => handleDownloadPortZip(port)}
                         disabled={downloadingSlug === port.slug}
                         title={t('pm.downloadSiteTip')}
-                        className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        className="bg-accent hover:bg-accent-hover text-white px-2.5 py-1.5 rounded-lg font-bold text-[11px] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                       >
                         {downloadingSlug === port.slug ? (
                           <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -693,10 +693,10 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
                         <button
                           type="button"
                           onClick={() => onAddPortToLibrary(port)}
-                          className={`px-3 py-1.5 rounded-lg font-extrabold text-[11px] flex items-center gap-1.5 cursor-pointer transition ${
+                          className={`px-3 py-1.5 rounded-lg font-semibold text-[11px] flex items-center gap-1.5 cursor-pointer transition ${
                             inLib
                               ? 'bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-200 border border-blue-400 dark:border-blue-700'
-                              : 'bg-blue-600 hover:bg-blue-700 text-white'
+                              : 'bg-blue-600 text-white'
                           }`}
                         >
                           <Library className="w-3.5 h-3.5" />
@@ -708,7 +708,7 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
                     <button
                       type="button"
                       onClick={() => onToggleBuildPort(port)}
-                      className={`px-3 py-1.5 rounded-lg font-extrabold text-[11px] flex items-center gap-1.5 cursor-pointer transition ${
+                      className={`px-3 py-1.5 rounded-lg font-semibold text-[11px] flex items-center gap-1.5 cursor-pointer transition ${
                         isInBuild
                           ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
                           : 'bg-slate-900 dark:bg-white hover:bg-blue-600 text-white dark:text-slate-900 dark:hover:text-white'
@@ -743,7 +743,7 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
                 <div className="text-[11px] font-mono font-bold text-indigo-600 dark:text-indigo-400">
                   {t('pm.guideModal.title')} · {guidePort.id}
                 </div>
-                <h4 className="text-base font-extrabold text-slate-900 dark:text-slate-100 truncate">
+                <h4 className="text-base font-semibold text-slate-900 dark:text-slate-100 truncate">
                   {guidePort.title}
                 </h4>
               </div>
@@ -759,7 +759,7 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
             <div className="flex-1 overflow-y-auto p-5 space-y-4">
               {/* Target Folder Hierarchy Box */}
               <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 space-y-1.5">
-                <div className="font-extrabold text-blue-900 dark:text-blue-200 flex items-center gap-1.5">
+                <div className="font-semibold text-blue-900 dark:text-blue-200 flex items-center gap-1.5">
                   <PackageCheck className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                   <span>{t('pm.guideModal.hierarchyTitle')}</span>
                 </div>
@@ -775,7 +775,7 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
 
               {/* Console Switcher Tabs */}
               <div className="space-y-2">
-                <div className="font-extrabold text-slate-800 dark:text-slate-200">
+                <div className="font-semibold text-slate-800 dark:text-slate-200">
                   {t('pm.guideModal.stepsTitle')}
                 </div>
                 <div className="flex flex-wrap gap-1.5">
@@ -811,7 +811,7 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
 
               {/* Official PortMaster Raw Instructions */}
               <div className="space-y-1.5">
-                <div className="font-extrabold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                <div className="font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                   <Terminal className="w-3.5 h-3.5 text-slate-500" />
                   <span>{t('pm.guideModal.notesTitle')}</span>
                 </div>
@@ -825,7 +825,7 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
               <button
                 type="button"
                 onClick={() => handleDownloadPortZip(guidePort)}
-                className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-1.5 cursor-pointer"
+                className="bg-accent hover:bg-accent-hover text-white px-3.5 py-2 rounded-xl font-bold flex items-center gap-1.5 cursor-pointer"
               >
                 <Download className="w-4 h-4" />
                 <span>{t('pm.guideModal.downloadFilesBtn')} ({guidePort.id})</span>
@@ -851,7 +851,7 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
                 <div className="text-[11px] font-mono font-bold text-emerald-700 dark:text-emerald-400">
                   {t('pm.pcModal.title')} · {pcTestPort.slug}
                 </div>
-                <h4 className="text-base font-extrabold text-slate-900 dark:text-slate-100 truncate">
+                <h4 className="text-base font-semibold text-slate-900 dark:text-slate-100 truncate">
                   {pcTestPort.title}
                 </h4>
               </div>
@@ -867,7 +867,7 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
             <div className="flex-1 overflow-y-auto p-5 space-y-4">
               <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="font-extrabold text-slate-900 dark:text-slate-100">
+                  <div className="font-semibold text-slate-900 dark:text-slate-100">
                     {t('pm.pcModal.engineLabel')} {pcTestPlan.engineName}
                   </div>
                   <span
@@ -894,7 +894,7 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
               </div>
 
               <div className="space-y-1.5">
-                <div className="font-extrabold text-slate-800 dark:text-slate-200">
+                <div className="font-semibold text-slate-800 dark:text-slate-200">
                   {t('pm.pcModal.shPreview')}
                 </div>
                 <pre className="p-3 rounded-xl bg-slate-950 text-emerald-300 font-mono text-[11px] whitespace-pre-wrap overflow-x-auto leading-relaxed">
@@ -916,16 +916,16 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
                     type="button"
                     disabled={isRunningPcTest}
                     onClick={() => handleLaunchPcTestNative(pcTestPort)}
-                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 px-4 py-2 rounded-xl font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                   >
-                    <Play className="w-3.5 h-3.5 fill-white" />
+                    <Play className="w-3.5 h-3.5" />
                     <span>{isRunningPcTest ? t('pm.pcModal.runningNative') : `▶ ${t('pm.pcModal.runNativeBtn')}`}</span>
                   </button>
                 )}
                 <button
                   type="button"
                   onClick={() => handleDownloadPcTestScripts(pcTestPort)}
-                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-1.5 cursor-pointer"
+                  className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 px-4 py-2 rounded-xl font-bold flex items-center gap-1.5 cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5" />
                   <span>📜 {t('pm.pcModal.downloadScriptsBtn')}</span>
