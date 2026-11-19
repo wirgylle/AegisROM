@@ -508,6 +508,16 @@ const PS1_SERIAL_DICTIONARY: Record<string, string> = {
   'SLES-03804': 'Worms World Party',
 };
 
+// Откуда взято название рома (показывается в карточке игры и журнале).
+type TitleSource =
+  | 'gamelist'
+  | 'factory'
+  | 'header'
+  | 'filename'
+  | 'index-strip'
+  | 'libretro-exact'
+  | 'libretro-fuzzy';
+
 interface ScannedRomFile {
   id: string;
   relativePath: string;
@@ -548,6 +558,9 @@ interface ScannedRomFile {
   cueText?: string;
   parentHandle?: any;
   targetDirHandle?: any;
+  titleSource?: TitleSource;
+  // Почему настоящее название не найдено (пусто, если найдено).
+  titleNote?: string;
 }
 
 interface PhantomFolderCandidate {
@@ -1282,7 +1295,7 @@ function extractCleanTitle(fileName: string): string {
       'EUROPE',
       'JAPAN',
       'JPN',
-      'WORLD',
+      // 'WORLD' не вырезаем: это часть названий (Super Mario World), а (World) в скобках уже убран.
       'RUS',
       'RUSSIAN',
       'RU',
@@ -2593,6 +2606,7 @@ export function App() {
     const isRussian = RUS_TAG_REGEX.test(file.name) || isRusFolder;
 
     let extractedInternalTitle = '';
+    let extractedSource: TitleSource | undefined;
     const lowerName = file.name.toLowerCase();
     const baseNoExt = lowerName.replace(/\.[^/.]+$/, '');
     const coreNumKey = extractCoreNumberKey(file.name);
@@ -2603,6 +2617,7 @@ export function App() {
         gamelistMap.get(baseNoExt) ||
         (coreNumKey ? gamelistMap.get(coreNumKey) || gamelistMap.get(`${coreNumKey}${rawExt}`) : '') ||
         '';
+      if (extractedInternalTitle) extractedSource = 'gamelist';
     }
 
     const fileDiscInfo = extractDiscNumberAndBaseTitle(file.name);
@@ -2615,6 +2630,7 @@ export function App() {
       } else if (coreNumKey && FACTORY_NUMBER_TO_TITLE_MAP[coreNumKey]) {
         extractedInternalTitle = FACTORY_NUMBER_TO_TITLE_MAP[coreNumKey];
       }
+      if (extractedInternalTitle) extractedSource = 'factory';
     }
     // Only fall back to binary ROM headers when the filename is numbered/opaque (never overwrite clean human-readable filenames with 12-char uppercase cart codes!)
     if (!extractedInternalTitle && (prelimNumbered || filenameLetterCount < 3)) {
@@ -2625,6 +2641,7 @@ export function App() {
       );
       if (rawBinTitle) {
         extractedInternalTitle = prettifyBinaryHeaderTitle(rawBinTitle);
+        if (extractedInternalTitle) extractedSource = 'header';
       }
     }
 
@@ -2636,10 +2653,15 @@ export function App() {
     const numbered = isNumberedRomFilename(file.name, extractedInternalTitle, false);
     const region = parseRegion(extractedInternalTitle || file.name, isRussian);
     const revision = parseRevision(file.name);
-    const cleanTitle =
+    const usesExtractedTitle = Boolean(
       extractedInternalTitle && (prelimNumbered || filenameLetterCount < 3 || gamelistMap)
-        ? extractCleanTitle(titleDiscInfo.baseNameWithoutDisc || extractedInternalTitle)
-        : filenameClean;
+    );
+    const cleanTitle = usesExtractedTitle
+      ? extractCleanTitle(titleDiscInfo.baseNameWithoutDisc || extractedInternalTitle)
+      : filenameClean;
+    const titleSource: TitleSource = usesExtractedTitle && extractedSource ? extractedSource : 'filename';
+    const titleNote =
+      numbered && !extractedInternalTitle ? t('title.note.numberedNotFound') : '';
     const comparisonKey = buildComparisonKey(cleanTitle);
 
     let canonExt = rawExt;
@@ -2739,6 +2761,8 @@ export function App() {
       companionFiles,
       cueText,
       parentHandle,
+      titleSource,
+      titleNote,
     };
   };
 
@@ -3781,6 +3805,15 @@ export function App() {
     let skippedUnresolvedCount = 0;
     let skipped007Count = 0;
     const updatedRoms = [...roms];
+    // Подробно пишем в журнал первые пропуски, остальные — одной строкой (причина есть в карточке игры).
+    const SKIP_LOG_LIMIT = 30;
+    const markUnresolved = (idx: number, note: string) => {
+      skippedUnresolvedCount++;
+      updatedRoms[idx] = { ...updatedRoms[idx], titleNote: note };
+      if (skippedUnresolvedCount <= SKIP_LOG_LIMIT) {
+        addLog(tf('app.rename.skipLog', { file: updatedRoms[idx].fileName, reason: note }));
+      }
+    };
 
     // КРИТИЧЕСКИЙ ФИКС v4.3.1: Отслеживаем занятые имена файлов в каждой папке, чтобы НИКОГДА не переименовать 2 файла в одно и то же имя!
     const usedNamesInDir = new Map<string, Set<string>>();
@@ -3819,13 +3852,18 @@ export function App() {
         if (!isTarget) continue;
 
         let realTitle = r.extractedInternalTitle;
+        let realSource: TitleSource | undefined = realTitle ? r.titleSource : undefined;
         if (!realTitle && FACTORY_NUMBER_TO_TITLE_MAP[lowerBaseNoExt]) {
           realTitle = FACTORY_NUMBER_TO_TITLE_MAP[lowerBaseNoExt];
+          realSource = 'factory';
         }
+        let headerTried = false;
         if (!realTitle && (r.companionFiles?.[0] || r.fileObj)) {
+          headerTried = true;
           const payload = r.companionFiles?.[0] || r.fileObj!;
           const payloadExt = r.companionFiles?.length ? '.bin' : r.extension;
           realTitle = await extractInternalBinaryRomTitle(payload, payloadExt, r.consoleCode);
+          if (realTitle) realSource = 'header';
         }
         if (!realTitle) {
           const stripped = stripLeadingIndexExcept007(baseNoExt).trim();
@@ -3833,24 +3871,33 @@ export function App() {
           const letters = (strippedNoTags.match(/[a-zA-Zа-яА-ЯёЁ]/g) || []).length;
           if (letters >= 2 && stripped.toLowerCase() !== lowerBaseNoExt) {
             realTitle = stripped;
+            realSource = 'index-strip';
           }
         }
 
         // Если для файла не найдено настоящее буквенное название игры — ПРОПУСКАЕМ его, НИКОГДА не переименовывая в пустое имя без номера!
+        if (!realTitle) {
+          markUnresolved(
+            i,
+            headerTried
+              ? t('title.note.numberedNotFound')
+              : t('title.note.noFileAccess')
+          );
+          continue;
+        }
         if (
-          !realTitle ||
           PURE_NUMBERED_ROM_REGEX.test(realTitle) ||
           realTitle.toLowerCase().includes('notgame') ||
           realTitle.toLowerCase().includes('pas un jeu')
         ) {
-          skippedUnresolvedCount++;
+          markUnresolved(i, tf('title.note.badTitle', { title: realTitle }));
           continue;
         }
 
         const cleanReal = extractCleanTitle(realTitle);
         const letterCheck = (cleanReal.match(/[a-zA-Zа-яА-ЯёЁ]/g) || []).length;
         if (letterCheck < 2 || PURE_NUMBERED_ROM_REGEX.test(cleanReal)) {
-          skippedUnresolvedCount++;
+          markUnresolved(i, tf('title.note.badTitle', { title: realTitle }));
           continue;
         }
 
@@ -3957,6 +4004,8 @@ export function App() {
           comparisonKey: buildComparisonKey(cleanReal),
           canonicalName: newFileName,
           mediaStatus: tf('app.rename.itemStatus', { name: safeBase }),
+          titleSource: realSource || r.titleSource,
+          titleNote: '',
         };
         renamedCount++;
         addLog(`${t('app.rename.logPrefix')} ${r.fileName} -> ${newFileName}`);
@@ -3984,6 +4033,9 @@ export function App() {
         }
       }
 
+      if (skippedUnresolvedCount > SKIP_LOG_LIMIT) {
+        addLog(tf('app.rename.skipMore', { count: skippedUnresolvedCount - SKIP_LOG_LIMIT }));
+      }
       addLog(
         tf('app.rename.numDoneMsg', {
           renamed: renamedCount,
@@ -6394,7 +6446,8 @@ export function App() {
           })
         );
 
-        const officialTitle = m.matchedCanonicalTitle || r.cleanTitle;
+        const titleMatched = m.matched !== false && Boolean(m.matchedCanonicalTitle);
+        const officialTitle = titleMatched ? m.matchedCanonicalTitle : r.cleanTitle;
         const newCanonicalName = computeCanonicalNameForRom({ ...r, cleanTitle: officialTitle });
 
         const hasVid = Boolean(m.videoUrl);
@@ -6403,6 +6456,12 @@ export function App() {
           ...r,
           cleanTitle: officialTitle,
           canonicalName: newCanonicalName,
+          titleSource: titleMatched
+            ? m.titleSource === 'libretro-fuzzy'
+              ? 'libretro-fuzzy'
+              : 'libretro-exact'
+            : r.titleSource,
+          titleNote: titleMatched ? '' : m.reason || r.titleNote,
           scrapedBoxArtUrl: m.boxArtUrl,
           scrapedSnapUrl: m.snapUrl,
           scrapedMarqueeUrl: m.marqueeUrl,
@@ -6546,9 +6605,14 @@ export function App() {
       const targets = activeList.filter((r) => r.status === 'verified');
       const updated = [...activeList];
       let renamed = 0;
+      const ONLINE_LOG_LIMIT = 30;
+      let onlineExact = 0;
+      let onlineFuzzy = 0;
+      let onlineMissed = 0;
 
       // Batch server title lookup in chunks of 120
-      const resolvedTitles = new Map<string, string>();
+      const resolvedTitles = new Map<string, { title: string; source: TitleSource }>();
+      const unresolvedReasons = new Map<string, string>();
       for (let start = 0; start < targets.length; start += 120) {
         if (stopRequestedRef.current) break;
         const slice = targets.slice(start, start + 120);
@@ -6573,12 +6637,25 @@ export function App() {
           if (resp.ok) {
             const data = await resp.json();
             for (const res of data.results || []) {
-              if (res?.id && res?.matchedCanonicalTitle) {
-                resolvedTitles.set(res.id, res.matchedCanonicalTitle);
+              if (!res?.id) continue;
+              // matched === false: сервер не нашёл название и вернул исходное — не выдаём его за найденное.
+              if (res.matched !== false && res.matchedCanonicalTitle) {
+                resolvedTitles.set(res.id, {
+                  title: res.matchedCanonicalTitle,
+                  source: res.titleSource === 'libretro-fuzzy' ? 'libretro-fuzzy' : 'libretro-exact',
+                });
+              } else {
+                unresolvedReasons.set(res.id, res.reason || t('title.note.onlineNoMatch'));
               }
             }
+          } else {
+            const reason = tf('title.note.onlineHttpErr', { status: resp.status });
+            for (const w of slice) unresolvedReasons.set(w.id, reason);
           }
-        } catch {}
+        } catch (err) {
+          const reason = tf('title.note.onlineNetErr', { err: String(err) });
+          for (const w of slice) unresolvedReasons.set(w.id, reason);
+        }
         setProgressPct(10 + Math.round(((start + slice.length) / Math.max(1, targets.length)) * 30));
       }
 
@@ -6587,7 +6664,19 @@ export function App() {
         const r = updated[i];
         if (r.status !== 'verified') continue;
 
-        const bestTitle = resolvedTitles.get(r.id) || r.cleanTitle;
+        const resolved = resolvedTitles.get(r.id);
+        const bestTitle = resolved?.title || r.cleanTitle;
+        const unresolvedNote = resolved ? '' : unresolvedReasons.get(r.id) || '';
+        if (!resolved) {
+          onlineMissed++;
+          if (onlineMissed <= ONLINE_LOG_LIMIT) {
+            addLog(tf('app.rename.onlineSkipLog', { file: r.fileName, reason: unresolvedNote || t('title.note.onlineNoMatch') }));
+          }
+        } else if (resolved.source === 'libretro-fuzzy') {
+          onlineFuzzy++;
+        } else {
+          onlineExact++;
+        }
         const newCandidate = updateRomWithFilenameConfig(
           { ...r, cleanTitle: bestTitle },
           filenameConfigRef.current
@@ -6610,6 +6699,8 @@ export function App() {
           canonicalName: safeNewName,
           comparisonKey: buildComparisonKey(bestTitle),
           mediaStatus: tf('app.rename.ctorStatus', { name: safeNewName }),
+          titleSource: resolved ? resolved.source : r.titleSource,
+          titleNote: unresolvedNote,
         };
 
         if (i % 15 === 0 || i === updated.length - 1) {
@@ -6625,6 +6716,16 @@ export function App() {
       setLastScanMode('replace');
       setScanRevision((n) => n + 1);
       syncScannedRomsIntoDb(updated, selectedFolderName || dbState.masterLibraryPath, true);
+      if (onlineMissed > ONLINE_LOG_LIMIT) {
+        addLog(tf('app.rename.skipMore', { count: onlineMissed - ONLINE_LOG_LIMIT }));
+      }
+      addLog(
+        tf('app.rename.onlineSummary', {
+          exact: onlineExact,
+          fuzzy: onlineFuzzy,
+          missed: onlineMissed,
+        })
+      );
       addLog(tf('app.rename.onlineDone', { renamed, total: targets.length }));
     } catch (err) {
       addLog(tf('app.rename.onlineErr', { err: String(err) }));
@@ -7366,6 +7467,8 @@ export function App() {
       multiDiscFolderName: r.multiDiscFolderName,
       m3uFileName: r.m3uFileName,
       discs: mappedDiscs,
+      titleSource: r.titleSource,
+      titleNote: r.titleNote,
     };
   };
 

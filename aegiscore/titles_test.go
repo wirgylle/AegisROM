@@ -7,10 +7,10 @@ import (
 
 func TestExtractCleanTitle(t *testing.T) {
 	cases := map[string]string{
-		"Super Mario Kart (USA).sfc": "Super Mario Kart",
-		// Известная ошибка: слово World в названии вырезается как регион.
-		// Тест фиксирует текущее поведение; исправлять отдельным PR вместе с тестом.
-		"Super Mario World (USA).sfc":        "Super Mario",
+		"Super Mario Kart (USA).sfc":         "Super Mario Kart",
+		"Super Mario World (USA).sfc":        "Super Mario World",
+		"Wario World (Europe).iso":           "Wario World",
+		"Sonic (World).md":                   "Sonic",
 		"001 - Contra (Japan).nes":           "Contra",
 		"02. Sonic the Hedgehog (Europe).md": "Sonic the Hedgehog",
 		"000001 (World).chd":                 "000001",

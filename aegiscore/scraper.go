@@ -35,28 +35,61 @@ func tokenizeNormalized(s string) map[string]bool {
 	return res
 }
 
-func GetOrLoadLibretroIndex(libretroSystem string) []libretroEntry {
+// libretroThumbnailsBase — адрес сервера обложек Libretro (переопределяется в тестах).
+var libretroThumbnailsBase = "https://thumbnails.libretro.com"
+
+// libretroIndexRetryAfter — сколько не повторять загрузку индекса после сетевой ошибки,
+// чтобы пакетная сверка не ждала таймаут на каждом роме.
+const libretroIndexRetryAfter = 5 * time.Minute
+
+type indexFailure struct {
+	err error
+	at  time.Time
+}
+
+var libretroIndexFailures = make(map[string]indexFailure)
+
+// LoadLibretroIndex возвращает список названий с обложками Libretro для системы
+// (кэшируется) или ошибку загрузки.
+func LoadLibretroIndex(libretroSystem string) ([]libretroEntry, error) {
 	cacheMu.Lock()
 	if cached, ok := libretroIndexCache[libretroSystem]; ok {
 		cacheMu.Unlock()
-		return cached
+		return cached, nil
+	}
+	if f, ok := libretroIndexFailures[libretroSystem]; ok && time.Since(f.at) < libretroIndexRetryAfter {
+		cacheMu.Unlock()
+		return nil, f.err
 	}
 	cacheMu.Unlock()
 
-	indexURL := fmt.Sprintf("https://thumbnails.libretro.com/%s/Named_Boxarts/", url.PathEscape(libretroSystem))
+	entries, err := fetchLibretroIndex(libretroSystem)
+	cacheMu.Lock()
+	if err != nil {
+		libretroIndexFailures[libretroSystem] = indexFailure{err: err, at: time.Now()}
+	} else {
+		delete(libretroIndexFailures, libretroSystem)
+		libretroIndexCache[libretroSystem] = entries
+	}
+	cacheMu.Unlock()
+	return entries, err
+}
+
+func fetchLibretroIndex(libretroSystem string) ([]libretroEntry, error) {
+	indexURL := fmt.Sprintf("%s/%s/Named_Boxarts/", libretroThumbnailsBase, url.PathEscape(libretroSystem))
 	client := &http.Client{Timeout: 20 * time.Second}
 	resp, err := client.Get(indexURL)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return nil
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	matches := hrefPngRegex.FindAllStringSubmatch(string(body), -1)
@@ -77,19 +110,51 @@ func GetOrLoadLibretroIndex(libretroSystem string) []libretroEntry {
 			Tokens:   tokenizeNormalized(clean),
 		})
 	}
+	return entries, nil
+}
 
-	cacheMu.Lock()
-	libretroIndexCache[libretroSystem] = entries
-	cacheMu.Unlock()
+// GetOrLoadLibretroIndex — как LoadLibretroIndex, но без ошибки (nil при сбое).
+func GetOrLoadLibretroIndex(libretroSystem string) []libretroEntry {
+	entries, _ := LoadLibretroIndex(libretroSystem)
 	return entries
 }
 
-func FindBestLibretroMatch(libretroSystem, cleanTitle, compKey, preferredRegion string) string {
-	entries := GetOrLoadLibretroIndex(libretroSystem)
-	if len(entries) == 0 {
-		return fmt.Sprintf("%s (%s)", cleanTitle, preferredRegion)
-	}
+// Источники названия, найденного онлайн.
+const (
+	TitleSourceLibretroExact = "libretro-exact" // ключ сравнения совпал с названием в индексе Libretro
+	TitleSourceLibretroFuzzy = "libretro-fuzzy" // похожее название (совпадение слов >= 55%)
+)
 
+// libretroFuzzyThreshold — минимальное сходство слов для нечёткого совпадения.
+const libretroFuzzyThreshold = 0.55
+
+// TitleMatch — результат онлайн-сверки названия с индексом Libretro.
+type TitleMatch struct {
+	FileName string  // имя из индекса Libretro без .png, например "Contra (USA)"; "" — не найдено
+	Source   string  // TitleSourceLibretroExact / TitleSourceLibretroFuzzy; "" — не найдено
+	Score    float64 // сходство 0..1 (1 для точного совпадения)
+	Reason   string  // почему не найдено (пусто, если найдено)
+}
+
+// MatchLibretroTitle ищет название рома в индексе обложек Libretro и объясняет, если не нашёл.
+func MatchLibretroTitle(libretroSystem, cleanTitle, compKey, preferredRegion string) TitleMatch {
+	if strings.TrimSpace(libretroSystem) == "" {
+		return TitleMatch{Reason: "для этой консоли нет индекса Libretro"}
+	}
+	if IsPureNumberOrGenericTitle(cleanTitle) {
+		return TitleMatch{Reason: "нет исходного названия для поиска (имя файла — номер)"}
+	}
+	entries, err := LoadLibretroIndex(libretroSystem)
+	if err != nil {
+		return TitleMatch{Reason: "индекс Libretro недоступен: " + err.Error()}
+	}
+	if len(entries) == 0 {
+		return TitleMatch{Reason: "индекс Libretro для «" + libretroSystem + "» пуст"}
+	}
+	return matchInEntries(entries, cleanTitle, compKey, preferredRegion)
+}
+
+func matchInEntries(entries []libretroEntry, cleanTitle, compKey, preferredRegion string) TitleMatch {
 	var exactCandidates []string
 	for _, e := range entries {
 		if e.NormKey == compKey {
@@ -97,22 +162,28 @@ func FindBestLibretroMatch(libretroSystem, cleanTitle, compKey, preferredRegion 
 		}
 	}
 	if len(exactCandidates) > 0 {
+		pick := exactCandidates[0]
+		found := false
 		for _, c := range exactCandidates {
 			if strings.Contains(strings.ToLower(c), strings.ToLower(preferredRegion)) {
-				return c
+				pick, found = c, true
+				break
 			}
 		}
-		for _, c := range exactCandidates {
-			if strings.Contains(c, "(USA") || strings.Contains(c, "(World") {
-				return c
+		if !found {
+			for _, c := range exactCandidates {
+				if strings.Contains(c, "(USA") || strings.Contains(c, "(World") {
+					pick = c
+					break
+				}
 			}
 		}
-		return exactCandidates[0]
+		return TitleMatch{FileName: pick, Source: TitleSourceLibretroExact, Score: 1}
 	}
 
 	targetTokens := tokenizeNormalized(cleanTitle)
 	if len(targetTokens) == 0 {
-		return ""
+		return TitleMatch{Reason: "в названии нет слов для поиска"}
 	}
 
 	bestName := ""
@@ -142,10 +213,26 @@ func FindBestLibretroMatch(libretroSystem, cleanTitle, compKey, preferredRegion 
 		}
 	}
 
-	if bestScore >= 0.55 {
-		return bestName
+	if bestScore >= libretroFuzzyThreshold {
+		return TitleMatch{FileName: bestName, Source: TitleSourceLibretroFuzzy, Score: bestScore}
 	}
-	return ""
+	if bestName == "" {
+		return TitleMatch{Reason: "в индексе Libretro нет игр с такими словами"}
+	}
+	return TitleMatch{
+		Score:  bestScore,
+		Reason: fmt.Sprintf("в индексе Libretro нет похожего названия (ближайшее: «%s», сходство %d%%)", bestName, int(bestScore*100)),
+	}
+}
+
+// FindBestLibretroMatch возвращает имя из индекса Libretro или "" (не найдено).
+// Если индекс недоступен или пуст, возвращает "<cleanTitle> (<регион>)", как раньше.
+func FindBestLibretroMatch(libretroSystem, cleanTitle, compKey, preferredRegion string) string {
+	entries := GetOrLoadLibretroIndex(libretroSystem)
+	if len(entries) == 0 {
+		return fmt.Sprintf("%s (%s)", cleanTitle, preferredRegion)
+	}
+	return matchInEntries(entries, cleanTitle, compKey, preferredRegion).FileName
 }
 
 func GetOrLoadArchiveVideoIndex(archiveID string) []archiveVideoEntry {

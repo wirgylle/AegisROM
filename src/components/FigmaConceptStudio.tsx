@@ -146,6 +146,10 @@ function persistDatabasesSafely<T extends { rows: UnifiedGameRow[] }>(dbs: T[]):
 
 export interface UnifiedGameRow {
   id: string;
+  // Откуда взято название: gamelist | factory | header | filename | index-strip | libretro-exact | libretro-fuzzy.
+  titleSource?: string;
+  // Почему настоящее название не найдено (пусто, если найдено).
+  titleNote?: string;
   title: string;
   oldFile: string;
   cleanFile: string;
@@ -3239,6 +3243,22 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         {activeDiscObj ? activeDiscObj.cleanFile : selectedGame.cleanFile}
                       </span>
                     </div>
+                    {selectedGame.titleSource && (
+                      <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800 gap-2">
+                        <span className="text-slate-500 dark:text-slate-400 shrink-0">{t('insp.titleSource')}</span>
+                        <span className="text-slate-900 dark:text-slate-100 truncate">
+                          {t(`title.src.${selectedGame.titleSource}`, selectedGame.titleSource)}
+                        </span>
+                      </div>
+                    )}
+                    {selectedGame.titleNote && (
+                      <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800 gap-2">
+                        <span className="text-slate-500 dark:text-slate-400 shrink-0">{t('insp.titleNote')}</span>
+                        <span className="text-amber-600 dark:text-amber-400 text-right" title={selectedGame.titleNote}>
+                          {selectedGame.titleNote}
+                        </span>
+                      </div>
+                    )}
                     <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800 gap-2">
                       <span className="text-slate-500 dark:text-slate-400 shrink-0">{t('insp.priorityEmu')}</span>
                       <span className="font-bold text-blue-600 dark:text-blue-400 truncate" title={resolvedEmu.exePath}>
