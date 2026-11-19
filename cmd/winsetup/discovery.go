@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-const AppVersion = "0.5.5"
+const AppVersion = "0.5.6-dev"
 
 type FoundInstallation struct {
 	Dir              string `json:"dir"`
@@ -133,6 +133,14 @@ func DetectVersionFromExe(exePath string, regHintVersion string) string {
 		buf := make([]byte, 16*1024*1024)
 		n, _ := io.ReadFull(f, buf)
 		data := buf[:n]
+		// Текущая версия первой: её exe тоже содержит строки-маркеры старых версий ниже.
+		// Current version first: its exe also contains the older markers below.
+		if bytes.Contains(data, []byte("AegisROM v"+AppVersion+" (Beta)")) {
+			return AppVersion
+		}
+		if bytes.Contains(data, []byte("AegisROM v0.5.5")) {
+			return "0.5.5"
+		}
 		if bytes.Contains(data, []byte("AegisROM v0.5.4")) || bytes.Contains(data, []byte("WebViewProfile_0_5_4")) || bytes.Contains(data, []byte(`"version":"0.5.4"`)) {
 			return "0.5.4"
 		}
