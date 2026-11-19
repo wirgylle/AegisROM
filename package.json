@@ -4,14 +4,17 @@
   "version": "0.5.6-dev",
   "type": "module",
   "scripts": {
+    "predev": "node scripts/fetch-emulatorjs.mjs",
     "dev": "vite",
     "dev:api": "go run ./cmd/aegis-server -data .aegis-data",
     "start": "go run ./cmd/aegis-server",
+    "prebuild": "node scripts/fetch-emulatorjs.mjs",
     "build": "vite build",
     "release:win": "node scripts/release-win.mjs",
     "preview": "vite preview",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "fetch:emulatorjs": "node scripts/fetch-emulatorjs.mjs"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",

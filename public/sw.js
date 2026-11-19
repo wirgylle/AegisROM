@@ -36,6 +36,8 @@ self.addEventListener('fetch', (event) => {
   if (
     url.pathname.startsWith('/api/') ||
     url.pathname.startsWith('/downloads/') ||
+    url.pathname.startsWith('/emulatorjs/') ||
+    url.pathname.startsWith('/quicktest/') ||
     url.pathname.startsWith('/src/') ||
     url.pathname.startsWith('/@') ||
     url.pathname.startsWith('/node_modules/')

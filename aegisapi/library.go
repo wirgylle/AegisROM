@@ -419,6 +419,8 @@ func MimeTypeForExt(ext string) string {
 		return "image/svg+xml"
 	case ".ico":
 		return "image/x-icon"
+	case ".wasm":
+		return "application/wasm"
 	case ".woff2":
 		return "font/woff2"
 	case ".woff":

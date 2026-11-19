@@ -581,6 +581,9 @@ func runHybridModernDesktopApp() bool {
 		http.ServeFile(w, r, filePath)
 	})
 
+	// Быстрый тест: файл рома для встроенного WASM-эмулятора (aegisapi/quicktest.go).
+	aegisapi.RegisterQuickTestRoutes(mux, touch)
+
 	// 3b. Native Disc Converter Status & chdman.exe Execution (Multi-track BIN+CUE / ISO <-> CHD)
 	mux.HandleFunc("/api/native/converter/status", func(w http.ResponseWriter, r *http.Request) {
 		atomic.StoreInt64(&lastHeartbeatUnix, time.Now().Unix())
@@ -924,35 +927,7 @@ func runHybridModernDesktopApp() bool {
 		}
 
 		// Try to locate the real ROM file on local filesystem
-		cLower := strings.ToLower(req.ConsoleCode)
-		candidates := []string{}
-		if req.RelativePath != "" {
-			relOS := filepath.FromSlash(req.RelativePath)
-			if filepath.IsAbs(relOS) {
-				candidates = append(candidates, relOS)
-			}
-			if req.LibraryPath != "" {
-				candidates = append(candidates, filepath.Join(filepath.FromSlash(req.LibraryPath), relOS))
-			}
-			if req.SdCardPath != "" {
-				candidates = append(candidates, filepath.Join(filepath.FromSlash(req.SdCardPath), relOS))
-			}
-		}
-		if req.RomFileName != "" {
-			if filepath.IsAbs(req.RomFileName) {
-				candidates = append(candidates, req.RomFileName)
-			}
-			for _, baseDir := range []string{req.LibraryPath, req.SdCardPath} {
-				if baseDir == "" {
-					continue
-				}
-				bOS := filepath.FromSlash(baseDir)
-				candidates = append(candidates,
-					filepath.Join(bOS, req.RomFileName),
-					filepath.Join(bOS, cLower, req.RomFileName),
-				)
-			}
-		}
+		candidates := aegisapi.RomPathCandidates(req.ConsoleCode, req.RomFileName, req.RelativePath, req.LibraryPath, req.SdCardPath)
 		resolvedRom := firstExistingFile(candidates)
 		if resolvedRom == "" {
 			// Prompt user once to pick the ROM file on disk if it wasn't resolved automatically

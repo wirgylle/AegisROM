@@ -27,6 +27,8 @@ API защищён токеном (как в AegisROM.exe). `aegis-server` пи�
 
 Без Vite: `npm run build && npm start` — Go-сервер отдаёт `dist/` и API, адрес будет в логе.
 
+`npm run dev` и `npm run build` сначала запускают `scripts/fetch-emulatorjs.mjs`: он скачивает из npm EmulatorJS и WASM-ядра для «Быстрого теста» в `public/emulatorjs/` (≈18 МБ, проверка sha512, кэш в `.cache/emulatorjs/`). Нужен доступ к registry.npmjs.org при первом запуске. Подробнее: [quick-test.md](quick-test.md).
+
 В браузерном режиме нет нативных функций десктопа (`/api/native/*`: диалоги выбора папок, запуск эмуляторов, chdman) — они есть только в `AegisROM.exe`.
 
 ## Проверки (то же, что делает CI)

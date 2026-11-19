@@ -62,7 +62,8 @@ function main() {
   const goBin = findGoBinary();
   console.log(`Using Go binary: ${goBin}`);
 
-  // 1. Build fresh Vite frontend
+  // 1. Build fresh Vite frontend (EmulatorJS cores for Quick test go into public/emulatorjs first)
+  run('node scripts/fetch-emulatorjs.mjs');
   run('npx vite build');
   if (!fs.existsSync(path.join(DIST_DIR, 'index.html'))) {
     throw new Error('Vite build did not produce dist/index.html');

@@ -5,6 +5,7 @@ import {
   Share2,
   Gamepad2,
   Play,
+  Zap,
   FileCode2,
   Search,
   HardDrive,
@@ -93,6 +94,8 @@ import {
   collapseMultiDiscUnifiedRows,
 } from '../utils/multiDiscEngine';
 import { WorkbenchContextPanel, type HoveredTool } from './WorkbenchContextPanel';
+import { QuickTestModal, type QuickTestRequest } from './QuickTestModal';
+import { resolveQuickTestCore, pickCueDataTrack, fileExt } from '../utils/quickTest';
 
 export interface MultiDiscEntry {
   id: string;
@@ -655,6 +658,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   const [renameOnSortRules, setRenameOnSortRules] = useState<boolean>(true);
   const [librarySyncModalOpen, setLibrarySyncModalOpen] = useState<boolean>(false);
   const [selectedDiscIndex, setSelectedDiscIndex] = useState<number | null>(null);
+  const [quickTestReq, setQuickTestReq] = useState<QuickTestRequest | null>(null);
 
   // Shared Saved Builds state across Library (+ button Modal) and Builds tab
   const [savedBuilds, setSavedBuilds] = useState<SavedBuildRecord[]>(() => loadSavedBuildsLocal());
@@ -3289,6 +3293,39 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
               );
             };
 
+            // Быстрый тест: встроенное WASM-ядро прямо в окне приложения.
+            const qtDisc =
+              activeDiscObj || (hasMultiDisc && selectedGame.discs ? selectedGame.discs[0] : null);
+            const qtFileName = qtDisc
+              ? qtDisc.cleanFile || qtDisc.oldFile
+              : selectedGame.oldFile || selectedGame.cleanFile;
+            const qtCore = resolveQuickTestCore(selectedGame.consoleShort, qtFileName);
+            const handleQuickTest = () => {
+              if (!qtCore) return;
+              const src = qtDisc || selectedGame;
+              let file: File | undefined | null = src.fileObj;
+              if (file && fileExt(file.name) === 'cue') {
+                file = pickCueDataTrack(src.cueText, src.companionFiles);
+              }
+              setQuickTestReq({
+                title: selectedGame.title,
+                consoleShort: selectedGame.consoleShort,
+                core: qtCore,
+                source: file
+                  ? { kind: 'file', file }
+                  : isNativeDesktopHost
+                  ? {
+                      kind: 'native',
+                      romFileName: qtFileName,
+                      relativePath: (qtDisc ? qtDisc.relativePath : selectedGame.relativePath) || '',
+                      consoleCode: selectedGame.consoleShort,
+                      libraryPath: effectiveLibraryPath || '',
+                      sdCardPath: selectedFolderName || '',
+                    }
+                  : { kind: 'pick' },
+              });
+            };
+
             return (
               <>
                 <div className="space-y-4">
@@ -3509,6 +3546,21 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
 
                   <button
                     type="button"
+                    onClick={handleQuickTest}
+                    disabled={!qtCore}
+                    title={
+                      qtCore
+                        ? tf('qt.buttonHint', { core: qtCore.label })
+                        : tf('qt.unsupported', { console: selectedGame.consoleShort })
+                    }
+                    className="h-10 px-3.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-slate-800 dark:text-slate-100 text-sm font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition"
+                  >
+                    <Zap className="w-4 h-4" />
+                    <span>{t('qt.button')}</span>
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={() => {
                       setAddToBuildGame(selectedGame);
                       setNewBuildNameInput('');
@@ -3600,6 +3652,14 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       {/* ==================================================================== */}
       {/* ADD GAME TO BUILD MODAL («+» в библиотеке / инспекторе)               */}
       {/* ==================================================================== */}
+      {quickTestReq && (
+        <QuickTestModal
+          request={quickTestReq}
+          onClose={() => setQuickTestReq(null)}
+          onAddLog={onAddLog}
+        />
+      )}
+
       {addToBuildGame && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-2xl max-w-lg w-full p-5 space-y-4 shadow-2xl">
