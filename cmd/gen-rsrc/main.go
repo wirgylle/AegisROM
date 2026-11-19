@@ -366,7 +366,7 @@ func buildCOFFSyso(icon1, icon2, icon3, icon4, grpIcon, manifest []byte) []byte 
 // all Win32 controls, buttons, and TrueType fonts crisply on 125%, 150%, and 200% High-DPI displays so nothing is ever tiny!
 const win11ManifestXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity type="win32" name="AegisROM.Desktop.App" version="0.5.5.0" processorArchitecture="amd64"/>
+  <assemblyIdentity type="win32" name="AegisROM.Desktop.App" version="0.5.6.0" processorArchitecture="amd64"/>
   <description>AegisROM — R36S &amp; Retro Console ROM Cataloger &amp; Scraper</description>
   <dependency>
     <dependentAssembly>
