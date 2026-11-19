@@ -53,7 +53,7 @@
 
 `.github/workflows/ci.yml` запускается на каждый pull request и push в `dev`/`main`:
 
-- фронтенд: `npm ci`, `npm run lint`, `npm run build`;
+- фронтенд: `npm ci`, `npm run lint`, `npm test`, `npm run build`;
 - Go: `go vet` и `go build` под Windows, `go vet` под Linux, `go test`, сборка `aegis-scanner` под Windows/Linux/macOS.
 
 Как запустить то же локально — [docs/development.md](docs/development.md).

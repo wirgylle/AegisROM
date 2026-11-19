@@ -98,7 +98,7 @@ export interface SavedBuildRecord {
   portMasterSlugs: string[];
 }
 
-export type FilenameTokenId = 'name' | 'year' | 'region' | 'bitness' | 'console';
+export type FilenameTokenId = 'name' | 'year' | 'region' | 'bitness' | 'console' | 'status';
 export type FilenameTokenWrap = 'none' | 'parens' | 'brackets';
 export type FilenameSeparator = ' ' | ' - ' | '_';
 

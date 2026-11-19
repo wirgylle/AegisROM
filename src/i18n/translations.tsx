@@ -259,5 +259,6 @@ export function localizePresetCategory(
   if (c.includes('аудитор') || c.includes('aud')) return t('preset.cat.audience');
   if (c.includes('жанр') || c.includes('genre')) return t('preset.cat.genre');
   if (c.includes('поколен') || c.includes('gen')) return t('preset.cat.generation');
+  if (c.includes('статус') || c.includes('status')) return t('preset.cat.status');
   return category;
 }
