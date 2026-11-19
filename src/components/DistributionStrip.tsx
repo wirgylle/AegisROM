@@ -1,6 +1,6 @@
 import React from 'react';
 import { Download, Package, Monitor, Terminal, FileCode2, ShieldCheck } from 'lucide-react';
-import { DOWNLOAD_PORTABLE_URL, DOWNLOAD_SETUP_URL, PORTABLE_EXE_FILENAME, SETUP_EXE_FILENAME } from '../version';
+import { DOWNLOAD_PORTABLE_URL, DOWNLOAD_SCANNER_EXE_URL, DOWNLOAD_SETUP_URL, PORTABLE_EXE_FILENAME, SETUP_EXE_FILENAME } from '../version';
 
 interface DistributionStripProps {
   onOpenDetails: () => void;
@@ -46,7 +46,7 @@ export const DistributionStrip: React.FC<DistributionStripProps> = ({ onOpenDeta
 
         {/* Version 3: Windows 11 CLI Scanner */}
         <a
-          href="/downloads/aegis-scanner-win11-x64.exe"
+          href={DOWNLOAD_SCANNER_EXE_URL}
           download="aegis-scanner-win11-x64.exe"
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg shadow-xs transition-colors whitespace-nowrap"
           title="Консольный многопоточный сканер для PowerShell / CMD и скриптов"

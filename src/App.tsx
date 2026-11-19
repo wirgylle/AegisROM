@@ -81,6 +81,7 @@ import {
   findSavedHandleMatchingPath,
   checkOrRequestHandlePermission,
   collectLocalMediaFromHandle,
+  type StoredDirHandleRecord,
   isDeadOrLocalBlobUrl,
 } from './utils/persistentHandles';
 import {
@@ -508,6 +509,16 @@ const PS1_SERIAL_DICTIONARY: Record<string, string> = {
   'SLES-03804': 'Worms World Party',
 };
 
+// Откуда взято название рома (показывается в карточке игры и журнале).
+type TitleSource =
+  | 'gamelist'
+  | 'factory'
+  | 'header'
+  | 'filename'
+  | 'index-strip'
+  | 'libretro-exact'
+  | 'libretro-fuzzy';
+
 interface ScannedRomFile {
   id: string;
   relativePath: string;
@@ -548,6 +559,9 @@ interface ScannedRomFile {
   cueText?: string;
   parentHandle?: any;
   targetDirHandle?: any;
+  titleSource?: TitleSource;
+  // Почему настоящее название не найдено (пусто, если найдено).
+  titleNote?: string;
 }
 
 interface PhantomFolderCandidate {
@@ -1282,7 +1296,7 @@ function extractCleanTitle(fileName: string): string {
       'EUROPE',
       'JAPAN',
       'JPN',
-      'WORLD',
+      // 'WORLD' не вырезаем: это часть названий (Super Mario World), а (World) в скобках уже убран.
       'RUS',
       'RUSSIAN',
       'RU',
@@ -1844,53 +1858,97 @@ export function App() {
     setLogs((prev) => [...prev.slice(-250), `[${ts}] ${msg}`]);
   };
 
+  // Bumped whenever a library/scan folder handle becomes usable, so an already opened DB
+  // re-resolves its local covers and videos without a rescan.
+  const [mediaAccessVersion, setMediaAccessVersion] = useState(0);
+  const restoreInFlightRef = useRef(false);
+
+  const applyGrantedHandle = (rec: StoredDirHandleRecord) => {
+    if (rec.key === 'library_root') {
+      setLibraryDirHandle(rec.handle);
+      setRootDirHandle((prev: any) => prev || rec.handle);
+      setSelectedFolderName((prev) => prev || rec.folderName);
+    } else if (rec.key === 'scan_root') {
+      setRootDirHandle(rec.handle);
+      setSelectedFolderName(rec.folderName);
+    } else if (rec.key === 'sort_target') {
+      setSortTargetDirHandle(rec.handle);
+      setSortTargetFolderName(rec.folderName);
+    } else if (rec.key === 'sd_target') {
+      setSdTargetDirHandle(rec.handle);
+      setSdTargetFolderName(rec.folderName);
+    } else if (rec.key === 'buffer_source') {
+      setBufferDirHandle(rec.handle);
+      setBufferFolderName(rec.folderName);
+    } else if (rec.key === 'combine_target') {
+      setCombineTargetDirHandle(rec.handle);
+      setCombineTargetFolderName(rec.folderName);
+    }
+  };
+
+  // Library first: it is the folder covers and videos are read from.
+  const HANDLE_PRIORITY = ['library_root', 'scan_root', 'sort_target', 'combine_target', 'sd_target', 'buffer_source'];
+  const sortHandleRecords = (records: StoredDirHandleRecord[]) =>
+    [...records].sort((a, b) => {
+      const ia = HANDLE_PRIORITY.indexOf(a.key);
+      const ib = HANDLE_PRIORITY.indexOf(b.key);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+    });
+
+  /**
+   * Re-grants every saved folder. With allowPrompt the browser shows its permission dialog
+   * (needs a user gesture). Chrome/Edge offer "Allow on every visit" there, after which the
+   * folders open silently on every launch. One prompt per distinct folder: handles that point
+   * to the same directory (library_root and scan_root usually do) share the grant.
+   */
+  const restoreSavedFolderPermissions = async (allowPrompt: boolean) => {
+    const records = sortHandleRecords(await listAllSavedDirectoryHandles());
+    const stillPrompt: Array<{ key: string; folderName: string }> = [];
+    const grantedNames: string[] = [];
+    const grantedHandles: any[] = [];
+    let mediaRootGranted = false;
+
+    for (const rec of records) {
+      let perm = await checkOrRequestHandlePermission(rec.handle, 'readwrite', false);
+      if (perm === 'prompt' && allowPrompt) {
+        let sameAsGranted = false;
+        for (const g of grantedHandles) {
+          try {
+            if (typeof g.isSameEntry === 'function' && (await g.isSameEntry(rec.handle))) {
+              sameAsGranted = true;
+              break;
+            }
+          } catch {}
+        }
+        // Same directory already granted: the re-query above should have returned granted;
+        // don't open a second dialog for it.
+        if (!sameAsGranted) {
+          perm = await checkOrRequestHandlePermission(rec.handle, 'readwrite', true);
+        }
+      }
+      if (perm === 'granted') {
+        applyGrantedHandle(rec);
+        grantedHandles.push(rec.handle);
+        grantedNames.push(rec.folderName);
+        if (rec.key === 'library_root' || rec.key === 'scan_root') mediaRootGranted = true;
+      } else if (perm === 'prompt') {
+        stillPrompt.push({ key: rec.key, folderName: rec.folderName });
+      }
+    }
+
+    setPendingRestoreHandles(stillPrompt);
+    if (mediaRootGranted) setMediaAccessVersion((v) => v + 1);
+    return { grantedNames: Array.from(new Set(grantedNames)), stillPrompt };
+  };
+
   // Restore persisted FileSystemDirectoryHandles from IndexedDB on launch
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const records = await listAllSavedDirectoryHandles();
-      if (!mounted || records.length === 0) return;
-
-      const stillPrompt: Array<{ key: string; folderName: string }> = [];
-      const restoredNames: string[] = [];
-
-      for (const rec of records) {
-        const perm = await checkOrRequestHandlePermission(rec.handle, 'readwrite', false);
-        if (perm === 'granted') {
-          if (rec.key === 'library_root') {
-            setLibraryDirHandle(rec.handle);
-            setRootDirHandle((prev: any) => prev || rec.handle);
-            setSelectedFolderName((prev) => prev || rec.folderName);
-          } else if (rec.key === 'scan_root') {
-            setRootDirHandle(rec.handle);
-            setSelectedFolderName(rec.folderName);
-          } else if (rec.key === 'sort_target') {
-            setSortTargetDirHandle(rec.handle);
-            setSortTargetFolderName(rec.folderName);
-          } else if (rec.key === 'sd_target') {
-            setSdTargetDirHandle(rec.handle);
-            setSdTargetFolderName(rec.folderName);
-          } else if (rec.key === 'buffer_source') {
-            setBufferDirHandle(rec.handle);
-            setBufferFolderName(rec.folderName);
-          } else if (rec.key === 'combine_target') {
-            setCombineTargetDirHandle(rec.handle);
-            setCombineTargetFolderName(rec.folderName);
-          }
-          restoredNames.push(rec.folderName);
-        } else if (perm === 'prompt') {
-          stillPrompt.push({ key: rec.key, folderName: rec.folderName });
-        }
-      }
-
+      const { grantedNames } = await restoreSavedFolderPermissions(false);
       if (!mounted) return;
-      setPendingRestoreHandles(stillPrompt);
-      if (restoredNames.length > 0) {
-        addLog(
-          tf('app.perm.restoredLog', {
-            names: Array.from(new Set(restoredNames)).join(', '),
-          })
-        );
+      if (grantedNames.length > 0) {
+        addLog(tf('app.perm.restoredLog', { names: grantedNames.join(', ') }));
       }
     })();
     return () => {
@@ -1899,48 +1957,39 @@ export function App() {
   }, []);
 
   const handleRestoreSavedFolderPermissions = async () => {
-    const records = await listAllSavedDirectoryHandles();
-    const stillPrompt: Array<{ key: string; folderName: string }> = [];
-    const grantedNames: string[] = [];
-
-    for (const rec of records) {
-      const perm = await checkOrRequestHandlePermission(rec.handle, 'readwrite', true);
-      if (perm === 'granted') {
-        if (rec.key === 'library_root') {
-          setLibraryDirHandle(rec.handle);
-          setRootDirHandle((prev: any) => prev || rec.handle);
-          setSelectedFolderName((prev) => prev || rec.folderName);
-        } else if (rec.key === 'scan_root') {
-          setRootDirHandle(rec.handle);
-          setSelectedFolderName(rec.folderName);
-        } else if (rec.key === 'sort_target') {
-          setSortTargetDirHandle(rec.handle);
-          setSortTargetFolderName(rec.folderName);
-        } else if (rec.key === 'sd_target') {
-          setSdTargetDirHandle(rec.handle);
-          setSdTargetFolderName(rec.folderName);
-        } else if (rec.key === 'buffer_source') {
-          setBufferDirHandle(rec.handle);
-          setBufferFolderName(rec.folderName);
-        } else if (rec.key === 'combine_target') {
-          setCombineTargetDirHandle(rec.handle);
-          setCombineTargetFolderName(rec.folderName);
-        }
-        grantedNames.push(rec.folderName);
-      } else {
-        stillPrompt.push({ key: rec.key, folderName: rec.folderName });
+    if (restoreInFlightRef.current) return;
+    restoreInFlightRef.current = true;
+    try {
+      const { grantedNames } = await restoreSavedFolderPermissions(true);
+      if (grantedNames.length > 0) {
+        const msg = tf('app.perm.grantedLog', { names: grantedNames.join(', ') });
+        setCurrentActionText(msg);
+        addLog(msg);
       }
-    }
-
-    setPendingRestoreHandles(stillPrompt);
-    if (grantedNames.length > 0) {
-      const msg = tf('app.perm.grantedLog', {
-        names: Array.from(new Set(grantedNames)).join(', '),
-      });
-      setCurrentActionText(msg);
-      addLog(msg);
+    } finally {
+      restoreInFlightRef.current = false;
     }
   };
+
+  // The browser only shows the permission dialog inside a user gesture. While saved folders
+  // still wait for permission, the first click or key press anywhere in the app asks for them,
+  // so covers load right after opening a DB instead of after a trip to Tools.
+  const pendingRestoreCount = pendingRestoreHandles.length;
+  useEffect(() => {
+    if (pendingRestoreCount === 0) return;
+    const onGesture = (e: Event) => {
+      if (e instanceof KeyboardEvent && (e.key === 'Escape' || e.repeat)) return;
+      window.removeEventListener('click', onGesture, true);
+      window.removeEventListener('keydown', onGesture, true);
+      void handleRestoreSavedFolderPermissions();
+    };
+    window.addEventListener('click', onGesture, true);
+    window.addEventListener('keydown', onGesture, true);
+    return () => {
+      window.removeEventListener('click', onGesture, true);
+      window.removeEventListener('keydown', onGesture, true);
+    };
+  }, [pendingRestoreCount]);
 
   // Hydrates expired blob: URLs / missing covers & videos when opening an existing DB file (.json) without re-scanning
   const handleResolveMediaForDbRows = async (
@@ -2033,7 +2082,7 @@ export function App() {
               videoUrl: vidFile ? URL.createObjectURL(vidFile) : r.videoUrl,
             };
           }
-          // Yield to event loop every 350 items on 14k+ DBs so UI stays completely responsive
+          // Yield to event loop every 350 items on large DBs so UI stays completely responsive
           if (i > 0 && i % CHUNK_SIZE === 0) {
             await new Promise((res) => setTimeout(res, 0));
           }
@@ -2593,6 +2642,7 @@ export function App() {
     const isRussian = RUS_TAG_REGEX.test(file.name) || isRusFolder;
 
     let extractedInternalTitle = '';
+    let extractedSource: TitleSource | undefined;
     const lowerName = file.name.toLowerCase();
     const baseNoExt = lowerName.replace(/\.[^/.]+$/, '');
     const coreNumKey = extractCoreNumberKey(file.name);
@@ -2603,6 +2653,7 @@ export function App() {
         gamelistMap.get(baseNoExt) ||
         (coreNumKey ? gamelistMap.get(coreNumKey) || gamelistMap.get(`${coreNumKey}${rawExt}`) : '') ||
         '';
+      if (extractedInternalTitle) extractedSource = 'gamelist';
     }
 
     const fileDiscInfo = extractDiscNumberAndBaseTitle(file.name);
@@ -2615,6 +2666,7 @@ export function App() {
       } else if (coreNumKey && FACTORY_NUMBER_TO_TITLE_MAP[coreNumKey]) {
         extractedInternalTitle = FACTORY_NUMBER_TO_TITLE_MAP[coreNumKey];
       }
+      if (extractedInternalTitle) extractedSource = 'factory';
     }
     // Only fall back to binary ROM headers when the filename is numbered/opaque (never overwrite clean human-readable filenames with 12-char uppercase cart codes!)
     if (!extractedInternalTitle && (prelimNumbered || filenameLetterCount < 3)) {
@@ -2625,6 +2677,7 @@ export function App() {
       );
       if (rawBinTitle) {
         extractedInternalTitle = prettifyBinaryHeaderTitle(rawBinTitle);
+        if (extractedInternalTitle) extractedSource = 'header';
       }
     }
 
@@ -2636,10 +2689,15 @@ export function App() {
     const numbered = isNumberedRomFilename(file.name, extractedInternalTitle, false);
     const region = parseRegion(extractedInternalTitle || file.name, isRussian);
     const revision = parseRevision(file.name);
-    const cleanTitle =
+    const usesExtractedTitle = Boolean(
       extractedInternalTitle && (prelimNumbered || filenameLetterCount < 3 || gamelistMap)
-        ? extractCleanTitle(titleDiscInfo.baseNameWithoutDisc || extractedInternalTitle)
-        : filenameClean;
+    );
+    const cleanTitle = usesExtractedTitle
+      ? extractCleanTitle(titleDiscInfo.baseNameWithoutDisc || extractedInternalTitle)
+      : filenameClean;
+    const titleSource: TitleSource = usesExtractedTitle && extractedSource ? extractedSource : 'filename';
+    const titleNote =
+      numbered && !extractedInternalTitle ? t('title.note.numberedNotFound') : '';
     const comparisonKey = buildComparisonKey(cleanTitle);
 
     let canonExt = rawExt;
@@ -2739,6 +2797,8 @@ export function App() {
       companionFiles,
       cueText,
       parentHandle,
+      titleSource,
+      titleNote,
     };
   };
 
@@ -2945,6 +3005,7 @@ export function App() {
           setRootDirHandle(dirHandle);
         }
         setSelectedFolderName(dirHandle.name);
+        setMediaAccessVersion((v) => v + 1);
 
         // Создаем стандартную структуру папок Библиотеки AegisROM v0.5 (roms, images, marquees, videos, xml)
         try {
@@ -3781,6 +3842,15 @@ export function App() {
     let skippedUnresolvedCount = 0;
     let skipped007Count = 0;
     const updatedRoms = [...roms];
+    // Подробно пишем в журнал первые пропуски, остальные — одной строкой (причина есть в карточке игры).
+    const SKIP_LOG_LIMIT = 30;
+    const markUnresolved = (idx: number, note: string) => {
+      skippedUnresolvedCount++;
+      updatedRoms[idx] = { ...updatedRoms[idx], titleNote: note };
+      if (skippedUnresolvedCount <= SKIP_LOG_LIMIT) {
+        addLog(tf('app.rename.skipLog', { file: updatedRoms[idx].fileName, reason: note }));
+      }
+    };
 
     // КРИТИЧЕСКИЙ ФИКС v4.3.1: Отслеживаем занятые имена файлов в каждой папке, чтобы НИКОГДА не переименовать 2 файла в одно и то же имя!
     const usedNamesInDir = new Map<string, Set<string>>();
@@ -3819,13 +3889,18 @@ export function App() {
         if (!isTarget) continue;
 
         let realTitle = r.extractedInternalTitle;
+        let realSource: TitleSource | undefined = realTitle ? r.titleSource : undefined;
         if (!realTitle && FACTORY_NUMBER_TO_TITLE_MAP[lowerBaseNoExt]) {
           realTitle = FACTORY_NUMBER_TO_TITLE_MAP[lowerBaseNoExt];
+          realSource = 'factory';
         }
+        let headerTried = false;
         if (!realTitle && (r.companionFiles?.[0] || r.fileObj)) {
+          headerTried = true;
           const payload = r.companionFiles?.[0] || r.fileObj!;
           const payloadExt = r.companionFiles?.length ? '.bin' : r.extension;
           realTitle = await extractInternalBinaryRomTitle(payload, payloadExt, r.consoleCode);
+          if (realTitle) realSource = 'header';
         }
         if (!realTitle) {
           const stripped = stripLeadingIndexExcept007(baseNoExt).trim();
@@ -3833,24 +3908,33 @@ export function App() {
           const letters = (strippedNoTags.match(/[a-zA-Zа-яА-ЯёЁ]/g) || []).length;
           if (letters >= 2 && stripped.toLowerCase() !== lowerBaseNoExt) {
             realTitle = stripped;
+            realSource = 'index-strip';
           }
         }
 
         // Если для файла не найдено настоящее буквенное название игры — ПРОПУСКАЕМ его, НИКОГДА не переименовывая в пустое имя без номера!
+        if (!realTitle) {
+          markUnresolved(
+            i,
+            headerTried
+              ? t('title.note.numberedNotFound')
+              : t('title.note.noFileAccess')
+          );
+          continue;
+        }
         if (
-          !realTitle ||
           PURE_NUMBERED_ROM_REGEX.test(realTitle) ||
           realTitle.toLowerCase().includes('notgame') ||
           realTitle.toLowerCase().includes('pas un jeu')
         ) {
-          skippedUnresolvedCount++;
+          markUnresolved(i, tf('title.note.badTitle', { title: realTitle }));
           continue;
         }
 
         const cleanReal = extractCleanTitle(realTitle);
         const letterCheck = (cleanReal.match(/[a-zA-Zа-яА-ЯёЁ]/g) || []).length;
         if (letterCheck < 2 || PURE_NUMBERED_ROM_REGEX.test(cleanReal)) {
-          skippedUnresolvedCount++;
+          markUnresolved(i, tf('title.note.badTitle', { title: realTitle }));
           continue;
         }
 
@@ -3957,6 +4041,8 @@ export function App() {
           comparisonKey: buildComparisonKey(cleanReal),
           canonicalName: newFileName,
           mediaStatus: tf('app.rename.itemStatus', { name: safeBase }),
+          titleSource: realSource || r.titleSource,
+          titleNote: '',
         };
         renamedCount++;
         addLog(`${t('app.rename.logPrefix')} ${r.fileName} -> ${newFileName}`);
@@ -3984,6 +4070,9 @@ export function App() {
         }
       }
 
+      if (skippedUnresolvedCount > SKIP_LOG_LIMIT) {
+        addLog(tf('app.rename.skipMore', { count: skippedUnresolvedCount - SKIP_LOG_LIMIT }));
+      }
       addLog(
         tf('app.rename.numDoneMsg', {
           renamed: renamedCount,
@@ -5663,6 +5752,149 @@ export function App() {
   };
 
   // =========================================================================
+  // 1G1R: ТОЛЬКО ОТБОР ДУБЛЕЙ (без сортировки, переименования и скрапинга)
+  // =========================================================================
+  const handleRun1G1R = async () => {
+    if (isAnyProcessRunning) return;
+    const activeRoms = romsRef.current;
+    if (activeRoms.length === 0) {
+      const msg = t('app.g1r.noRoms');
+      setCurrentActionText(msg);
+      addLog(msg);
+      return;
+    }
+    const activeRoot = rootDirHandle;
+    if (!activeRoot) {
+      const msg = t('app.g1r.noFolder');
+      setCurrentActionText(msg);
+      addLog(msg);
+      return;
+    }
+
+    stopRequestedRef.current = false;
+    setIsOrganizing(true);
+    setProgressPct(0);
+    const startMsg = tf('app.g1r.start', { name: activeRoot.name });
+    setCurrentActionText(startMsg);
+    addLog(startMsg);
+
+    let moved = 0;
+    let noAccess = 0;
+    let failed = 0;
+    const newUndoBatch: UndoAction[] = [];
+    const movedIds = new Set<string>();
+    const touchedDirs = new Set<any>();
+
+    try {
+      // Пересчитываем дубли по текущей библиотеке: статусы могли устареть после переименований.
+      const expanded = expandMultiDiscScannedRoms(activeRoms);
+      const deduped = deduplicateAcrossSubfolders(expanded, getPriorityArray(priorityPreset));
+      const losers = deduped.filter((r) => r.status !== 'verified');
+      const keptCount = deduped.length - losers.length;
+
+      for (let i = 0; i < losers.length; i++) {
+        if (stopRequestedRef.current) break;
+        const r = losers[i];
+        setCurrentActionText(
+          tf('app.g1r.progress', { i: i + 1, total: losers.length, file: r.fileName })
+        );
+        setProgressPct(Math.round(((i + 1) / Math.max(1, losers.length)) * 95));
+
+        if (!r.parentHandle || !r.fileObj) {
+          noAccess++;
+          addLog(tf('app.g1r.noAccessLog', { path: r.relativePath || r.fileName }));
+          continue;
+        }
+
+        try {
+          if (deleteJunkPermanently) {
+            await r.parentHandle.removeEntry(r.fileName);
+            for (const cf of r.companionFiles || []) {
+              try {
+                await r.parentHandle.removeEntry(cf.name);
+              } catch {}
+            }
+            addLog(tf('app.sort.delJunkLog', { path: r.relativePath }));
+          } else {
+            const qFolder =
+              r.status === 'junk_bad_dump' ? '_BadDumps_Junk' : '_Duplicates_1G1R';
+            const qRoot = await activeRoot.getDirectoryHandle(qFolder, { create: true });
+            const targetDirHandle = await qRoot.getDirectoryHandle(r.consoleCode, {
+              create: true,
+            });
+            const dupFileName = `${r.fileName.replace(/\.[^/.]+$/, '')}_${r.headerlessCrc32.slice(
+              0,
+              6
+            )}${normalizeDiskOutputExt(r.extension)}`;
+            await writeRomWithCompanionsToDir(r, targetDirHandle, dupFileName, true);
+            newUndoBatch.push({
+              fromDirHandle: targetDirHandle,
+              fromName: dupFileName,
+              toDirHandle: r.parentHandle,
+              toName: r.fileName,
+              fileData: new ArrayBuffer(0),
+            });
+            addLog(
+              tf('app.sort.movedDupLog', {
+                path: r.relativePath,
+                target: `${qFolder}/${r.consoleCode}`,
+              })
+            );
+          }
+          moved++;
+          movedIds.add(r.id);
+          touchedDirs.add(r.parentHandle);
+        } catch (err) {
+          failed++;
+          addLog(tf('app.g1r.errItemLog', { path: r.relativePath || r.fileName, err: String(err) }));
+        }
+      }
+
+      // Убранные файлы больше не лежат в библиотеке: убираем их из списка.
+      const remaining = collapseMultiDiscScannedRoms(
+        deduped.filter((r) => !movedIds.has(r.id)),
+        filenameConfigRef.current
+      );
+
+      // gamelist.xml переписываем только в папках, откуда что-то ушло.
+      const byConsoleHandle = new Map<any, ScannedRomFile[]>();
+      for (const r of remaining) {
+        if (r.status !== 'verified') continue;
+        const h = r.targetDirHandle || r.parentHandle;
+        if (!h || !touchedDirs.has(h)) continue;
+        const arr = byConsoleHandle.get(h) || [];
+        arr.push(r);
+        byConsoleHandle.set(h, arr);
+      }
+      for (const [cHandle, cRoms] of byConsoleHandle.entries()) {
+        await writeGamelistXmlToHandle(cHandle, cRoms);
+      }
+
+      romsRef.current = remaining;
+      setRoms(remaining);
+      setLastScanMode('replace');
+      setScanRevision((n) => n + 1);
+      if (newUndoBatch.length > 0) setUndoStack(newUndoBatch);
+      syncScannedRomsIntoDb(remaining, activeRoot.name, true);
+
+      const doneMsg = tf(stopRequestedRef.current ? 'app.g1r.stopped' : 'app.g1r.done', {
+        found: losers.length,
+        moved,
+        kept: keptCount,
+        noAccess,
+        failed,
+      });
+      setCurrentActionText(doneMsg);
+      addLog(doneMsg);
+    } catch (err) {
+      addLog(tf('app.g1r.errLog', { err: String(err) }));
+    } finally {
+      setIsOrganizing(false);
+      setProgressPct(100);
+    }
+  };
+
+  // =========================================================================
   // BUFFER AUTO-PROCESSOR (АВТО-РАЗБОР БУФЕРНОЙ ПАПКИ + КОНСТРУКТОР ИМЁН)
   // =========================================================================
   const handleSelectBufferFolder = async () => {
@@ -6394,7 +6626,8 @@ export function App() {
           })
         );
 
-        const officialTitle = m.matchedCanonicalTitle || r.cleanTitle;
+        const titleMatched = m.matched !== false && Boolean(m.matchedCanonicalTitle);
+        const officialTitle = titleMatched ? m.matchedCanonicalTitle : r.cleanTitle;
         const newCanonicalName = computeCanonicalNameForRom({ ...r, cleanTitle: officialTitle });
 
         const hasVid = Boolean(m.videoUrl);
@@ -6403,6 +6636,12 @@ export function App() {
           ...r,
           cleanTitle: officialTitle,
           canonicalName: newCanonicalName,
+          titleSource: titleMatched
+            ? m.titleSource === 'libretro-fuzzy'
+              ? 'libretro-fuzzy'
+              : 'libretro-exact'
+            : r.titleSource,
+          titleNote: titleMatched ? '' : m.reason || r.titleNote,
           scrapedBoxArtUrl: m.boxArtUrl,
           scrapedSnapUrl: m.snapUrl,
           scrapedMarqueeUrl: m.marqueeUrl,
@@ -6546,9 +6785,14 @@ export function App() {
       const targets = activeList.filter((r) => r.status === 'verified');
       const updated = [...activeList];
       let renamed = 0;
+      const ONLINE_LOG_LIMIT = 30;
+      let onlineExact = 0;
+      let onlineFuzzy = 0;
+      let onlineMissed = 0;
 
       // Batch server title lookup in chunks of 120
-      const resolvedTitles = new Map<string, string>();
+      const resolvedTitles = new Map<string, { title: string; source: TitleSource }>();
+      const unresolvedReasons = new Map<string, string>();
       for (let start = 0; start < targets.length; start += 120) {
         if (stopRequestedRef.current) break;
         const slice = targets.slice(start, start + 120);
@@ -6573,12 +6817,25 @@ export function App() {
           if (resp.ok) {
             const data = await resp.json();
             for (const res of data.results || []) {
-              if (res?.id && res?.matchedCanonicalTitle) {
-                resolvedTitles.set(res.id, res.matchedCanonicalTitle);
+              if (!res?.id) continue;
+              // matched === false: сервер не нашёл название и вернул исходное — не выдаём его за найденное.
+              if (res.matched !== false && res.matchedCanonicalTitle) {
+                resolvedTitles.set(res.id, {
+                  title: res.matchedCanonicalTitle,
+                  source: res.titleSource === 'libretro-fuzzy' ? 'libretro-fuzzy' : 'libretro-exact',
+                });
+              } else {
+                unresolvedReasons.set(res.id, res.reason || t('title.note.onlineNoMatch'));
               }
             }
+          } else {
+            const reason = tf('title.note.onlineHttpErr', { status: resp.status });
+            for (const w of slice) unresolvedReasons.set(w.id, reason);
           }
-        } catch {}
+        } catch (err) {
+          const reason = tf('title.note.onlineNetErr', { err: String(err) });
+          for (const w of slice) unresolvedReasons.set(w.id, reason);
+        }
         setProgressPct(10 + Math.round(((start + slice.length) / Math.max(1, targets.length)) * 30));
       }
 
@@ -6587,7 +6844,19 @@ export function App() {
         const r = updated[i];
         if (r.status !== 'verified') continue;
 
-        const bestTitle = resolvedTitles.get(r.id) || r.cleanTitle;
+        const resolved = resolvedTitles.get(r.id);
+        const bestTitle = resolved?.title || r.cleanTitle;
+        const unresolvedNote = resolved ? '' : unresolvedReasons.get(r.id) || '';
+        if (!resolved) {
+          onlineMissed++;
+          if (onlineMissed <= ONLINE_LOG_LIMIT) {
+            addLog(tf('app.rename.onlineSkipLog', { file: r.fileName, reason: unresolvedNote || t('title.note.onlineNoMatch') }));
+          }
+        } else if (resolved.source === 'libretro-fuzzy') {
+          onlineFuzzy++;
+        } else {
+          onlineExact++;
+        }
         const newCandidate = updateRomWithFilenameConfig(
           { ...r, cleanTitle: bestTitle },
           filenameConfigRef.current
@@ -6610,6 +6879,8 @@ export function App() {
           canonicalName: safeNewName,
           comparisonKey: buildComparisonKey(bestTitle),
           mediaStatus: tf('app.rename.ctorStatus', { name: safeNewName }),
+          titleSource: resolved ? resolved.source : r.titleSource,
+          titleNote: unresolvedNote,
         };
 
         if (i % 15 === 0 || i === updated.length - 1) {
@@ -6625,6 +6896,16 @@ export function App() {
       setLastScanMode('replace');
       setScanRevision((n) => n + 1);
       syncScannedRomsIntoDb(updated, selectedFolderName || dbState.masterLibraryPath, true);
+      if (onlineMissed > ONLINE_LOG_LIMIT) {
+        addLog(tf('app.rename.skipMore', { count: onlineMissed - ONLINE_LOG_LIMIT }));
+      }
+      addLog(
+        tf('app.rename.onlineSummary', {
+          exact: onlineExact,
+          fuzzy: onlineFuzzy,
+          missed: onlineMissed,
+        })
+      );
       addLog(tf('app.rename.onlineDone', { renamed, total: targets.length }));
     } catch (err) {
       addLog(tf('app.rename.onlineErr', { err: String(err) }));
@@ -7366,6 +7647,8 @@ export function App() {
       multiDiscFolderName: r.multiDiscFolderName,
       m3uFileName: r.m3uFileName,
       discs: mappedDiscs,
+      titleSource: r.titleSource,
+      titleNote: r.titleNote,
     };
   };
 
@@ -7431,6 +7714,8 @@ export function App() {
         currentActionText={currentActionText || logs[logs.length - 1] || ''}
         pendingRestoreHandles={pendingRestoreHandles}
         onRestoreSavedPermissions={handleRestoreSavedFolderPermissions}
+        mediaAccessVersion={mediaAccessVersion}
+        hasMediaFolderAccess={Boolean(libraryDirHandle || rootDirHandle)}
         onResolveMediaForDbRows={handleResolveMediaForDbRows}
         logs={logs}
         onClearLogs={() => setLogs([t('status.cleared')])}
@@ -7440,7 +7725,7 @@ export function App() {
         onScanExternalSourceForDiff={scanExternalSourceForDiff}
         lastScanMode={lastScanMode}
         scanRevision={scanRevision}
-        onOrganizeCatalog={() => handleOrganizeCatalog()}
+        onOrganizeCatalog={() => handleRun1G1R()}
         onGroupMultiDiscFolders={handleGroupMultiDiscFolders}
         autoGroupMultiDisc={autoGroupMultiDisc}
         onChangeAutoGroupMultiDisc={setAutoGroupMultiDisc}

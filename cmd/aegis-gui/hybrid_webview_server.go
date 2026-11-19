@@ -4,13 +4,15 @@
 package main
 
 import (
+	"aegisgui/aegisapi"
+	"aegisgui/aegiscore"
 	"aegisgui/cmd/winsetup"
 	"archive/zip"
-	"bytes"
 	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
@@ -78,36 +80,6 @@ func findAppBrowserExecutable() string {
 		return p
 	}
 	return ""
-}
-
-// Explicit MIME types immune to Windows Registry (HKCR\.js = text/plain) bugs that cause white screens in Chromium
-func explicitMimeTypeForExt(ext string) string {
-	switch strings.ToLower(ext) {
-	case ".html", ".htm":
-		return "text/html; charset=utf-8"
-	case ".js", ".mjs":
-		return "application/javascript; charset=utf-8"
-	case ".css":
-		return "text/css; charset=utf-8"
-	case ".json", ".webmanifest":
-		return "application/json; charset=utf-8"
-	case ".png":
-		return "image/png"
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".svg":
-		return "image/svg+xml"
-	case ".ico":
-		return "image/x-icon"
-	case ".woff2":
-		return "font/woff2"
-	case ".woff":
-		return "font/woff"
-	case ".ttf":
-		return "font/ttf"
-	default:
-		return "application/octet-stream"
-	}
 }
 
 func getAegisToolsDir() string {
@@ -185,170 +157,6 @@ func promptSelectChdmanExecutable() (string, error) {
 	}
 	_ = os.WriteFile(filepath.Join(toolsDir, "chdman_path.txt"), []byte(chosen), 0644)
 	return chosen, nil
-}
-
-// Strips raw 2352-byte or 2448-byte (2352+96 subchannel) CD sectors (MODE1 +16 or MODE2/XA +24) to pure 2048-byte ISO9660.
-func stripBin2352FileToIso(binPath, isoPath string) error {
-	src, err := os.Open(binPath)
-	if err != nil {
-		return err
-	}
-	defer src.Close()
-
-	st, err := src.Stat()
-	if err != nil {
-		return err
-	}
-	if st.Size() < 32768 {
-		return fmt.Errorf("входной образ диска слишком мал (%d Б)", st.Size())
-	}
-
-	head := make([]byte, 96*1024)
-	nHead, _ := io.ReadFull(src, head)
-	head = head[:nHead]
-
-	syncPattern := []byte{0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00}
-	sectorSize := 2048
-	if len(head) >= 2460 && bytes.HasPrefix(head, syncPattern) && bytes.Equal(head[2448:2460], syncPattern) {
-		sectorSize = 2448
-	} else if len(head) >= 2364 && bytes.HasPrefix(head, syncPattern) && bytes.Equal(head[2352:2364], syncPattern) {
-		sectorSize = 2352
-	} else if st.Size()%2448 == 0 && st.Size()%2352 != 0 {
-		sectorSize = 2448
-	} else if st.Size()%2352 == 0 {
-		sectorSize = 2352
-	}
-
-	if _, err := src.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-
-	dst, err := os.Create(isoPath)
-	if err != nil {
-		return err
-	}
-	defer dst.Close()
-
-	if sectorSize == 2048 {
-		_, err = io.Copy(dst, src)
-		return err
-	}
-
-	dataOffset := 24
-	pvdBase := 16 * sectorSize
-	if len(head) >= pvdBase+30 && bytes.Equal(head[pvdBase+17:pvdBase+22], []byte("CD001")) {
-		dataOffset = 16
-	}
-
-	const sectorsBatch = 2048
-	inBuf := make([]byte, sectorsBatch*sectorSize)
-	outBuf := make([]byte, sectorsBatch*2048)
-
-	for {
-		n, readErr := io.ReadFull(src, inBuf)
-		sectors := n / sectorSize
-		if sectors > 0 {
-			for s := 0; s < sectors; s++ {
-				srcOff := s*sectorSize + dataOffset
-				copy(outBuf[s*2048:(s+1)*2048], inBuf[srcOff:srcOff+2048])
-			}
-			if _, wErr := dst.Write(outBuf[:sectors*2048]); wErr != nil {
-				return wErr
-			}
-		}
-		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
-			break
-		}
-		if readErr != nil {
-			return readErr
-		}
-	}
-	return nil
-}
-
-// Normalizes .mdf / standalone .img (2448B CloneCD/Alcohol -> 2352B, or 2352B copy) into a clean .cue + .bin pair for chdman.exe.
-func normalizeDiscImageToCueAndBin(srcPath, cuePath, binPath string) error {
-	src, err := os.Open(srcPath)
-	if err != nil {
-		return err
-	}
-	defer src.Close()
-
-	st, err := src.Stat()
-	if err != nil {
-		return err
-	}
-	if st.Size() < 32768 {
-		return fmt.Errorf("файл образа %s слишком мал (%d Б)", filepath.Base(srcPath), st.Size())
-	}
-
-	head := make([]byte, 96*1024)
-	nHead, _ := io.ReadFull(src, head)
-	head = head[:nHead]
-
-	syncPattern := []byte{0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00}
-	sectorSize := 2048
-	if len(head) >= 2460 && bytes.HasPrefix(head, syncPattern) && bytes.Equal(head[2448:2460], syncPattern) {
-		sectorSize = 2448
-	} else if len(head) >= 2364 && bytes.HasPrefix(head, syncPattern) && bytes.Equal(head[2352:2364], syncPattern) {
-		sectorSize = 2352
-	} else if st.Size()%2448 == 0 && st.Size()%2352 != 0 {
-		sectorSize = 2448
-	} else if st.Size()%2352 == 0 {
-		sectorSize = 2352
-	}
-
-	modeStr := "MODE2/2352"
-	if sectorSize == 2048 {
-		modeStr = "MODE1/2048"
-	} else {
-		pvdBase := 16 * sectorSize
-		if len(head) >= pvdBase+30 && bytes.Equal(head[pvdBase+17:pvdBase+22], []byte("CD001")) {
-			modeStr = "MODE1/2352"
-		}
-	}
-
-	if _, err := src.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-	dst, err := os.Create(binPath)
-	if err != nil {
-		return err
-	}
-	if sectorSize == 2448 {
-		const sectorsBatch = 2048
-		inBuf := make([]byte, sectorsBatch*2448)
-		outBuf := make([]byte, sectorsBatch*2352)
-		for {
-			n, readErr := io.ReadFull(src, inBuf)
-			sectors := n / 2448
-			if sectors > 0 {
-				for s := 0; s < sectors; s++ {
-					copy(outBuf[s*2352:(s+1)*2352], inBuf[s*2448:s*2448+2352])
-				}
-				if _, wErr := dst.Write(outBuf[:sectors*2352]); wErr != nil {
-					_ = dst.Close()
-					return wErr
-				}
-			}
-			if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
-				break
-			}
-			if readErr != nil {
-				_ = dst.Close()
-				return readErr
-			}
-		}
-	} else {
-		if _, err := io.Copy(dst, src); err != nil {
-			_ = dst.Close()
-			return err
-		}
-	}
-	_ = dst.Close()
-
-	cueBody := fmt.Sprintf("FILE \"%s\" BINARY\r\n  TRACK 01 %s\r\n    INDEX 01 00:00:00\r\n", filepath.Base(binPath), modeStr)
-	return os.WriteFile(cuePath, []byte(cueBody), 0644)
 }
 
 type EmulatorConfigFile struct {
@@ -520,15 +328,31 @@ func runHybridModernDesktopApp() bool {
 	}
 
 	appDir := getAegisAppDataDir()
-	dbFilePath := filepath.Join(appDir, "aegisrom-v5-db.json")
 	shutdownCh := make(chan struct{}, 1)
 	var lastHeartbeatUnix int64 = time.Now().Unix()
+	touch := func() { atomic.StoreInt64(&lastHeartbeatUnix, time.Now().Unix()) }
+	webAssets, err := fs.Sub(embeddedWebDist, "webdist")
+	if err != nil {
+		return false
+	}
 
 	// If an older instance is still listening on 127.0.0.1:38470, tell it to shut down so we serve the newest build
+	// The running instance only accepts the request with its session token, which it saved to appDir.
 	client := &http.Client{Timeout: 300 * time.Millisecond}
-	if resp, err := client.Post("http://127.0.0.1:38470/api/native/shutdown", "application/json", nil); err == nil {
-		_ = resp.Body.Close()
-		time.Sleep(150 * time.Millisecond)
+	if shutdownReq, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:38470/api/native/shutdown", nil); err == nil {
+		if prevToken := aegisapi.ReadTokenFile(appDir); prevToken != "" {
+			shutdownReq.Header.Set(aegisapi.TokenHeader, prevToken)
+		}
+		if resp, err := client.Do(shutdownReq); err == nil {
+			_ = resp.Body.Close()
+			time.Sleep(150 * time.Millisecond)
+		}
+	}
+
+	// Per-launch session token protecting the local API (see local_api_guard.go).
+	apiToken, err := aegisapi.NewToken()
+	if err != nil {
+		return false
 	}
 
 	mux := http.NewServeMux()
@@ -886,7 +710,7 @@ func runHybridModernDesktopApp() bool {
 				if strings.HasSuffix(lowEntry, ".mds") || strings.HasSuffix(lowEntry, ".mdf") || strings.HasSuffix(lowEntry, ".img") {
 					normCue := filepath.Join(tmpDir, baseName+"_norm.cue")
 					normBin := filepath.Join(tmpDir, baseName+"_norm.bin")
-					if nErr := normalizeDiscImageToCueAndBin(rawPayload, normCue, normBin); nErr == nil {
+					if nErr := aegiscore.NormalizeDiscImageToCueAndBin(rawPayload, normCue, normBin); nErr == nil {
 						chdInputPath = normCue
 					}
 				}
@@ -927,7 +751,7 @@ func runHybridModernDesktopApp() bool {
 				http.Error(w, "chdman extractcd error: "+runErr.Error()+"\n"+string(cmdOut), http.StatusInternalServerError)
 				return
 			}
-			if err := stripBin2352FileToIso(tmpBin, outIso); err != nil {
+			if err := aegiscore.StripBin2352ToISO(tmpBin, outIso); err != nil {
 				http.Error(w, "strip bin->iso error: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -1195,361 +1019,11 @@ func runHybridModernDesktopApp() bool {
 		})
 	})
 
-	// 4. Persistent AegisDB Endpoints
-	mux.HandleFunc("/api/db/state", func(w http.ResponseWriter, r *http.Request) {
-		atomic.StoreInt64(&lastHeartbeatUnix, time.Now().Unix())
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		if raw, err := os.ReadFile(dbFilePath); err == nil && len(raw) > 10 {
-			_, _ = w.Write(raw)
-			return
-		}
-		_, _ = w.Write([]byte(`{"version":"0.5.4","masterLibraryPath":"D:/AegisROM_MasterLibrary","sdCardMountPath":"E:/EASYROMS","bufferZonePath":"D:/AegisROM_MasterLibrary/_Combain_Inbox","preferredRegionOrder":["Russia","USA","Europe","Japan"],"emulatorCustomPaths":{},"starredEmulatorsByConsole":{"nes":"retroarch_fceumm","snes":"retroarch_snes9x","genesis":"retroarch_genesis_plus_gx","gba":"mgba_standalone","psx":"duckstation","ps2":"pcsx2","ps3":"rpcs3","switch":"ryujinx","xbox":"xemu"},"records":[]}`))
-	})
-
-	mux.HandleFunc("/api/db/sync", func(w http.ResponseWriter, r *http.Request) {
-		atomic.StoreInt64(&lastHeartbeatUnix, time.Now().Unix())
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		body, _ := io.ReadAll(r.Body)
-		var payload struct {
-			State json.RawMessage `json:"state"`
-		}
-		if err := json.Unmarshal(body, &payload); err == nil && len(payload.State) > 2 {
-			_ = os.WriteFile(dbFilePath, payload.State, 0644)
-			_, _ = w.Write([]byte(`{"ok":true,"state":` + string(payload.State) + `}`))
-			return
-		}
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	})
-
-	mux.HandleFunc("/api/db/reset-seed", func(w http.ResponseWriter, r *http.Request) {
-		atomic.StoreInt64(&lastHeartbeatUnix, time.Now().Unix())
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_ = os.Remove(dbFilePath)
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	})
-
-	// 4b. Persistent Saved Builds Storage (/api/db/builds)
-	buildsFilePath := filepath.Join(appDir, "aegisrom-v5-builds.json")
-	mux.HandleFunc("/api/db/builds", func(w http.ResponseWriter, r *http.Request) {
-		atomic.StoreInt64(&lastHeartbeatUnix, time.Now().Unix())
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		if r.Method == http.MethodPost {
-			body, _ := io.ReadAll(r.Body)
-			var payload struct {
-				Builds json.RawMessage `json:"builds"`
-			}
-			if err := json.Unmarshal(body, &payload); err == nil && len(payload.Builds) >= 2 {
-				_ = os.WriteFile(buildsFilePath, payload.Builds, 0644)
-				_, _ = w.Write([]byte(`{"ok":true,"builds":` + string(payload.Builds) + `}`))
-				return
-			}
-			http.Error(w, "Invalid builds payload", http.StatusBadRequest)
-			return
-		}
-		if raw, err := os.ReadFile(buildsFilePath); err == nil && len(raw) >= 2 {
-			_, _ = w.Write([]byte(`{"ok":true,"builds":` + string(raw) + `}`))
-			return
-		}
-		_, _ = w.Write([]byte(`{"ok":true,"builds":[]}`))
-	})
-
-	// 4c. Native PortMaster Feed Proxy & Zip Downloader
-	portMasterCachePath := filepath.Join(appDir, "portmaster-info-cache.json")
-	mux.HandleFunc("/api/portmaster/catalog", func(w http.ResponseWriter, r *http.Request) {
-		atomic.StoreInt64(&lastHeartbeatUnix, time.Now().Unix())
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		forceRefresh := r.URL.Query().Get("refresh") == "1" || r.URL.Query().Get("refresh") == "true"
-
-		if !forceRefresh {
-			if st, err := os.Stat(portMasterCachePath); err == nil && time.Since(st.ModTime()) < 6*time.Hour {
-				if raw, err := os.ReadFile(portMasterCachePath); err == nil && len(raw) > 20 {
-					_, _ = w.Write(raw)
-					return
-				}
-			}
-		}
-
-		client := &http.Client{Timeout: 25 * time.Second}
-		resp, err := client.Get("https://raw.githubusercontent.com/PortsMaster/PortMaster-Info/main/ports.json")
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-		var rawFeed struct {
-			Ports map[string]struct {
-				Name   string   `json:"name"`
-				Items  []string `json:"items"`
-				Attr   struct {
-					Title   string                 `json:"title"`
-					Desc    string                 `json:"desc"`
-					Genres  []string               `json:"genres"`
-					Rtr     bool                   `json:"rtr"`
-					Porter  []string               `json:"porter"`
-					Runtime interface{}            `json:"runtime"`
-					Reqs    []string               `json:"reqs"`
-					Inst    string                 `json:"inst"`
-					InstMd  string                 `json:"inst_md"`
-					Avail   map[string]interface{} `json:"avail"`
-					Image   struct {
-						Covers     []string `json:"covers"`
-						Screenshot string   `json:"screenshot"`
-					} `json:"image"`
-				} `json:"attr"`
-				Source struct {
-					URL         string `json:"url"`
-					Size        int64  `json:"size"`
-					DateUpdated string `json:"date_updated"`
-					MD5         string `json:"md5"`
-				} `json:"source"`
-			} `json:"ports"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&rawFeed); err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		type pmItem struct {
-			ID                     string   `json:"id"`
-			Slug                   string   `json:"slug"`
-			Title                  string   `json:"title"`
-			Desc                   string   `json:"desc"`
-			Genres                 []string `json:"genres"`
-			ReadyToRun             bool     `json:"readyToRun"`
-			Porter                 []string `json:"porter"`
-			Runtime                []string `json:"runtime"`
-			Requirements           []string `json:"requirements"`
-			InstructionsRaw        string   `json:"instructionsRaw"`
-			InstructionsMd         string   `json:"instructionsMd"`
-			RequiredDataTargetPath string   `json:"requiredDataTargetPath"`
-			RequiredDataHint       string   `json:"requiredDataHint"`
-			Items                  []string `json:"items"`
-			AvailDevices           []string `json:"availDevices"`
-			SupportedConsolesPretty []string `json:"supportedConsolesPretty"`
-			CoverUrl               string   `json:"coverUrl"`
-			ScreenshotUrl          string   `json:"screenshotUrl"`
-			DownloadUrl            string   `json:"downloadUrl"`
-			SizeBytes              int64    `json:"sizeBytes"`
-			DateUpdated            string   `json:"dateUpdated"`
-			MD5                    string   `json:"md5"`
-		}
-		games := make([]pmItem, 0, len(rawFeed.Ports))
-		for key, entry := range rawFeed.Ports {
-			slug := strings.TrimSuffix(entry.Name, ".zip")
-			if slug == "" {
-				slug = strings.TrimSuffix(key, ".zip")
-			}
-			coverUrl := ""
-			shotUrl := ""
-			if entry.Attr.Image.Screenshot != "" {
-				shotUrl = "https://raw.githubusercontent.com/PortsMaster/PortMaster-New/main/ports/" + url.PathEscape(slug) + "/" + url.PathEscape(entry.Attr.Image.Screenshot)
-			}
-			if len(entry.Attr.Image.Covers) > 0 {
-				coverUrl = "https://raw.githubusercontent.com/PortsMaster/PortMaster-New/main/ports/" + url.PathEscape(slug) + "/" + url.PathEscape(entry.Attr.Image.Covers[0])
-			} else {
-				coverUrl = shotUrl
-			}
-			rtList := []string{}
-			switch v := entry.Attr.Runtime.(type) {
-			case string:
-				if v != "" {
-					rtList = append(rtList, v)
-				}
-			case []interface{}:
-				for _, x := range v {
-					if s, ok := x.(string); ok {
-						rtList = append(rtList, s)
-					}
-				}
-			}
-			availKeys := make([]string, 0, len(entry.Attr.Avail))
-			for ak := range entry.Attr.Avail {
-				availKeys = append(availKeys, ak)
-			}
-			games = append(games, pmItem{
-				ID:                      key,
-				Slug:                    slug,
-				Title:                   entry.Attr.Title,
-				Desc:                    entry.Attr.Desc,
-				Genres:                  entry.Attr.Genres,
-				ReadyToRun:              entry.Attr.Rtr,
-				Porter:                  entry.Attr.Porter,
-				Runtime:                 rtList,
-				Requirements:            entry.Attr.Reqs,
-				InstructionsRaw:         entry.Attr.Inst,
-				InstructionsMd:          entry.Attr.InstMd,
-				RequiredDataTargetPath:  "ports/" + slug,
-				RequiredDataHint:        "Поместите файлы игры в папку ports/" + slug + "/",
-				Items:                   entry.Items,
-				AvailDevices:            availKeys,
-				SupportedConsolesPretty: []string{"R36S (ArkOS)", "Anbernic (MuOS/Knulli)", "ROCKNIX"},
-				CoverUrl:                coverUrl,
-				ScreenshotUrl:           shotUrl,
-				DownloadUrl:             entry.Source.URL,
-				SizeBytes:               entry.Source.Size,
-				DateUpdated:             entry.Source.DateUpdated,
-				MD5:                     entry.Source.MD5,
-			})
-		}
-		outBytes, _ := json.Marshal(map[string]interface{}{
-			"ok":        true,
-			"syncedAt":  time.Now().UTC().Format(time.RFC3339),
-			"fromCache": false,
-			"total":     len(games),
-			"games":     games,
-		})
-		_ = os.WriteFile(portMasterCachePath, outBytes, 0644)
-		_, _ = w.Write(outBytes)
-	})
-
-	mux.HandleFunc("/api/portmaster/download", func(w http.ResponseWriter, r *http.Request) {
-		targetURL := r.URL.Query().Get("url")
-		if targetURL == "" || (!strings.HasPrefix(targetURL, "https://github.com/PortsMaster/") && !strings.HasPrefix(targetURL, "https://raw.githubusercontent.com/PortsMaster/")) {
-			http.Error(w, "Invalid PortMaster download URL", http.StatusBadRequest)
-			return
-		}
-		httpClient := &http.Client{Timeout: 45 * time.Second}
-		resp, err := httpClient.Get(targetURL)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-		w.Header().Set("Content-Type", "application/zip")
-		w.WriteHeader(resp.StatusCode)
-		_, _ = io.Copy(w, resp.Body)
-	})
-
-	// 5. Media Proxy for R36S Scraper (Libretro Boxart / Archive.org Short Videos)
-	mux.HandleFunc("/api/r36s/proxy-media", func(w http.ResponseWriter, r *http.Request) {
-		targetURL := r.URL.Query().Get("url")
-		if targetURL == "" || (!strings.HasPrefix(targetURL, "https://") && !strings.HasPrefix(targetURL, "http://")) {
-			http.Error(w, "Invalid URL", http.StatusBadRequest)
-			return
-		}
-		httpClient := &http.Client{Timeout: 20 * time.Second}
-		resp, err := httpClient.Get(targetURL)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-		if ct := resp.Header.Get("Content-Type"); ct != "" {
-			w.Header().Set("Content-Type", ct)
-		}
-		w.WriteHeader(resp.StatusCode)
-		_, _ = io.Copy(w, resp.Body)
-	})
-
-	// 5b. Batch R36S Scraper Endpoint (Libretro Boxart + Archive.org Short Gameplay Videos)
-	mux.HandleFunc("/api/r36s/scrape-batch", func(w http.ResponseWriter, r *http.Request) {
-		atomic.StoreInt64(&lastHeartbeatUnix, time.Now().Unix())
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{"results": []interface{}{}})
-			return
-		}
-
-		var req struct {
-			Items []struct {
-				ID             string `json:"id"`
-				CleanTitle     string `json:"cleanTitle"`
-				ComparisonKey  string `json:"comparisonKey"`
-				Region         string `json:"region"`
-				LibretroSystem string `json:"libretroSystem"`
-				ArchiveVideoID string `json:"archiveVideoId"`
-			} `json:"items"`
-		}
-		if err := json.Unmarshal(body, &req); err != nil {
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{"results": []interface{}{}})
-			return
-		}
-
-		type scrapeResult struct {
-			ID                    string `json:"id"`
-			MatchedCanonicalTitle string `json:"matchedCanonicalTitle"`
-			MatchedFileName       string `json:"matchedFileName"`
-			BoxArtUrl             string `json:"boxArtUrl"`
-			SnapUrl               string `json:"snapUrl"`
-			MarqueeUrl            string `json:"marqueeUrl"`
-			VideoUrl              string `json:"videoUrl"`
-		}
-
-		results := make([]scrapeResult, 0, len(req.Items))
-		for _, item := range req.Items {
-			prefRegion := item.Region
-			if prefRegion == "" {
-				prefRegion = "USA"
-			}
-			matchedName := findBestLibretroMatch(item.LibretroSystem, item.CleanTitle, item.ComparisonKey, prefRegion)
-			if matchedName == "" {
-				matchedName = fmt.Sprintf("%s (USA)", item.CleanTitle)
-			}
-			canonicalTitle := extractCleanTitle(matchedName)
-			if canonicalTitle == "" {
-				canonicalTitle = item.CleanTitle
-			}
-
-			sysEsc := url.PathEscape(item.LibretroSystem)
-			fileEsc := url.PathEscape(matchedName + ".png")
-
-			boxArtURL := fmt.Sprintf("https://thumbnails.libretro.com/%s/Named_Boxarts/%s", sysEsc, fileEsc)
-			snapURL := fmt.Sprintf("https://thumbnails.libretro.com/%s/Named_Snaps/%s", sysEsc, fileEsc)
-			marqueeURL := fmt.Sprintf("https://thumbnails.libretro.com/%s/Named_Titles/%s", sysEsc, fileEsc)
-
-			videoURL := ""
-			if item.ArchiveVideoID != "" {
-				matchedVid := findBestArchiveVideoMatch(item.ArchiveVideoID, item.CleanTitle, item.ComparisonKey)
-				if matchedVid != "" {
-					videoURL = fmt.Sprintf("https://archive.org/download/%s/%s", item.ArchiveVideoID, url.PathEscape(matchedVid))
-				}
-			}
-
-			results = append(results, scrapeResult{
-				ID:                    item.ID,
-				MatchedCanonicalTitle: canonicalTitle,
-				MatchedFileName:       matchedName,
-				BoxArtUrl:             boxArtURL,
-				SnapUrl:               snapURL,
-				MarqueeUrl:            marqueeURL,
-				VideoUrl:              videoURL,
-			})
-		}
-
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"results": results,
-		})
-	})
+	// 4–5. Библиотека, сборки, PortMaster и скрапер: общие для всех оболочек (aegisapi).
+	aegisapi.RegisterLibraryRoutes(mux, appDir, touch)
 
 	// 6. Serve Embedded React 19 + Tailwind CSS v0.5.4 Beta SPA directly from memory with explicit anti-cache MIME headers
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		atomic.StoreInt64(&lastHeartbeatUnix, time.Now().Unix())
-		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-		w.Header().Set("Pragma", "no-cache")
-		w.Header().Set("Expires", "0")
-
-		cleanPath := strings.TrimPrefix(r.URL.Path, "/")
-		if cleanPath == "" || cleanPath == "index.html" {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write(indexBytes)
-			return
-		}
-
-		// Read exact asset from embeddedWebDist
-		assetBytes, err := embeddedWebDist.ReadFile("webdist/" + cleanPath)
-		if err == nil {
-			w.Header().Set("Content-Type", explicitMimeTypeForExt(filepath.Ext(cleanPath)))
-			_, _ = w.Write(assetBytes)
-			return
-		}
-
-		// SPA fallback to index.html for client-side routes
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write(indexBytes)
-	})
+	mux.Handle("/", aegisapi.SPAHandler(webAssets, indexBytes, touch))
 
 	// Bind local port (try 38470 first, or any free port if busy)
 	ln, err := net.Listen("tcp", "127.0.0.1:38470")
@@ -1561,7 +1035,14 @@ func runHybridModernDesktopApp() bool {
 	}
 	appURL := fmt.Sprintf("http://%s/?v=0.5.4", ln.Addr().String())
 
-	srv := &http.Server{Handler: mux}
+	_, listenPort, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		_ = ln.Close()
+		return false
+	}
+	aegisapi.WriteTokenFile(appDir, apiToken)
+
+	srv := &http.Server{Handler: aegisapi.NewGuard(mux, apiToken, listenPort)}
 	go func() {
 		_ = srv.Serve(ln)
 	}()
@@ -1569,7 +1050,12 @@ func runHybridModernDesktopApp() bool {
 	// Wait until our HTTP server is 100% live and responding 200 OK before opening the window!
 	readyClient := &http.Client{Timeout: 200 * time.Millisecond}
 	for i := 0; i < 40; i++ {
-		if resp, err := readyClient.Get(fmt.Sprintf("http://%s/api/native/status", ln.Addr().String())); err == nil {
+		readyReq, reqErr := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s/api/native/status", ln.Addr().String()), nil)
+		if reqErr != nil {
+			break
+		}
+		readyReq.Header.Set(aegisapi.TokenHeader, apiToken)
+		if resp, err := readyClient.Do(readyReq); err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == 200 {
 				break
@@ -1582,18 +1068,11 @@ func runHybridModernDesktopApp() bool {
 	launchedWindow := false
 	browserExe := findAppBrowserExecutable()
 	if browserExe != "" {
-		profileDir := filepath.Join(appDir, "WebViewProfile_0_5_4")
+		profileDir := filepath.Join(appDir, appBrowserProfileDirName)
 		_ = os.MkdirAll(profileDir, 0755)
+		prepareAppBrowserProfile(profileDir)
 
-		cmd := exec.Command(
-			browserExe,
-			"--app="+appURL,
-			"--user-data-dir="+profileDir,
-			"--window-size=1500,940",
-			"--no-first-run",
-			"--no-default-browser-check",
-			"--disable-features=TranslateUI",
-		)
+		cmd := exec.Command(browserExe, appBrowserArgs(appURL, profileDir)...)
 		if err := cmd.Start(); err == nil {
 			launchedWindow = true
 			go func() {

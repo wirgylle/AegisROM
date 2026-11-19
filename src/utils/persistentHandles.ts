@@ -226,7 +226,7 @@ export function isDeadOrLocalBlobUrl(url?: string): boolean {
 }
 
 // ============================================================================
-// ASYNC INDEXEDDB MULTI-DATABASE VAULT (Supports 14,000+ ROMs without UI lag!)
+// ASYNC INDEXEDDB MULTI-DATABASE VAULT (large libraries without UI lag)
 // ============================================================================
 const DB_CACHE_IDB = 'AegisROM_DB_Cache_v05';
 const DB_CACHE_STORE = 'multi_dbs';

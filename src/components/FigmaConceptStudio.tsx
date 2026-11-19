@@ -91,6 +91,7 @@ const SHORT_COLLATOR = new Intl.Collator('en', { sensitivity: 'base', numeric: t
 import {
   collapseMultiDiscUnifiedRows,
 } from '../utils/multiDiscEngine';
+import { WorkbenchContextPanel, type HoveredTool } from './WorkbenchContextPanel';
 
 export interface MultiDiscEntry {
   id: string;
@@ -132,10 +133,10 @@ function sanitizeDatabasesForStorage<T extends { rows: UnifiedGameRow[] }>(dbs: 
 
 function persistDatabasesSafely<T extends { rows: UnifiedGameRow[] }>(dbs: T[]): void {
   const clean = sanitizeDatabasesForStorage(dbs);
-  // Always persist asynchronously to IndexedDB (supports 14,000+ ROMs cleanly without UI lag or 5MB localStorage limit)
+  // Always persist asynchronously to IndexedDB (handles large libraries without UI lag or the 5MB localStorage limit)
   void saveMultiDbsToIndexedDB(clean);
 
-  // Only mirror compact libraries to localStorage to avoid synchronous JSON.stringify blocking on 14k+ rows
+  // Only mirror compact libraries to localStorage to avoid synchronous JSON.stringify blocking on large libraries
   const totalRows = clean.reduce((sum, d) => sum + (d.rows?.length || 0), 0);
   if (totalRows <= 400) {
     try {
@@ -146,6 +147,10 @@ function persistDatabasesSafely<T extends { rows: UnifiedGameRow[] }>(dbs: T[]):
 
 export interface UnifiedGameRow {
   id: string;
+  // Откуда взято название: gamelist | factory | header | filename | index-strip | libretro-exact | libretro-fuzzy.
+  titleSource?: string;
+  // Почему настоящее название не найдено (пусто, если найдено).
+  titleNote?: string;
   title: string;
   oldFile: string;
   cleanFile: string;
@@ -198,6 +203,10 @@ interface FigmaConceptStudioProps {
   currentActionText?: string;
   pendingRestoreHandles?: Array<{ key: string; folderName: string }>;
   onRestoreSavedPermissions?: () => void;
+  /** Bumped by App when a library/scan folder becomes readable; re-resolves local media. */
+  mediaAccessVersion?: number;
+  /** True when App holds a granted library or scan folder handle. */
+  hasMediaFolderAccess?: boolean;
   onResolveMediaForDbRows?: (
     rows: UnifiedGameRow[],
     libraryPathHint?: string
@@ -568,6 +577,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   currentActionText = '',
   pendingRestoreHandles = [],
   onRestoreSavedPermissions,
+  mediaAccessVersion = 0,
+  hasMediaFolderAccess = false,
   onResolveMediaForDbRows,
   logs = [],
   onClearLogs,
@@ -871,7 +882,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   const [, startUiTransition] = useTransition();
   const deferredSearchQuery = useDeferredValue(searchQuery);
 
-  // Asynchronously restore large (14,000+ ROM) databases from IndexedDB without blocking first paint
+  // Asynchronously restore large databases from IndexedDB without blocking first paint
   useEffect(() => {
     let alive = true;
     loadMultiDbsFromIndexedDB().then((idbDbs) => {
@@ -1446,8 +1457,6 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     return filteredGames;
   }, [massFilter, enrichedGamesSource, checkedGameIds, filteredGames]);
 
-  const modeLabel = t(`header.viewFull.${selectedConcept}`);
-
   const modeShortCode = t(`header.viewShort.${selectedConcept}`);
 
   const handleSelectGame = useCallback((id: string) => {
@@ -1537,8 +1546,14 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   }, [isAnyProcessRunning]);
 
   // Automatically hydrate cover art & video previews for active DB when permissions are granted or DB is loaded
+  // A newly granted folder invalidates earlier attempts: they ran without local access.
+  const lastMediaAccessVersionRef = useRef(mediaAccessVersion);
   useEffect(() => {
     if (!activeDbEntry || activeDbEntry.rows.length === 0) return;
+    if (lastMediaAccessVersionRef.current !== mediaAccessVersion) {
+      lastMediaAccessVersionRef.current = mediaAccessVersion;
+      hydratedDbIdsRef.current.clear();
+    }
     if (pendingRestoreHandles.length === 0 && !hydratedDbIdsRef.current.has(activeDbEntry.id)) {
       const hasStaleOrMissing = activeDbEntry.rows.some(
         (r) => !r.boxArtUrl || isDeadOrLocalBlobUrl(r.boxArtUrl) || isDeadOrLocalBlobUrl(r.videoUrl)
@@ -1548,7 +1563,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         void hydrateDbRowsMedia(activeDbEntry.id, activeDbEntry.rows, activeDbEntry.pathHint);
       }
     }
-  }, [activeDbEntry?.id, pendingRestoreHandles.length]);
+  }, [activeDbEntry?.id, pendingRestoreHandles.length, mediaAccessVersion]);
 
   // Keep native desktop Go server alive via regular heartbeat while window is open
   useEffect(() => {
@@ -1582,6 +1597,56 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     ? simActionText || latestLogLine
     : currentActionText || simActionText || latestLogLine;
 
+  // Narrow windows (<1024px): the inspector slides over the content; open it when a game is picked.
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const inspectorSkipFirstRef = useRef(true);
+  useEffect(() => {
+    if (inspectorSkipFirstRef.current) {
+      inspectorSkipFirstRef.current = false;
+      return;
+    }
+    // Only the Library shows the game inspector; other sections select games without opening it.
+    if (previewTab === 'library') setInspectorOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedGameId]);
+  useEffect(() => {
+    setInspectorOpen(false);
+  }, [previewTab]);
+
+  // Tools: the right panel describes the tool under the pointer / keyboard focus.
+  const [hoveredTool, setHoveredTool] = useState<HoveredTool | null>(null);
+  useEffect(() => {
+    setHoveredTool(null);
+  }, [previewTab, toolsMode]);
+  const handleToolHover = (e: React.SyntheticEvent) => {
+    const el = (e.target as HTMLElement).closest?.('[data-tool]') as HTMLElement | null;
+    if (!el) return;
+    const id = el.dataset.tool || '';
+    if (hoveredTool?.id === id) return;
+    const label = (el.textContent || el.getAttribute('title') || '').trim();
+    setHoveredTool({ id, label });
+  };
+  const contextStats = React.useMemo(() => {
+    const consoles = new Set<string>();
+    let noCover = 0;
+    let multiDisc = 0;
+    for (const g of enrichedGamesSource) {
+      if (g.consoleShort) consoles.add(g.consoleShort.toUpperCase());
+      if (!g.boxArtUrl) noCover++;
+      if (g.isMultiDisc || (g.discs && g.discs.length > 1)) multiDisc++;
+    }
+    return { consoles: consoles.size, noCover, multiDisc };
+  }, [enrichedGamesSource]);
+  const showContextPanel = previewTab !== 'library';
+  useEffect(() => {
+    if (!inspectorOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setInspectorOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [inspectorOpen]);
+
   const handleCopyLogs = () => {
     navigator.clipboard.writeText(logs.join('\n')).catch(() => {});
     setCopiedLogs(true);
@@ -1593,75 +1658,23 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       {/* ==================================================================== */}
       {/* TOP BAR (Exact match to user screenshot + Journal & Install buttons) */}
       {/* ==================================================================== */}
-      <header className="bg-slate-900 dark:bg-slate-950 text-white px-4 py-2.5 flex items-center justify-between border-b border-slate-800 shrink-0 z-20">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <img src="/aegisrom-icon.png" alt="AegisROM" className="w-5 h-5 rounded-sm shrink-0" />
-          <span className="text-xs sm:text-sm font-bold tracking-tight truncate">
-            {APP_FULL_TITLE} — {modeLabel}
-          </span>
-          <span className="text-xs text-slate-400 hidden xl:inline truncate">
-            · {selectedFolderName || 'E:\\EASYROMS'} · {t('header.themeLabel')}: {isDarkMode ? t('header.themeDark') : t('header.themeLight')}
-          </span>
+      <header className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 px-4 h-12 flex items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 shrink-0 z-20">
+        <div className="flex items-center gap-2.5 min-w-0" title={APP_FULL_TITLE}>
+          <img src="/aegisrom-icon.png" alt="" className="w-6 h-6 rounded-md shrink-0" />
+          <span className="text-sm font-bold tracking-tight truncate">{APP_FULL_TITLE}</span>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
-          {/* View Mode Switcher */}
-          <div className="flex items-center gap-1 bg-slate-800 p-0.5 rounded-lg border border-slate-700">
-            <button
-              onClick={() => onSelectConcept('concept_a_sidebar')}
-              className={`px-2.5 py-1 rounded-md text-xs font-semibold transition cursor-pointer ${
-                selectedConcept === 'concept_a_sidebar'
-                  ? 'bg-blue-600 text-white shadow-2xs'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              {t('header.view.a')}
-            </button>
-            <button
-              onClick={() => onSelectConcept('concept_b_split')}
-              className={`px-2.5 py-1 rounded-md text-xs font-semibold transition cursor-pointer ${
-                selectedConcept === 'concept_b_split'
-                  ? 'bg-blue-600 text-white shadow-2xs'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              {t('header.view.b')}
-            </button>
-            <button
-              onClick={() => onSelectConcept('concept_c_workbench')}
-              className={`px-2.5 py-1 rounded-md text-xs font-semibold transition cursor-pointer ${
-                selectedConcept === 'concept_c_workbench'
-                  ? 'bg-blue-600 text-white shadow-2xs'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              {t('header.view.c')}
-            </button>
-          </div>
-
-          {/* Separate Journal Button in Header */}
-          <button
-            onClick={() => setIsLogModalOpen(true)}
-            title={t('status.journalTitle')}
-            className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition"
-          >
-            <ScrollText className="w-3.5 h-3.5 text-blue-400" />
-            <span className="hidden sm:inline">{t('header.journal')}</span>
-            <span className="px-1.5 py-0.2 bg-slate-700 rounded text-[10px] font-mono text-slate-300">
-              {logs.length}
-            </span>
-          </button>
-
+        <div className="flex items-center gap-1.5 shrink-0">
           {!isNativeDesktopHost && (
             <a
               href={DOWNLOAD_ZIP_URL}
               download={ZIP_PKG_FILENAME}
               onClick={() => onDownloadZip?.()}
-              title={ZIP_PKG_FILENAME}
-              className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition shadow-2xs"
+              title={`${t('header.downloadZip')} · ${ZIP_PKG_FILENAME}`}
+              className="h-8 px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition"
             >
-              <Archive className="w-3.5 h-3.5" />
-              <span>{t('header.downloadZip')}</span>
+              <Archive className="w-4 h-4" />
+              <span className="hidden xl:inline">{t('header.downloadZip')}</span>
             </a>
           )}
 
@@ -1670,26 +1683,26 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
               href={DOWNLOAD_SETUP_URL}
               download={SETUP_EXE_FILENAME}
               onClick={() => onDownloadExe?.()}
-              title={SETUP_EXE_FILENAME}
-              className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition shadow-2xs"
+              title={`${t('header.setupExe')} · ${SETUP_EXE_FILENAME}`}
+              className="h-8 px-2.5 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition"
             >
-              <Download className="w-3.5 h-3.5" />
-              <span>{t('header.setupExe')}</span>
+              <Download className="w-4 h-4" />
+              <span className="hidden xl:inline">{t('header.setupExe')}</span>
             </a>
           )}
 
           {/* System Language Switcher directly next to Theme Toggle */}
-          <div className="flex items-center gap-1 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-xs">
-            <Globe className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+          <div className="h-8 flex items-center gap-1 border border-slate-200 dark:border-slate-700 rounded-lg px-2 text-xs">
+            <Globe className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
             <select
               value={lang}
               onChange={(e) => setLang(e.target.value as SupportedLanguage)}
               title={t('header.langLabel')}
               aria-label={t('header.langLabel')}
-              className="bg-transparent text-slate-100 text-xs font-bold focus:outline-none cursor-pointer pr-0.5"
+              className="bg-transparent text-slate-800 dark:text-slate-100 text-xs font-semibold cursor-pointer pr-0.5 max-w-[9.5rem]"
             >
               {SUPPORTED_LANGUAGES.map((l) => (
-                <option key={l.code} value={l.code} className="bg-slate-900 text-slate-100">
+                <option key={l.code} value={l.code} className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">
                   {l.shortCode} · {l.nativeLabel}
                 </option>
               ))}
@@ -1699,14 +1712,11 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
           {/* Theme Switcher Button */}
           <button
             onClick={onToggleDarkMode}
-            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 flex items-center justify-center cursor-pointer transition"
+            className="w-8 h-8 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center cursor-pointer transition"
             title={isDarkMode ? t('header.themeLight') : t('header.themeDark')}
+            aria-label={isDarkMode ? t('header.themeLight') : t('header.themeDark')}
           >
-            {isDarkMode ? (
-              <Sun className="w-4 h-4 text-amber-400" />
-            ) : (
-              <Moon className="w-4 h-4 text-slate-200" />
-            )}
+            {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
           </button>
         </div>
       </header>
@@ -1720,67 +1730,16 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         className="hidden"
       />
 
-      {/* Top Navigation Bar when in Compact (B) or Editor (C) modes */}
-      {selectedConcept !== 'concept_a_sidebar' && (
-        <div className="px-5 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/90 flex flex-wrap items-center justify-between gap-3 shrink-0">
-          <div className="flex items-center gap-1.5">
-            {[
-              { id: 'library', label: `${t('nav.library')} (${enrichedGamesSource.length})`, icon: Database },
-              { id: 'tools', label: t('nav.tools'), icon: Wrench },
-              { id: 'builds', label: t('nav.builds'), icon: Share2 },
-              { id: 'env', label: t('nav.env'), icon: Gamepad2 },
-            ].map((tb) => {
-              const Icon = tb.icon;
-              const active = previewTab === tb.id;
-              return (
-                <button
-                  key={tb.id}
-                  onClick={() => setPreviewTab(tb.id as any)}
-                  className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                    active
-                      ? 'bg-blue-600 text-white shadow-2xs'
-                      : 'text-slate-700 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800'
-                  }`}
-                >
-                  <Icon className="w-3.5 h-3.5" />
-                  <span>{tb.label}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => openDbFileInputRef.current?.click()}
-              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-            >
-              <Database className="w-3.5 h-3.5" />
-              <span>{t('lib.openDb')}</span>
-            </button>
-            <button
-              onClick={handleSaveDatabaseToFile}
-              className="px-3 py-1.5 rounded-lg bg-slate-200/80 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-            >
-              <Download className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-              <span>{t('lib.saveDb')}</span>
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* ==================================================================== */}
       {/* MAIN 12-COLUMN WORKSPACE (Fills remaining height above status bar)   */}
       {/* ==================================================================== */}
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 min-h-0 overflow-hidden">
-        {/* LEFT COLUMN: Sidebar (Shown in Presentation View A and Compact View B) */}
-        {(selectedConcept === 'concept_a_sidebar' || selectedConcept === 'concept_b_split') && (
-          <aside className="lg:col-span-2 bg-slate-100/80 dark:bg-slate-950/60 border-r border-slate-200 dark:border-slate-800 p-4 flex flex-col min-h-0 overflow-hidden gap-4">
-            {selectedConcept === 'concept_a_sidebar' && (
-              <div className="shrink-0">
-                <div className="text-[11px] font-semibold text-slate-400 px-2.5 mb-1.5">
-                  {t('header.sections')}
-                </div>
-                <nav className="space-y-1">
+      <div className="aegis-shell flex-1">
+        {/* LEFT COLUMN: Sidebar — same in every view; collapses to an icon rail below 1280px */}
+        {(
+          <aside className="aegis-nav bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 px-3 py-3 flex flex-col min-h-0 overflow-hidden gap-4">
+            {(
+              <div className="aegis-nav-sections shrink-0">
+                <nav className="space-y-0.5" aria-label={t('header.sections')}>
                   {[
                     {
                       id: 'library',
@@ -1798,20 +1757,22 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       <button
                         key={tab.id}
                         onClick={() => setPreviewTab(tab.id as any)}
-                        className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
+                        title={tab.label}
+                        aria-current={active ? 'page' : undefined}
+                        className={`aegis-nav-item w-full flex items-center justify-between px-3 h-9 rounded-lg text-[13px] font-semibold transition-colors cursor-pointer ${
                           active
-                            ? 'bg-blue-600 text-white shadow-2xs'
-                            : 'text-slate-700 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800'
+                            ? 'bg-accent-soft text-accent dark:bg-accent-soft-dark dark:text-accent-dark'
+                            : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
                         }`}
                       >
                         <span className="flex items-center gap-2.5">
-                          <Icon className="w-4 h-4" />
-                          <span>{tab.label}</span>
+                          <Icon className="w-4 h-4 shrink-0" />
+                          <span className="aegis-nav-label">{tab.label}</span>
                         </span>
                         {tab.count && (
                           <span
-                            className={`font-mono text-[11px] tabular-nums ${
-                              active ? 'text-blue-100' : 'text-slate-400'
+                            className={`aegis-nav-count text-xs tabular-nums ${
+                              active ? 'text-accent dark:text-accent-dark' : 'text-slate-500 dark:text-slate-400'
                             }`}
                           >
                             {tab.count}
@@ -1825,15 +1786,15 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
             )}
 
             {/* DYNAMIC GROUPING & FILTERING OF ALL ROMS FOUND IN THE DATABASE (Full-height list) */}
-            <div className="flex-1 flex flex-col min-h-0">
-              <div className="flex items-center justify-between px-1 mb-1.5 shrink-0">
-                <span className="text-[11px] font-semibold text-slate-400">
-                  {t('cat.title')} ({dynamicSidebarGroups.length})
+            <div className="aegis-nav-cats flex-1 flex flex-col min-h-0 w-full">
+              <div className="flex items-center justify-between px-3 mb-1.5 shrink-0">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  {t('cat.title')}
                 </span>
               </div>
 
               {/* 4-Mode Grouping Switcher */}
-              <div className="grid grid-cols-2 gap-1 p-1 bg-slate-200/70 dark:bg-slate-900 rounded-lg mb-2 text-[10px] font-bold shrink-0">
+              <div className="grid grid-cols-2 gap-0.5 p-0.5 bg-slate-100 dark:bg-slate-800 rounded-lg mb-2 text-[11px] font-semibold shrink-0">
                 {[
                   { id: 'console', label: t('cat.byConsole') },
                   { id: 'bitness', label: t('cat.byBitness') },
@@ -1852,9 +1813,9 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         }
                       });
                     }}
-                    className={`py-1 px-1.5 rounded text-center cursor-pointer transition ${
+                    className={`py-1 px-1.5 rounded-md text-center cursor-pointer transition ${
                       sidebarGroupBy === mode.id
-                        ? 'bg-blue-600 text-white shadow-2xs'
+                        ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-2xs'
                         : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                     }`}
                   >
@@ -1873,10 +1834,10 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       }
                     });
                   }}
-                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
+                  className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-[13px] transition-colors cursor-pointer ${
                     activeSidebarFilterKey === 'ALL'
-                      ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 font-bold shadow-2xs'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+                      ? 'bg-accent-soft dark:bg-accent-soft-dark text-accent dark:text-accent-dark font-semibold'
+                      : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
                   }`}
                 >
                   <span className="truncate">
@@ -1888,7 +1849,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       ? t('cat.allGenre')
                       : t('cat.allAge')}
                   </span>
-                  <span className="font-mono text-[11px] text-slate-400 tabular-nums">
+                  <span className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">
                     {enrichedGamesSource.length}
                   </span>
                 </button>
@@ -1904,15 +1865,15 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         }
                       });
                     }}
-                    className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
+                    className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-[13px] transition-colors cursor-pointer ${
                       activeSidebarFilterKey === grp.key
-                        ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 font-bold shadow-2xs'
-                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+                        ? 'bg-accent-soft dark:bg-accent-soft-dark text-accent dark:text-accent-dark font-semibold'
+                        : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
                     }`}
                     title={grp.label}
                   >
                     <span className="truncate">{grp.label}</span>
-                    <span className="font-mono text-[11px] text-slate-400 tabular-nums ml-1.5">
+                    <span className="text-xs text-slate-500 dark:text-slate-400 tabular-nums ml-1.5">
                       {grp.count}
                     </span>
                   </button>
@@ -1925,9 +1886,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         {/* CENTER WORKSPACE COLUMN (Scrollable content area) */}
         <main
           ref={mainScrollRef}
-          className={`${
-            selectedConcept === 'concept_c_workbench' ? 'lg:col-span-8' : 'lg:col-span-6'
-          } p-5 border-r border-slate-200 dark:border-slate-800 overflow-y-auto space-y-3.5`}
+          className="min-w-0 min-h-0 p-5 bg-slate-50 dark:bg-slate-950 overflow-y-auto space-y-3.5"
         >
           {/* ============================================================ */}
           {/* TAB 1: БИБЛИОТЕКА (Чистое отображение ромов + Открыть/Сохранить БД + «+» в сборку) */}
@@ -1936,22 +1895,83 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
             <>
               <div className="flex flex-wrap items-center justify-between gap-2.5 pb-2.5 border-b border-slate-200 dark:border-slate-800">
                 <div>
-                  <h2 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
-                    {t('lib.title')} · {modeShortCode} ({filteredGames.length} {t('lib.gamesOf')} {enrichedGamesSource.length} {t('lib.gamesSuffix')})
+                  <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100 flex items-baseline gap-2 flex-wrap">
+                    <span>{t('lib.title')}</span>
+                    <span className="text-sm font-medium text-slate-500 dark:text-slate-400 tabular-nums">
+                      {filteredGames.length === enrichedGamesSource.length
+                        ? `${enrichedGamesSource.length} ${t('lib.gamesSuffix')}`
+                        : `${filteredGames.length} ${t('lib.gamesOf')} ${enrichedGamesSource.length} ${t('lib.gamesSuffix')}`}
+                    </span>
                   </h2>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 break-all">
                     {t('lib.activeDb')} <strong className="text-slate-700 dark:text-slate-200">{activeDbEntry?.name}</strong> · {t('lib.activePath')} <code className="font-mono">{effectiveLibraryPath}</code>
                   </p>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
+                  {/* Library view switcher (tiles / compact list / editor) */}
+                  <div
+                    className="flex items-center gap-0.5 p-0.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800"
+                    role="group"
+                    aria-label={t('header.viewLabel')}
+                  >
+                    {(
+                      [
+                        ['concept_a_sidebar', t('header.view.a')],
+                        ['concept_b_split', t('header.view.b')],
+                        ['concept_c_workbench', t('header.view.c')],
+                      ] as const
+                    ).map(([cid, label]) => (
+                      <button
+                        key={cid}
+                        type="button"
+                        onClick={() => onSelectConcept(cid)}
+                        aria-pressed={selectedConcept === cid}
+                        className={`h-7 px-2.5 rounded-md text-xs font-semibold transition cursor-pointer ${
+                          selectedConcept === cid
+                            ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-2xs'
+                            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Category filter: replaces the sidebar list when the sidebar is collapsed (<1280px) */}
+                  <select
+                    value={activeSidebarFilterKey}
+                    onChange={(e) => {
+                      const key = e.target.value;
+                      startUiTransition(() => setActiveSidebarFilterKey(key));
+                    }}
+                    aria-label={t('cat.title')}
+                    className="xl:hidden h-8 max-w-[14rem] bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 text-xs font-semibold text-slate-800 dark:text-slate-100"
+                  >
+                    <option value="ALL">
+                      {sidebarGroupBy === 'console'
+                        ? t('cat.allConsole')
+                        : sidebarGroupBy === 'bitness'
+                        ? t('cat.allBitness')
+                        : sidebarGroupBy === 'genre'
+                        ? t('cat.allGenre')
+                        : t('cat.allAge')}{' '}
+                      ({enrichedGamesSource.length})
+                    </option>
+                    {dynamicSidebarGroups.map((grp) => (
+                      <option key={grp.key} value={grp.key}>
+                        {grp.label} ({grp.count})
+                      </option>
+                    ))}
+                  </select>
+
                   {/* Sorting Dropdown */}
                   <div className="flex items-center gap-1.5 text-xs">
-                    <span className="text-slate-500 font-semibold">{t('lib.sort')}</span>
+                    <span className="text-slate-500 dark:text-slate-400 font-semibold">{t('lib.sort')}</span>
                     <select
                       value={librarySortBy}
                       onChange={(e) => setLibrarySortBy(e.target.value as any)}
-                      className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-800 dark:text-slate-100"
+                      className="h-8 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 text-xs font-semibold text-slate-800 dark:text-slate-100"
                     >
                       <option value="title">{t('lib.sort.title')}</option>
                       <option value="console">{t('lib.sort.console')}</option>
@@ -1969,14 +1989,14 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       placeholder={t('lib.searchPlaceholder')}
-                      className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600"
+                      className="w-full h-8 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg pl-8 pr-3 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
                     />
                   </div>
                 </div>
               </div>
 
               {/* 1-CLICK PERSISTENT PERMISSION RECOVERY BANNER */}
-              {pendingRestoreHandles.length > 0 && !isNativeDesktopHost && onRestoreSavedPermissions && (
+              {pendingRestoreHandles.length > 0 && onRestoreSavedPermissions && (
                 <div className="bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2.5">
                   <div className="text-xs text-amber-950 dark:text-amber-200 leading-snug min-w-0 flex-1">
                     <strong>🔓 {t('lib.restoreAccessTitle')} {pendingRestoreHandles.length}:</strong>{' '}
@@ -1987,17 +2007,46 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   <button
                     type="button"
                     onClick={onRestoreSavedPermissions}
-                    className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-extrabold cursor-pointer shrink-0 shadow-2xs"
+                    className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold cursor-pointer shrink-0 shadow-2xs"
                   >
                     🔓 {t('lib.restoreAccessBtn')}
                   </button>
+                  <div className="basis-full text-[11px] text-amber-900/80 dark:text-amber-300/80 leading-snug">
+                    {t('lib.restoreAccessHint')}
+                  </div>
                 </div>
               )}
 
+              {/* DB opened but no library folder is known: covers can't be read from disk */}
+              {pendingRestoreHandles.length === 0 &&
+                !hasMediaFolderAccess &&
+                onSelectLibraryPath &&
+                !isAnyProcessRunning &&
+                (activeDbEntry?.rows.length || 0) > 0 &&
+                activeDbEntry?.id !== 'db_master_full' &&
+                activeDbEntry?.id !== 'db_portable_retro' &&
+                activeDbEntry?.rows.some((r) => !r.boxArtUrl) && (
+                  <div className="bg-sky-50 dark:bg-sky-950/40 border border-sky-300 dark:border-sky-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2.5">
+                    <div className="text-xs text-sky-950 dark:text-sky-200 leading-snug min-w-0 flex-1">
+                      {t('lib.mediaFolderMissing')}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={onSelectLibraryPath}
+                      className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold cursor-pointer shrink-0 shadow-2xs"
+                    >
+                      📁 {t('lib.mediaFolderPickBtn')}
+                    </button>
+                  </div>
+                )}
+
               {/* CLEAN DATABASE FILE BAR (Switch DB + Open .json + Save .json ONLY) */}
-              <div className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 rounded-xl p-2.5 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-2 min-w-0 flex-1">
-                  <span className="text-xs font-extrabold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 shrink-0">
+              {/* Narrow: label/select stacked on the left, Open/Save stacked on the right, row by row.
+                  Wide: everything on one line. See .aegis-dbbar in index.css. */}
+              <div className="aegis-dbbar-wrap bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 rounded-xl p-2.5">
+               <div className="aegis-dbbar">
+                <div className="contents">
+                  <span className="aegis-dbbar-label text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 shrink-0">
                     <Database className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                     <span>{t('lib.activeDb')}</span>
                   </span>
@@ -2022,7 +2071,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         void hydrateDbRowsMedia(found.id, found.rows, found.pathHint);
                       }
                     }}
-                    className="bg-white dark:bg-slate-900 border border-blue-400 dark:border-blue-600 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-900 dark:text-slate-100 min-w-[220px] max-w-full"
+                    className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 h-8 text-xs font-semibold text-slate-900 dark:text-slate-100 aegis-dbbar-select min-w-0 w-full"
                   >
                     {savedDatabases.map((db) => {
                       const displayName =
@@ -2040,11 +2089,11 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   </select>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-1.5">
+                <div className="contents">
                   <button
                     onClick={() => openDbFileInputRef.current?.click()}
                     disabled={activeRunning}
-                    className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition shadow-2xs disabled:opacity-50"
+                    className="aegis-dbbar-open h-8 px-2.5 rounded-lg bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition disabled:opacity-50"
                   >
                     <FolderOpen className="w-3.5 h-3.5 shrink-0" />
                     <span>{t('lib.openDb')}</span>
@@ -2053,12 +2102,13 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   <button
                     onClick={handleSaveDatabaseToFile}
                     disabled={activeRunning}
-                    className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition disabled:opacity-50"
+                    className="aegis-dbbar-save h-8 px-2.5 rounded-lg bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition disabled:opacity-50"
                   >
-                    <Download className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
+                    <Download className="w-3.5 h-3.5 shrink-0" />
                     <span>{t('lib.saveDb')}</span>
                   </button>
                 </div>
+               </div>
               </div>
 
               {/* VIRTUALIZED + BUFFERED VIEWS WITH «+» ADD-TO-BUILD BUTTON */}
@@ -2082,11 +2132,11 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
           {/* TAB 2: ИНСТРУМЕНТЫ (3 Sub-Tabs: Библиотека | Флешка/Папка | Комбайн) */}
           {/* ============================================================ */}
           {previewTab === 'tools' && (
-            <div className="space-y-4">
+            <div className="space-y-4" onMouseOver={handleToolHover} onFocus={handleToolHover}>
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
                 <div>
-                  <h2 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
-                    {t('tools.title')} · {modeShortCode}
+                  <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                    {t('tools.title')}
                   </h2>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                     {t('tools.subtitle')}
@@ -2136,7 +2186,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   <div className="bg-slate-50/80 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl p-3.5 space-y-2.5 text-xs">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="min-w-0 flex-1">
-                        <div className="font-extrabold text-slate-900 dark:text-slate-100">
+                        <div className="font-semibold text-slate-900 dark:text-slate-100">
                           {t('tools.lib.locationTitle')}
                         </div>
                         <div className="text-[11px] font-mono text-blue-700 dark:text-blue-400 truncate mt-0.5">
@@ -2144,7 +2194,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <button
+                        <button data-tool="importDb"
                           type="button"
                           onClick={() => onImportLibrary?.()}
                           disabled={activeRunning}
@@ -2153,7 +2203,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                           <Upload className="w-3.5 h-3.5 text-indigo-600" />
                           <span>{t('tools.lib.importDbXml')}</span>
                         </button>
-                        <button
+                        <button data-tool="exportDb"
                           type="button"
                           onClick={() => onExportLibrary?.()}
                           disabled={activeRunning}
@@ -2166,31 +2216,31 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      <button
+                      <button data-tool="pickLibrary"
                         type="button"
                         onClick={onSelectLibraryPath || onSelectAndScanFolder}
                         disabled={activeRunning}
-                        className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 px-3 py-2 rounded-lg font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
                       >
                         <FolderInput className="w-3.5 h-3.5 shrink-0" />
                         <span>{t('tools.lib.pickLocation')}</span>
                       </button>
 
-                      <button
+                      <button data-tool="fullScan"
                         type="button"
                         onClick={onSelectAndScanFolder}
                         disabled={activeRunning}
-                        className="px-3 py-2 rounded-lg bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 text-white font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 px-3 py-2 rounded-lg font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
                       >
                         <FolderOpen className="w-3.5 h-3.5 shrink-0" />
                         <span>{t('tools.lib.fullScan')}</span>
                       </button>
 
-                      <button
+                      <button data-tool="addFolder"
                         type="button"
                         onClick={onAddFolderToLibrary || onSelectAndScanFolder}
                         disabled={activeRunning}
-                        className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 px-3 py-2 rounded-lg font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
                       >
                         <Plus className="w-3.5 h-3.5 shrink-0" />
                         <span>{t('tools.lib.addFolder')}</span>
@@ -2201,7 +2251,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   {/* Smart Media Scraper Banner (~1.5KB placeholder check) */}
                   <div className="bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/70 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
                     <div className="min-w-0 flex-1 space-y-0.5">
-                      <div className="font-extrabold text-emerald-950 dark:text-emerald-200 flex items-center gap-1.5">
+                      <div className="font-semibold text-emerald-950 dark:text-emerald-200 flex items-center gap-1.5">
                         <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
                         <span>{t('tools.lib.scraperTitle')}</span>
                       </div>
@@ -2209,7 +2259,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         {t('tools.lib.scraperDesc')}
                       </p>
                     </div>
-                    <button
+                    <button data-tool="scraper"
                       type="button"
                       onClick={() => {
                         if (scannedRows.length > 0 && onScrapeMedia) {
@@ -2226,7 +2276,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         }
                       }}
                       disabled={activeRunning}
-                      className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold flex items-center gap-1.5 cursor-pointer shadow-2xs disabled:opacity-50 shrink-0"
+                      className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 px-3.5 py-2 rounded-xl font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0"
                     >
                       <Sparkles className="w-3.5 h-3.5 shrink-0" />
                       <span>{t('tools.lib.runScraper')}</span>
@@ -2235,7 +2285,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
 
                   {/* Core Library Action Grid: 1G1R, Online Rename, XML Rename, Phantom Cleanup, Multi-Disc .M3U */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
-                    <button
+                    <button data-tool="g1r"
                       type="button"
                       onClick={() => {
                         if (scannedRows.length > 0 && onOrganizeCatalog) {
@@ -2249,13 +2299,13 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         }
                       }}
                       disabled={activeRunning}
-                      className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold cursor-pointer disabled:opacity-50"
+                      className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 font-semibold cursor-pointer disabled:opacity-50"
                     >
                       <Layers className="w-4 h-4 shrink-0" />
                       <span>{t('tools.lib.run1G1R')}</span>
                     </button>
 
-                    <button
+                    <button data-tool="onlineRename"
                       type="button"
                       onClick={() => {
                         if (scannedRows.length > 0 && onOnlineRename) {
@@ -2269,18 +2319,18 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         }
                       }}
                       disabled={activeRunning}
-                      className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold cursor-pointer disabled:opacity-50"
+                      className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 flex items-center gap-2 px-3.5 py-2.5 rounded-xl font-bold cursor-pointer disabled:opacity-50"
                     >
                       <Globe className="w-4 h-4 shrink-0" />
                       <span>{t('tools.lib.onlineRename')}</span>
                     </button>
 
                     <div className="flex items-center gap-1.5">
-                      <button
+                      <button data-tool="xmlRename"
                         type="button"
                         onClick={onOpenXmlModal}
                         disabled={activeRunning}
-                        className="flex-1 flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold cursor-pointer disabled:opacity-50"
+                        className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 flex-1 flex items-center gap-2 px-3.5 py-2.5 rounded-xl font-bold cursor-pointer disabled:opacity-50"
                       >
                         <FileCode2 className="w-4 h-4 shrink-0" />
                         <span className="truncate">{t('tools.lib.xmlRename')}</span>
@@ -2295,7 +2345,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       </button>
                     </div>
 
-                    <button
+                    <button data-tool="cleanup"
                       type="button"
                       onClick={() => {
                         if (scannedRows.length > 0 && onScanPhantomFolders) {
@@ -2314,7 +2364,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       <span>{t('tools.lib.cleanupPhantom')}</span>
                     </button>
 
-                    <button
+                    <button data-tool="multiDisc"
                       type="button"
                       onClick={() => {
                         if (scannedRows.length > 0 && onGroupMultiDiscFolders) {
@@ -2345,7 +2395,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   </div>
 
                   {canUndo && onUndo && (
-                    <button
+                    <button data-tool="undo"
                       onClick={onUndo}
                       className="w-full py-2 px-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-800 dark:text-slate-200 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
                     >
@@ -2370,14 +2420,14 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   <div className="space-y-3 bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 rounded-xl p-4 text-xs">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <div className="font-extrabold text-slate-900 dark:text-slate-100">
+                        <div className="font-semibold text-slate-900 dark:text-slate-100">
                           {t('tools.lib.sortRulesTitle')}
                         </div>
                         <div className="text-[11px] font-mono text-blue-700 dark:text-blue-400 truncate">
                           📁 {sortTargetFolderName || selectedFolderName || effectiveLibraryPath}
                         </div>
                       </div>
-                      <button
+                      <button data-tool="pickLibrary"
                         type="button"
                         onClick={onSelectSortTargetFolder}
                         disabled={activeRunning}
@@ -2460,11 +2510,11 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       </label>
                     </div>
 
-                    <button
+                    <button data-tool="applySort"
                       type="button"
                       onClick={() => onApplySortRulesInFolder?.(renameOnSortRules)}
                       disabled={activeRunning}
-                      className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs flex items-center justify-center gap-2 cursor-pointer shadow-xs disabled:opacity-50"
+                      className="bg-accent hover:bg-accent-hover text-white w-full py-2.5 px-4 rounded-xl font-semibold text-xs flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                     >
                       <CheckCircle2 className="w-4 h-4 shrink-0" />
                       <span>
@@ -2482,38 +2532,38 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                 <div className="space-y-4 text-xs">
                   {/* SD Card / Folder Location + Scan + Diff Sync */}
                   <div className="bg-slate-50/80 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl p-3.5 space-y-2.5">
-                    <div className="font-extrabold text-slate-900 dark:text-slate-100">
+                    <div className="font-semibold text-slate-900 dark:text-slate-100">
                       {t('tools.sd.locationTitle')}
                     </div>
                     <div className="text-[11px] font-mono text-amber-700 dark:text-amber-400 truncate bg-white dark:bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
                       💾 {sdTargetFolderName || selectedFolderName || 'EASYROMS (E:\\)'}
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      <button
+                      <button data-tool="sdPick"
                         type="button"
                         onClick={onSelectSdFolder || onSelectAndScanFolder}
                         disabled={activeRunning}
-                        className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 px-3 py-2 rounded-lg font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
                       >
                         <FolderInput className="w-3.5 h-3.5 shrink-0" />
                         <span>{t('tools.sd.pickLocation')}</span>
                       </button>
 
-                      <button
+                      <button data-tool="sdScan"
                         type="button"
                         onClick={onScanSdFolder || onSelectAndScanFolder}
                         disabled={activeRunning}
-                        className="px-3 py-2 rounded-lg bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 text-white font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        className="bg-accent hover:bg-accent-hover text-white px-3 py-2 rounded-lg font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
                       >
                         <FolderOpen className="w-3.5 h-3.5 shrink-0" />
                         <span>{t('tools.sd.scanBtn')}</span>
                       </button>
 
-                      <button
+                      <button data-tool="sdDiff"
                         type="button"
                         onClick={() => setLibrarySyncModalOpen(true)}
                         disabled={activeRunning}
-                        className="px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        className="px-3 py-2 rounded-lg bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 font-semibold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
                       >
                         <GitCompare className="w-3.5 h-3.5 shrink-0" />
                         <span>{t('tools.sd.diffSyncBtn')}</span>
@@ -2523,7 +2573,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
 
                   {/* SD Card Maintenance Tools Grid */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    <button
+                    <button data-tool="scraper"
                       type="button"
                       onClick={() => {
                         if (scannedRows.length > 0 && onScrapeMedia) {
@@ -2536,13 +2586,13 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         }
                       }}
                       disabled={activeRunning}
-                      className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold cursor-pointer disabled:opacity-50"
+                      className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 flex items-center gap-2 px-3.5 py-2.5 rounded-xl font-bold cursor-pointer disabled:opacity-50"
                     >
                       <Sparkles className="w-4 h-4 shrink-0" />
                       <span>{t('tools.sd.scraperBtn')}</span>
                     </button>
 
-                    <button
+                    <button data-tool="g1r"
                       type="button"
                       onClick={() => {
                         if (scannedRows.length > 0 && onOrganizeCatalog) {
@@ -2555,13 +2605,13 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         }
                       }}
                       disabled={activeRunning}
-                      className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold cursor-pointer disabled:opacity-50"
+                      className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 font-semibold cursor-pointer disabled:opacity-50"
                     >
                       <Layers className="w-4 h-4 shrink-0" />
                       <span>{t('tools.sd.dedupBtn')}</span>
                     </button>
 
-                    <button
+                    <button data-tool="onlineRename"
                       type="button"
                       onClick={() => {
                         if (scannedRows.length > 0 && onOnlineRename) {
@@ -2573,23 +2623,23 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         }
                       }}
                       disabled={activeRunning}
-                      className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold cursor-pointer disabled:opacity-50"
+                      className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 flex items-center gap-2 px-3.5 py-2.5 rounded-xl font-bold cursor-pointer disabled:opacity-50"
                     >
                       <Globe className="w-4 h-4 shrink-0" />
                       <span>{t('tools.sd.onlineRenameBtn')}</span>
                     </button>
 
-                    <button
+                    <button data-tool="xmlRename"
                       type="button"
                       onClick={onOpenXmlModal}
                       disabled={activeRunning}
-                      className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold cursor-pointer disabled:opacity-50"
+                      className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 flex items-center gap-2 px-3.5 py-2.5 rounded-xl font-bold cursor-pointer disabled:opacity-50"
                     >
                       <FileCode2 className="w-4 h-4 shrink-0" />
                       <span>{t('tools.sd.xmlRenameBtn')}</span>
                     </button>
 
-                    <button
+                    <button data-tool="cleanup"
                       type="button"
                       onClick={() => {
                         if (scannedRows.length > 0 && onScanPhantomFolders) {
@@ -2610,7 +2660,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
 
                   {/* Multi-Console SD Card Repair Card */}
                   <div className="bg-amber-50/70 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded-xl p-4 space-y-3">
-                    <div className="font-extrabold text-amber-950 dark:text-amber-200 flex items-center gap-2">
+                    <div className="font-semibold text-amber-950 dark:text-amber-200 flex items-center gap-2">
                       <Wrench className="w-4 h-4 text-amber-600 shrink-0" />
                       <span>{t('tools.sd.repairTitle')}</span>
                     </div>
@@ -2633,7 +2683,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       </select>
                     </div>
 
-                    <button
+                    <button data-tool="sdRepair"
                       type="button"
                       onClick={() => {
                         if (onRepairSdCard && (scannedRows.length > 0 || sdTargetFolderName)) {
@@ -2647,7 +2697,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         }
                       }}
                       disabled={activeRunning}
-                      className="w-full py-2.5 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-extrabold flex items-center justify-center gap-2 cursor-pointer shadow-xs disabled:opacity-50"
+                      className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 w-full py-2.5 px-4 rounded-xl font-semibold flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                     >
                       <Wrench className="w-4 h-4 shrink-0" />
                       <span>{t('tools.sd.repairBtn')}</span>
@@ -2662,8 +2712,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
               {toolsMode === 'combine' && (
                 <div className="space-y-4">
                   {/* Clear human explanation */}
-                  <div className="bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-xl p-3.5 text-xs space-y-1">
-                    <div className="text-sm font-extrabold text-blue-950 dark:text-blue-200">
+                  <div className="bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-xl p-3.5 text-xs space-y-1 aegis-ctx-inline">
+                    <div className="text-sm font-semibold text-blue-950 dark:text-blue-200">
                       {t('tools.comb.bufferTitle')}
                     </div>
                     <p className="text-blue-900/80 dark:text-blue-300/90 leading-relaxed">
@@ -2674,7 +2724,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   {/* Step 1: Buffer & Target Folder Pickers */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
                     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
-                      <div className="font-extrabold text-slate-800 dark:text-slate-200">
+                      <div className="font-semibold text-slate-800 dark:text-slate-200">
                         {t('tools.comb.bufferFromLabel')}
                       </div>
                       <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 truncate bg-slate-50 dark:bg-slate-800 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
@@ -2682,11 +2732,11 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                           ? `📥 ${bufferFolderName} (${bufferPreviewItems.length})`
                           : '—'}
                       </div>
-                      <button
+                      <button data-tool="bufferPick"
                         type="button"
                         onClick={onSelectBufferFolder}
                         disabled={activeRunning}
-                        className="w-full py-2 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 w-full py-2 px-3 rounded-lg font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
                       >
                         <FolderInput className="w-3.5 h-3.5" />
                         <span>{t('tools.comb.bufferPick')}</span>
@@ -2694,17 +2744,17 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     </div>
 
                     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
-                      <div className="font-extrabold text-slate-800 dark:text-slate-200">
+                      <div className="font-semibold text-slate-800 dark:text-slate-200">
                         {t('tools.comb.targetToLabel')}
                       </div>
                       <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 truncate bg-slate-50 dark:bg-slate-800 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
                         📁 {combineTargetFolderName || effectiveLibraryPath}
                       </div>
-                      <button
+                      <button data-tool="targetPick"
                         type="button"
                         onClick={onSelectCombineTargetFolder}
                         disabled={activeRunning}
-                        className="w-full py-2 px-3 rounded-lg bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 dark:hover:bg-slate-600 text-white font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 w-full py-2 px-3 rounded-lg font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
                       >
                         <FolderOpen className="w-3.5 h-3.5" />
                         <span>{t('tools.comb.targetPick')}</span>
@@ -2791,7 +2841,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   {/* Step 4: Live Preview & Action Buttons */}
                   <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900">
                     <div className="bg-slate-50 dark:bg-slate-800/80 px-3.5 py-2 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs">
-                      <span className="font-extrabold text-slate-800 dark:text-slate-200">
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">
                         {t('tools.comb.previewTitle')} ({bufferPreviewItems.length})
                       </span>
                       <span className="text-[11px] font-mono text-slate-500">
@@ -2833,11 +2883,11 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2.5">
-                    <button
+                    <button data-tool="runBuffer"
                       type="button"
                       onClick={() => onRunBufferAutoProcess?.()}
                       disabled={activeRunning}
-                      className="flex-1 min-w-[240px] py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold flex items-center justify-center gap-2 cursor-pointer shadow-xs disabled:opacity-50"
+                      className="bg-accent hover:bg-accent-hover text-white flex-1 min-w-[240px] py-2.5 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                     >
                       <Play className="w-4 h-4 fill-white shrink-0" />
                       <span>{t('tools.comb.runBuffer')}</span>
@@ -2859,7 +2909,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   {/* ======================================================== */}
                   <div className="bg-slate-50/80 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 rounded-xl p-4 space-y-3 text-xs">
                     <div>
-                      <div className="font-extrabold text-slate-900 dark:text-slate-100 flex items-center gap-2 text-sm">
+                      <div className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2 text-sm">
                         <Scissors className="w-4 h-4 text-rose-600 shrink-0" />
                         <span>{t('tools.comb.massTitle')}</span>
                       </div>
@@ -2957,7 +3007,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                                 onAddLog?.(`🗑 ${tf('tools.comb.deletedLog', { count: ids.length })}`);
                               }
                             }}
-                            className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-extrabold cursor-pointer"
+                            className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-semibold cursor-pointer"
                           >
                             {tf('tools.comb.confirmDeleteBtn', { count: massMatchedGames.length })}
                           </button>
@@ -2973,7 +3023,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     )}
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      <button
+                      <button data-tool="massDelete"
                         type="button"
                         disabled={activeRunning || massMatchedGames.length === 0}
                         onClick={() => setConfirmMassDelete(true)}
@@ -2983,7 +3033,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         <span>{t('tools.comb.massDeleteBtn')} ({massMatchedGames.length})</span>
                       </button>
 
-                      <button
+                      <button data-tool="massMove"
                         type="button"
                         disabled={activeRunning || massMatchedGames.length === 0}
                         onClick={() => {
@@ -3000,13 +3050,13 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                             );
                           }
                         }}
-                        className="py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40"
+                        className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 py-2 px-3 rounded-xl font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40"
                       >
                         <FolderInput className="w-3.5 h-3.5 shrink-0" />
                         <span>{t('tools.comb.massMoveBtn')} ({massMatchedGames.length})</span>
                       </button>
 
-                      <button
+                      <button data-tool="massSplit"
                         type="button"
                         disabled={activeRunning}
                         onClick={() => {
@@ -3022,7 +3072,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                             );
                           }
                         }}
-                        className="py-2 px-3 rounded-xl bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 text-white font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40"
+                        className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 py-2 px-3 rounded-xl font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40"
                       >
                         <Scissors className="w-3.5 h-3.5 shrink-0" />
                         <span>{t('tools.comb.massSplitBtn')}</span>
@@ -3088,8 +3138,44 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         </main>
 
         {/* RIGHT COLUMN: GAME INSPECTOR WITH COVER ART + HOVER VIDEO PREVIEW */}
-        <aside className="lg:col-span-4 p-5 bg-slate-50/70 dark:bg-slate-950/50 flex flex-col justify-between overflow-y-auto">
-          {selectedGame && (() => {
+        <div
+          className="aegis-insp-backdrop absolute inset-0 z-30 bg-slate-900/30"
+          data-open={inspectorOpen}
+          onClick={() => setInspectorOpen(false)}
+          aria-hidden="true"
+        />
+        <aside
+          className="aegis-insp min-w-0 p-5 bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 flex flex-col justify-between gap-4 overflow-y-auto"
+          data-open={inspectorOpen}
+          data-ctx={showContextPanel}
+          aria-label={showContextPanel ? t('ctx.panelLabel') : t('insp.header')}
+        >
+          {showContextPanel && (
+            <WorkbenchContextPanel
+              section={previewTab as 'tools' | 'builds' | 'env'}
+              toolsMode={toolsMode}
+              hoveredTool={hoveredTool}
+              gameCount={enrichedGamesSource.length}
+              consoleCount={contextStats.consoles}
+              noCoverCount={contextStats.noCover}
+              multiDiscCount={contextStats.multiDisc}
+              libraryPath={effectiveLibraryPath}
+              sdFolderName={sdTargetFolderName || selectedFolderName || ''}
+              bufferFolderName={bufferFolderName}
+              bufferItemCount={bufferPreviewItems.length}
+              savedBuilds={savedBuilds}
+              buildPortCount={portMasterBuildSlugs.length}
+              assignedEmulatorCount={Object.keys(starredEmulatorsByConsole || {}).length}
+              customExeCount={Object.values(emulatorCustomPaths || {}).filter(Boolean).length}
+              portCatalogCount={portMasterCatalog.length}
+              libraryPortCount={libraryPortSlugs.length}
+              running={activeRunning}
+              progressPct={activePct}
+              statusText={statusLineText}
+              logs={logs}
+            />
+          )}
+          {!showContextPanel && selectedGame && (() => {
             const resolvedEmu = resolvePriorityEmulatorForConsole(
               selectedGame.consoleShort,
               emulatorCustomPaths,
@@ -3203,16 +3289,22 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
             return (
               <>
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
-                      {t('insp.header')}
-                    </span>
-                    <span className="text-[11px] font-mono text-blue-600 dark:text-blue-400 font-semibold">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 rounded-md px-2 py-0.5">
                       {selectedGame.consoleShort} · {selectedGame.bitness}
                       {hasMultiDisc && selectedGame.discs
                         ? ` · ${tf('lib.multiDiscCount', { count: selectedGame.discs.length })}`
                         : ''}
                     </span>
+                    <button
+                      type="button"
+                      onClick={() => setInspectorOpen(false)}
+                      className="lg:hidden w-8 h-8 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 flex items-center justify-center cursor-pointer"
+                      title={t('status.close')}
+                      aria-label={t('status.close')}
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
                   </div>
 
                   {/* Cover Art that plays Short Gameplay Video on Hover! */}
@@ -3227,7 +3319,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   />
 
                   <div>
-                    <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
+                    <h3 className="text-lg font-bold leading-snug text-slate-900 dark:text-slate-100">
                       {selectedGame.title}
                     </h3>
                     <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
@@ -3251,6 +3343,22 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         {activeDiscObj ? activeDiscObj.cleanFile : selectedGame.cleanFile}
                       </span>
                     </div>
+                    {selectedGame.titleSource && (
+                      <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800 gap-2">
+                        <span className="text-slate-500 dark:text-slate-400 shrink-0">{t('insp.titleSource')}</span>
+                        <span className="text-slate-900 dark:text-slate-100 truncate">
+                          {t(`title.src.${selectedGame.titleSource}`, selectedGame.titleSource)}
+                        </span>
+                      </div>
+                    )}
+                    {selectedGame.titleNote && (
+                      <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800 gap-2">
+                        <span className="text-slate-500 dark:text-slate-400 shrink-0">{t('insp.titleNote')}</span>
+                        <span className="text-amber-600 dark:text-amber-400 text-right" title={selectedGame.titleNote}>
+                          {selectedGame.titleNote}
+                        </span>
+                      </div>
+                    )}
                     <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800 gap-2">
                       <span className="text-slate-500 dark:text-slate-400 shrink-0">{t('insp.priorityEmu')}</span>
                       <span className="font-bold text-blue-600 dark:text-blue-400 truncate" title={resolvedEmu.exePath}>
@@ -3269,7 +3377,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   {hasMultiDisc && selectedGame.discs && (
                     <div className="bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/80 rounded-xl p-3 space-y-2 text-xs">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="font-extrabold text-indigo-950 dark:text-indigo-200">
+                        <span className="font-semibold text-indigo-950 dark:text-indigo-200">
                           💿 {t('insp.multiDiscTitle')} ({tf('lib.multiDiscCount', { count: selectedGame.discs.length })})
                         </span>
                         <button
@@ -3335,7 +3443,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     );
                     return (
                       <div className="bg-emerald-50/70 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3 space-y-2 text-xs">
-                        <div className="font-extrabold text-emerald-900 dark:text-emerald-200">
+                        <div className="font-semibold text-emerald-900 dark:text-emerald-200">
                           🧪 {t('insp.pmTestTitle')} {pcPlan.emulatorDisplayName}
                         </div>
                         <div className="text-[11px] text-emerald-800 dark:text-emerald-300 leading-relaxed">
@@ -3363,7 +3471,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                                 })}`
                               );
                             }}
-                            className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] cursor-pointer"
+                            className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 px-2.5 py-1.5 rounded-lg font-bold text-[11px] cursor-pointer"
                           >
                             📜 {t('insp.pmDownloadCmd')}
                           </button>
@@ -3380,16 +3488,19 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   })()}
                 </div>
 
-                <div className="flex items-center gap-2 mt-4">
+                <div className="flex flex-wrap items-stretch gap-2">
                   <button
                     onClick={handleLaunchGame}
-                    className="flex-1 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold flex items-center justify-center gap-2 cursor-pointer shadow-xs transition"
+                    title={
+                      isNativeDesktopHost
+                        ? `${t('insp.launchNative')} «${selectedGame.title}» (${activeEmuName})`
+                        : `${t('insp.launchCmd')}: ${selectedGame.title}`
+                    }
+                    className="flex-1 min-w-[12rem] h-10 px-4 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm font-semibold flex items-center justify-center gap-2 cursor-pointer transition"
                   >
                     <Play className="w-4 h-4 fill-white shrink-0" />
                     <span className="truncate">
-                      {isNativeDesktopHost
-                        ? `${t('insp.launchNative')} «${selectedGame.title}» (${activeEmuName})`
-                        : `${t('insp.launchCmd')}: ${selectedGame.title}`}
+                      {isNativeDesktopHost ? t('insp.launchNative') : t('insp.launchCmd')}
                     </span>
                   </button>
 
@@ -3400,7 +3511,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       setNewBuildNameInput('');
                     }}
                     title={t('lib.addToBuild')}
-                    className="py-3 px-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold flex items-center gap-1.5 cursor-pointer shadow-xs transition shrink-0"
+                    className="h-10 px-3.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-100 text-sm font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition"
                   >
                     <Plus className="w-4 h-4" />
                     <span>{t('lib.addToBuild')}</span>
@@ -3417,7 +3528,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       {/* ("снизу одной строкой показывать текущее действие и в этой же строке */}
       {/*  заполнение цветом прогресса всего задания")                         */}
       {/* ==================================================================== */}
-      <footer className="relative h-11 border-t border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-950 px-4 flex items-center justify-between gap-4 overflow-hidden shrink-0 z-20">
+      <footer className="relative h-10 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 flex items-center justify-between gap-4 overflow-hidden shrink-0 z-20">
         {/* Background Color Fill of the Entire Task Progress inside the same single row */}
         <div
           className={`absolute inset-y-0 left-0 pointer-events-none transition-all duration-200 ${
@@ -3439,7 +3550,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         {/* Foreground Single-Line Current Action Text */}
         <div className="relative z-10 flex items-center gap-2.5 min-w-0 flex-1 text-xs">
           {activeRunning ? (
-            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-blue-600 text-white font-mono font-extrabold text-[11px] shrink-0 shadow-2xs">
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-blue-600 text-white font-mono font-semibold text-[11px] shrink-0 shadow-2xs">
               <RefreshCw className="w-3 h-3 animate-spin" />
               <span>{activePct}%</span>
             </span>
@@ -3451,7 +3562,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
           )}
 
           <div
-            className="font-mono text-slate-800 dark:text-slate-200 truncate font-medium"
+            className="text-slate-600 dark:text-slate-300 truncate"
             title={statusLineText}
           >
             {statusLineText}
@@ -3463,24 +3574,23 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
           <button
             onClick={() => setIsLogModalOpen(true)}
             title={t('status.journalTitle')}
-            className="px-3 py-1.5 rounded-lg bg-white dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs flex items-center gap-1.5 cursor-pointer transition"
+            className="h-7 px-2.5 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold text-xs flex items-center gap-1.5 cursor-pointer transition"
           >
-            <ScrollText className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+            <ScrollText className="w-3.5 h-3.5" />
             <span>{t('header.journal')} ({logs.length})</span>
           </button>
 
-          <button
-            onClick={handleStopAll}
-            title={t('status.stop')}
-            className={`px-3.5 py-1.5 rounded-lg font-extrabold text-xs flex items-center gap-1.5 cursor-pointer transition ${
-              activeRunning
-                ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-sm animate-pulse'
-                : 'bg-rose-600 hover:bg-rose-700 text-white'
-            }`}
-          >
-            <OctagonX className="w-3.5 h-3.5" />
-            <span>⏹ {t('status.stop')}</span>
-          </button>
+          {/* STOP is shown only while a task is running, so red keeps meaning "something is happening" */}
+          {activeRunning && (
+            <button
+              onClick={handleStopAll}
+              title={t('status.stop')}
+              className="h-7 px-3 rounded-md bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs flex items-center gap-1.5 cursor-pointer transition"
+            >
+              <OctagonX className="w-3.5 h-3.5" />
+              <span>{t('status.stop')}</span>
+            </button>
+          )}
         </div>
       </footer>
 
@@ -3492,7 +3602,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
           <div className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-2xl max-w-lg w-full p-5 space-y-4 shadow-2xl">
             <div className="flex items-start justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
               <div>
-                <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
+                <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
                   {t('buildModal.title')}
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
@@ -3515,7 +3625,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
             )}
 
             <div className="space-y-2">
-              <div className="text-xs font-extrabold text-slate-700 dark:text-slate-300">
+              <div className="text-xs font-semibold text-slate-700 dark:text-slate-300">
                 {t('buildModal.existing')} ({savedBuilds.length})
               </div>
               {savedBuilds.length === 0 ? (
@@ -3552,7 +3662,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                           className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 shrink-0 transition ${
                             alreadyIn
                               ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 cursor-default'
-                              : 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'
+                              : 'bg-blue-600 cursor-pointer'
                           }`}
                         >
                           {alreadyIn ? (
@@ -3575,7 +3685,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
             </div>
 
             <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-2">
-              <div className="text-xs font-extrabold text-slate-700 dark:text-slate-300">
+              <div className="text-xs font-semibold text-slate-700 dark:text-slate-300">
                 {t('buildModal.newTitle')}
               </div>
               <div className="flex items-center gap-2">
@@ -3595,7 +3705,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   type="button"
                   disabled={!newBuildNameInput.trim()}
                   onClick={() => handleAddGameToBuild(addToBuildGame, null, newBuildNameInput)}
-                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold cursor-pointer disabled:opacity-40 shrink-0"
+                  className="bg-accent hover:bg-accent-hover text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer disabled:opacity-40 shrink-0"
                 >
                   {t('buildModal.createAndAdd')}
                 </button>
@@ -3615,7 +3725,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
               <div className="flex items-center gap-2.5">
                 <ScrollText className="w-5 h-5 text-blue-600 dark:text-blue-400" />
                 <div>
-                  <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
+                  <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
                     {t('status.journalTitle')}
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -3685,7 +3795,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
             <div className="flex items-center justify-end pt-1">
               <button
                 onClick={() => setIsLogModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold cursor-pointer"
+                className="bg-accent hover:bg-accent-hover text-white px-4 py-2 rounded-xl text-xs font-bold cursor-pointer"
               >
                 {t('status.close')}
               </button>

@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend (tsc + vite build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+  go:
+    name: Go (vet, build, test)
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      # aegis-setup embeds the compressed app; in CI a placeholder is enough to compile.
+      - name: Placeholder for Setup payload
+        run: printf 'ci-placeholder' > cmd/aegis-setup/payload/AegisROM.exe.gz
+
+      # unsafeptr is disabled: COM vtable calls in cmd/winsetup trigger known false positives.
+      - name: go vet (windows)
+        run: GOOS=windows GOARCH=amd64 go vet -unsafeptr=false ./...
+
+      - name: go vet (linux)
+        run: go vet ./...
+
+      - name: go build (windows)
+        run: GOOS=windows GOARCH=amd64 go build -o /dev/null ./...
+
+      - name: go test
+        run: go test ./...
+
+      - name: Core and server build (macOS, Windows)
+        run: |
+          GOOS=darwin GOARCH=arm64 go build -o /dev/null ./aegiscore ./aegisapi ./cmd/aegis-server
+          GOOS=windows GOARCH=amd64 go vet ./aegiscore ./aegisapi ./cmd/aegis-server
+
+      - name: aegis-scanner module (vet, build linux/windows/macOS)
+        working-directory: cmd/aegis-scanner
+        run: |
+          go vet ./...
+          go build -o /dev/null .
+          GOOS=windows GOARCH=amd64 go build -o /dev/null .
+          GOOS=darwin GOARCH=arm64 go build -o /dev/null .
