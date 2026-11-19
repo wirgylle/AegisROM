@@ -202,6 +202,10 @@ interface FigmaConceptStudioProps {
   currentActionText?: string;
   pendingRestoreHandles?: Array<{ key: string; folderName: string }>;
   onRestoreSavedPermissions?: () => void;
+  /** Bumped by App when a library/scan folder becomes readable; re-resolves local media. */
+  mediaAccessVersion?: number;
+  /** True when App holds a granted library or scan folder handle. */
+  hasMediaFolderAccess?: boolean;
   onResolveMediaForDbRows?: (
     rows: UnifiedGameRow[],
     libraryPathHint?: string
@@ -572,6 +576,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   currentActionText = '',
   pendingRestoreHandles = [],
   onRestoreSavedPermissions,
+  mediaAccessVersion = 0,
+  hasMediaFolderAccess = false,
   onResolveMediaForDbRows,
   logs = [],
   onClearLogs,
@@ -1539,8 +1545,14 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   }, [isAnyProcessRunning]);
 
   // Automatically hydrate cover art & video previews for active DB when permissions are granted or DB is loaded
+  // A newly granted folder invalidates earlier attempts: they ran without local access.
+  const lastMediaAccessVersionRef = useRef(mediaAccessVersion);
   useEffect(() => {
     if (!activeDbEntry || activeDbEntry.rows.length === 0) return;
+    if (lastMediaAccessVersionRef.current !== mediaAccessVersion) {
+      lastMediaAccessVersionRef.current = mediaAccessVersion;
+      hydratedDbIdsRef.current.clear();
+    }
     if (pendingRestoreHandles.length === 0 && !hydratedDbIdsRef.current.has(activeDbEntry.id)) {
       const hasStaleOrMissing = activeDbEntry.rows.some(
         (r) => !r.boxArtUrl || isDeadOrLocalBlobUrl(r.boxArtUrl) || isDeadOrLocalBlobUrl(r.videoUrl)
@@ -1550,7 +1562,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         void hydrateDbRowsMedia(activeDbEntry.id, activeDbEntry.rows, activeDbEntry.pathHint);
       }
     }
-  }, [activeDbEntry?.id, pendingRestoreHandles.length]);
+  }, [activeDbEntry?.id, pendingRestoreHandles.length, mediaAccessVersion]);
 
   // Keep native desktop Go server alive via regular heartbeat while window is open
   useEffect(() => {
@@ -1952,7 +1964,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
               </div>
 
               {/* 1-CLICK PERSISTENT PERMISSION RECOVERY BANNER */}
-              {pendingRestoreHandles.length > 0 && !isNativeDesktopHost && onRestoreSavedPermissions && (
+              {pendingRestoreHandles.length > 0 && onRestoreSavedPermissions && (
                 <div className="bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2.5">
                   <div className="text-xs text-amber-950 dark:text-amber-200 leading-snug min-w-0 flex-1">
                     <strong>🔓 {t('lib.restoreAccessTitle')} {pendingRestoreHandles.length}:</strong>{' '}
@@ -1967,8 +1979,34 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   >
                     🔓 {t('lib.restoreAccessBtn')}
                   </button>
+                  <div className="basis-full text-[11px] text-amber-900/80 dark:text-amber-300/80 leading-snug">
+                    {t('lib.restoreAccessHint')}
+                  </div>
                 </div>
               )}
+
+              {/* DB opened but no library folder is known: covers can't be read from disk */}
+              {pendingRestoreHandles.length === 0 &&
+                !hasMediaFolderAccess &&
+                onSelectLibraryPath &&
+                !isAnyProcessRunning &&
+                (activeDbEntry?.rows.length || 0) > 0 &&
+                activeDbEntry?.id !== 'db_master_full' &&
+                activeDbEntry?.id !== 'db_portable_retro' &&
+                activeDbEntry?.rows.some((r) => !r.boxArtUrl) && (
+                  <div className="bg-sky-50 dark:bg-sky-950/40 border border-sky-300 dark:border-sky-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2.5">
+                    <div className="text-xs text-sky-950 dark:text-sky-200 leading-snug min-w-0 flex-1">
+                      {t('lib.mediaFolderMissing')}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={onSelectLibraryPath}
+                      className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold cursor-pointer shrink-0 shadow-2xs"
+                    >
+                      📁 {t('lib.mediaFolderPickBtn')}
+                    </button>
+                  </div>
+                )}
 
               {/* CLEAN DATABASE FILE BAR (Switch DB + Open .json + Save .json ONLY) */}
               {/* Narrow: label/select stacked on the left, Open/Save stacked on the right, row by row.

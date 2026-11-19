@@ -81,6 +81,7 @@ import {
   findSavedHandleMatchingPath,
   checkOrRequestHandlePermission,
   collectLocalMediaFromHandle,
+  type StoredDirHandleRecord,
   isDeadOrLocalBlobUrl,
 } from './utils/persistentHandles';
 import {
@@ -1857,53 +1858,97 @@ export function App() {
     setLogs((prev) => [...prev.slice(-250), `[${ts}] ${msg}`]);
   };
 
+  // Bumped whenever a library/scan folder handle becomes usable, so an already opened DB
+  // re-resolves its local covers and videos without a rescan.
+  const [mediaAccessVersion, setMediaAccessVersion] = useState(0);
+  const restoreInFlightRef = useRef(false);
+
+  const applyGrantedHandle = (rec: StoredDirHandleRecord) => {
+    if (rec.key === 'library_root') {
+      setLibraryDirHandle(rec.handle);
+      setRootDirHandle((prev: any) => prev || rec.handle);
+      setSelectedFolderName((prev) => prev || rec.folderName);
+    } else if (rec.key === 'scan_root') {
+      setRootDirHandle(rec.handle);
+      setSelectedFolderName(rec.folderName);
+    } else if (rec.key === 'sort_target') {
+      setSortTargetDirHandle(rec.handle);
+      setSortTargetFolderName(rec.folderName);
+    } else if (rec.key === 'sd_target') {
+      setSdTargetDirHandle(rec.handle);
+      setSdTargetFolderName(rec.folderName);
+    } else if (rec.key === 'buffer_source') {
+      setBufferDirHandle(rec.handle);
+      setBufferFolderName(rec.folderName);
+    } else if (rec.key === 'combine_target') {
+      setCombineTargetDirHandle(rec.handle);
+      setCombineTargetFolderName(rec.folderName);
+    }
+  };
+
+  // Library first: it is the folder covers and videos are read from.
+  const HANDLE_PRIORITY = ['library_root', 'scan_root', 'sort_target', 'combine_target', 'sd_target', 'buffer_source'];
+  const sortHandleRecords = (records: StoredDirHandleRecord[]) =>
+    [...records].sort((a, b) => {
+      const ia = HANDLE_PRIORITY.indexOf(a.key);
+      const ib = HANDLE_PRIORITY.indexOf(b.key);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+    });
+
+  /**
+   * Re-grants every saved folder. With allowPrompt the browser shows its permission dialog
+   * (needs a user gesture). Chrome/Edge offer "Allow on every visit" there, after which the
+   * folders open silently on every launch. One prompt per distinct folder: handles that point
+   * to the same directory (library_root and scan_root usually do) share the grant.
+   */
+  const restoreSavedFolderPermissions = async (allowPrompt: boolean) => {
+    const records = sortHandleRecords(await listAllSavedDirectoryHandles());
+    const stillPrompt: Array<{ key: string; folderName: string }> = [];
+    const grantedNames: string[] = [];
+    const grantedHandles: any[] = [];
+    let mediaRootGranted = false;
+
+    for (const rec of records) {
+      let perm = await checkOrRequestHandlePermission(rec.handle, 'readwrite', false);
+      if (perm === 'prompt' && allowPrompt) {
+        let sameAsGranted = false;
+        for (const g of grantedHandles) {
+          try {
+            if (typeof g.isSameEntry === 'function' && (await g.isSameEntry(rec.handle))) {
+              sameAsGranted = true;
+              break;
+            }
+          } catch {}
+        }
+        // Same directory already granted: the re-query above should have returned granted;
+        // don't open a second dialog for it.
+        if (!sameAsGranted) {
+          perm = await checkOrRequestHandlePermission(rec.handle, 'readwrite', true);
+        }
+      }
+      if (perm === 'granted') {
+        applyGrantedHandle(rec);
+        grantedHandles.push(rec.handle);
+        grantedNames.push(rec.folderName);
+        if (rec.key === 'library_root' || rec.key === 'scan_root') mediaRootGranted = true;
+      } else if (perm === 'prompt') {
+        stillPrompt.push({ key: rec.key, folderName: rec.folderName });
+      }
+    }
+
+    setPendingRestoreHandles(stillPrompt);
+    if (mediaRootGranted) setMediaAccessVersion((v) => v + 1);
+    return { grantedNames: Array.from(new Set(grantedNames)), stillPrompt };
+  };
+
   // Restore persisted FileSystemDirectoryHandles from IndexedDB on launch
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const records = await listAllSavedDirectoryHandles();
-      if (!mounted || records.length === 0) return;
-
-      const stillPrompt: Array<{ key: string; folderName: string }> = [];
-      const restoredNames: string[] = [];
-
-      for (const rec of records) {
-        const perm = await checkOrRequestHandlePermission(rec.handle, 'readwrite', false);
-        if (perm === 'granted') {
-          if (rec.key === 'library_root') {
-            setLibraryDirHandle(rec.handle);
-            setRootDirHandle((prev: any) => prev || rec.handle);
-            setSelectedFolderName((prev) => prev || rec.folderName);
-          } else if (rec.key === 'scan_root') {
-            setRootDirHandle(rec.handle);
-            setSelectedFolderName(rec.folderName);
-          } else if (rec.key === 'sort_target') {
-            setSortTargetDirHandle(rec.handle);
-            setSortTargetFolderName(rec.folderName);
-          } else if (rec.key === 'sd_target') {
-            setSdTargetDirHandle(rec.handle);
-            setSdTargetFolderName(rec.folderName);
-          } else if (rec.key === 'buffer_source') {
-            setBufferDirHandle(rec.handle);
-            setBufferFolderName(rec.folderName);
-          } else if (rec.key === 'combine_target') {
-            setCombineTargetDirHandle(rec.handle);
-            setCombineTargetFolderName(rec.folderName);
-          }
-          restoredNames.push(rec.folderName);
-        } else if (perm === 'prompt') {
-          stillPrompt.push({ key: rec.key, folderName: rec.folderName });
-        }
-      }
-
+      const { grantedNames } = await restoreSavedFolderPermissions(false);
       if (!mounted) return;
-      setPendingRestoreHandles(stillPrompt);
-      if (restoredNames.length > 0) {
-        addLog(
-          tf('app.perm.restoredLog', {
-            names: Array.from(new Set(restoredNames)).join(', '),
-          })
-        );
+      if (grantedNames.length > 0) {
+        addLog(tf('app.perm.restoredLog', { names: grantedNames.join(', ') }));
       }
     })();
     return () => {
@@ -1912,48 +1957,39 @@ export function App() {
   }, []);
 
   const handleRestoreSavedFolderPermissions = async () => {
-    const records = await listAllSavedDirectoryHandles();
-    const stillPrompt: Array<{ key: string; folderName: string }> = [];
-    const grantedNames: string[] = [];
-
-    for (const rec of records) {
-      const perm = await checkOrRequestHandlePermission(rec.handle, 'readwrite', true);
-      if (perm === 'granted') {
-        if (rec.key === 'library_root') {
-          setLibraryDirHandle(rec.handle);
-          setRootDirHandle((prev: any) => prev || rec.handle);
-          setSelectedFolderName((prev) => prev || rec.folderName);
-        } else if (rec.key === 'scan_root') {
-          setRootDirHandle(rec.handle);
-          setSelectedFolderName(rec.folderName);
-        } else if (rec.key === 'sort_target') {
-          setSortTargetDirHandle(rec.handle);
-          setSortTargetFolderName(rec.folderName);
-        } else if (rec.key === 'sd_target') {
-          setSdTargetDirHandle(rec.handle);
-          setSdTargetFolderName(rec.folderName);
-        } else if (rec.key === 'buffer_source') {
-          setBufferDirHandle(rec.handle);
-          setBufferFolderName(rec.folderName);
-        } else if (rec.key === 'combine_target') {
-          setCombineTargetDirHandle(rec.handle);
-          setCombineTargetFolderName(rec.folderName);
-        }
-        grantedNames.push(rec.folderName);
-      } else {
-        stillPrompt.push({ key: rec.key, folderName: rec.folderName });
+    if (restoreInFlightRef.current) return;
+    restoreInFlightRef.current = true;
+    try {
+      const { grantedNames } = await restoreSavedFolderPermissions(true);
+      if (grantedNames.length > 0) {
+        const msg = tf('app.perm.grantedLog', { names: grantedNames.join(', ') });
+        setCurrentActionText(msg);
+        addLog(msg);
       }
-    }
-
-    setPendingRestoreHandles(stillPrompt);
-    if (grantedNames.length > 0) {
-      const msg = tf('app.perm.grantedLog', {
-        names: Array.from(new Set(grantedNames)).join(', '),
-      });
-      setCurrentActionText(msg);
-      addLog(msg);
+    } finally {
+      restoreInFlightRef.current = false;
     }
   };
+
+  // The browser only shows the permission dialog inside a user gesture. While saved folders
+  // still wait for permission, the first click or key press anywhere in the app asks for them,
+  // so covers load right after opening a DB instead of after a trip to Tools.
+  const pendingRestoreCount = pendingRestoreHandles.length;
+  useEffect(() => {
+    if (pendingRestoreCount === 0) return;
+    const onGesture = (e: Event) => {
+      if (e instanceof KeyboardEvent && (e.key === 'Escape' || e.repeat)) return;
+      window.removeEventListener('click', onGesture, true);
+      window.removeEventListener('keydown', onGesture, true);
+      void handleRestoreSavedFolderPermissions();
+    };
+    window.addEventListener('click', onGesture, true);
+    window.addEventListener('keydown', onGesture, true);
+    return () => {
+      window.removeEventListener('click', onGesture, true);
+      window.removeEventListener('keydown', onGesture, true);
+    };
+  }, [pendingRestoreCount]);
 
   // Hydrates expired blob: URLs / missing covers & videos when opening an existing DB file (.json) without re-scanning
   const handleResolveMediaForDbRows = async (
@@ -2969,6 +3005,7 @@ export function App() {
           setRootDirHandle(dirHandle);
         }
         setSelectedFolderName(dirHandle.name);
+        setMediaAccessVersion((v) => v + 1);
 
         // Создаем стандартную структуру папок Библиотеки AegisROM v0.5 (roms, images, marquees, videos, xml)
         try {
@@ -7677,6 +7714,8 @@ export function App() {
         currentActionText={currentActionText || logs[logs.length - 1] || ''}
         pendingRestoreHandles={pendingRestoreHandles}
         onRestoreSavedPermissions={handleRestoreSavedFolderPermissions}
+        mediaAccessVersion={mediaAccessVersion}
+        hasMediaFolderAccess={Boolean(libraryDirHandle || rootDirHandle)}
         onResolveMediaForDbRows={handleResolveMediaForDbRows}
         logs={logs}
         onClearLogs={() => setLogs([t('status.cleared')])}
