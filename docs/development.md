@@ -3,7 +3,7 @@
 ## Требования
 
 - Node.js 22 и npm
-- Go 1.23+ (нужен для нативных `.exe` под Windows и для `aegis-scanner`)
+- Go 1.26+ (нужен для нативных `.exe` под Windows и для `aegis-scanner`)
 - Python 3 (используется `scripts/release-win.mjs` для упаковки `.zip`)
 
 ## Установка зависимостей

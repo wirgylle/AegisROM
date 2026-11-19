@@ -55,6 +55,7 @@ func run(addr, distDir, dataDir string) error {
 
 	mux := http.NewServeMux()
 	aegisapi.RegisterLibraryRoutes(mux, dataDir, nil)
+	aegisapi.RegisterStorageRoutes(mux, dataDir, nil)
 
 	if index, err := os.ReadFile(filepath.Join(distDir, "index.html")); err == nil {
 		mux.Handle("/", aegisapi.SPAHandler(os.DirFS(distDir), index, nil))

@@ -1,154 +1,157 @@
 <div align="center">
 
+**English** · [Русский](README.ru.md)
+
 <img src="public/aegisrom-icon.png" alt="AegisROM" width="128" />
 
 # AegisROM
 
-**Менеджер ромов для ретро-консолей и портативок.**
-Наводит порядок в коллекции, убирает дубли, качает обложки и собирает готовую флешку под вашу консоль.
+**ROM manager for retro consoles and handhelds.**
+Tidies up your collection, removes duplicates, downloads box art and builds a ready-to-use SD card for your console.
 
-[Скачать](https://github.com/wirgylle/AegisROM/releases) · [Возможности](#возможности) · [Установка](#установка) · [Быстрый старт](#быстрый-старт) · [FAQ](#faq) · [Планы](#планы)
+[Download](https://github.com/wirgylle/AegisROM/releases) · [Features](#features) · [Installation](#installation) · [Quick start](#quick-start) · [FAQ](#faq) · [Roadmap](#roadmap)
 
-![Версия](https://img.shields.io/badge/версия-0.5.4_beta-orange)
-![Платформа](https://img.shields.io/badge/Windows_11-x64-blue)
-![Языки](https://img.shields.io/badge/языков_интерфейса-9-green)
+![Version](https://img.shields.io/badge/version-0.5.5_beta-orange)
+![Platform](https://img.shields.io/badge/Windows_11-x64-blue)
+![Languages](https://img.shields.io/badge/UI_languages-9-green)
 
 </div>
 
 ---
 
-## Что это
+## What is it
 
-AegisROM — программа для тех, у кого есть ретро-консоль или портативка (**R36S, Anbernic, Miyoo, Retroid, TrimUI, Steam Deck**) и папка с ромами, в которой сложно разобраться.
+AegisROM is for anyone who owns a retro console or handheld (**R36S, Anbernic, Miyoo, Retroid, TrimUI, Steam Deck**) and has a ROM folder that is hard to make sense of.
 
-Программа сканирует коллекцию и опознаёт игры по контрольным суммам и серийным номерам дисков, сверяясь с онлайн-базами или с подготовленным XML-файлом (`gamelist.xml`). Дальше она оставляет одну лучшую версию каждой игры, переименовывает файлы, скачивает обложки и видео-превью, а потом собирает из этого флешку нужного объёма и структуры.
+The app scans your collection and identifies games by checksums and disc serial numbers, checking them against online databases or a prepared XML file (`gamelist.xml`). It then keeps one best version of each game, renames files, downloads box art and video previews, and finally builds an SD card of the size and folder layout you need.
 
-<p align="center"><img src="docs/screenshots/library.png" alt="Библиотека AegisROM: витрина с обложками" width="900" /></p>
+<p align="center"><img src="docs/screenshots/library.png" alt="AegisROM library: showcase with box art" width="900" /></p>
 
-## Возможности
+## Features
 
-### 📚 Библиотека
-- Три режима окна: **Презентация** (витрина с обложками), **Компакт** (плотный список) и **Редактор** (сравнение «было → стало» с галочками для массовых действий).
-- Группировка по консолям, поколениям (8-bit, 16-bit, 32/64-bit, 128-bit+), жанрам и годам.
-- **Многодисковые игры** (Final Fantasy VII, Metal Gear Solid и т.п.) показываются как одна игра: диски складываются в общую папку, создаётся плейлист `.m3u`.
-- Карточка игры с обложкой и видео-превью.
-- Добавление игры в сборку одной кнопкой `+`.
-- Сохранение и открытие базы библиотеки, чтобы не сканировать диски заново.
+### 📚 Library
+- Three view modes: **Showcase** (box art gallery), **Compact** (dense list) and **Editor** ("before → after" comparison with checkboxes for bulk actions).
+- Grouping by console, generation (8-bit, 16-bit, 32/64-bit, 128-bit+), genre and year.
+- **Multi-disc games** (Final Fantasy VII, Metal Gear Solid, etc.) are shown as one game: discs go into a shared folder and an `.m3u` playlist is created.
+- Game card with box art and video preview.
+- Add a game to a build with a single `+` button.
+- Save and open the library database so you don't have to rescan your drives.
 
-| Компакт | Редактор |
+| Compact | Editor |
 |---|---|
-| <img src="docs/screenshots/compact.png" alt="Режим Компакт" /> | <img src="docs/screenshots/editor.png" alt="Режим Редактор" /> |
+| <img src="docs/screenshots/compact.png" alt="Compact mode" /> | <img src="docs/screenshots/editor.png" alt="Editor mode" /> |
 
-> Функции с пометкой `beta` уже есть в программе, но ещё в разработке: могут работать не всегда или не так, как ожидается. Если что-то не так, напишите в [Issues](https://github.com/wirgylle/AegisROM/issues).
+> Features marked `beta` are already in the app but still in development: they may not always work, or may not work as expected. If something is wrong, please report it in [Issues](https://github.com/wirgylle/AegisROM/issues).
 
-### 🛠 Инструменты
-- **Сканирование** с распознаванием по CRC32 (в том числе без заголовка рома) и серийным кодам дисков (`SLUS`, `SCES`, `SLPS`).
-- **1G1R (одна игра — один ром):** из всех версий игры остаётся лучшая по вашему приоритету регионов, например `Россия → США → Европа → Япония`.
-- **Скрапер обложек и видео** (Libretro, Archive.org). Находит пустые картинки-заглушки и перекачивает их, нормальные файлы не трогает.
-- **Названия по хешу**: сверка с DAT-файлами No-Intro (картриджи) и Redump (диски) по CRC32 / SHA1, для PBP и больших образов — по серийному номеру. Найденное название главнее онлайн-поиска, источник виден в карточке игры. Как добавить DAT — [docs/dat.md](docs/dat.md).
-- **Переименование**: по хешу из DAT, онлайн-поиск, по `gamelist.xml` и по заголовкам ромов. Понимает номерные файлы вида `000001.chd`, как на стоковых флешках R36S.
-- **Конструктор имён файлов**: название, регион, язык, автор перевода, номер диска, регистр расширения.
-- **Очистка** от мусора: файлы `._*`, лишние картинки, пустые служебные папки.
-- **Ремонт флешки** под прошивку: восстановление структуры папок и снятие флага Dirty Bit для **ArkOS, AmberELEC, ROCKNIX, OnionOS, GarlicOS, muOS, Batocera / Knulli, EmuELEC, RetroDeck**.
-- **Комбайн**: кладёте новые ромы в папку-буфер, программа сама распознаёт, переименовывает и раскладывает их по папкам консолей.
+### 🛠 Tools
+- **Scanning** with identification by CRC32 (including headerless ROMs) and disc serial codes (`SLUS`, `SCES`, `SLPS`).
+- **1G1R (one game, one ROM):** out of all versions of a game, the best one by your region priority is kept, for example `Russia → USA → Europe → Japan`.
+- **Box art and video scraper** (Libretro, Archive.org). Finds empty placeholder images and re-downloads them, leaves good files alone.
+- **Names by hash**: matching against No-Intro (cartridges) and Redump (discs) DAT files by CRC32 / SHA1, and by serial number for PBP and large images. A name found this way takes priority over online search, and its source is shown in the game card. How to add a DAT: [docs/dat.md](docs/dat.md).
+- **Renaming**: by hash from a DAT, online search, `gamelist.xml` and ROM headers. Understands numbered files like `000001.chd`, as found on stock R36S cards.
+- **File name builder**: title, region, language, translation author, disc number, extension case.
+- **Cleanup** of junk: `._*` files, stray images, empty service folders.
+- **SD card repair** for your firmware: restores the folder structure and clears the Dirty Bit flag for **ArkOS, AmberELEC, ROCKNIX, OnionOS, GarlicOS, muOS, Batocera / Knulli, EmuELEC, RetroDeck**.
+- **Combine**: drop new ROMs into a buffer folder, and the app identifies, renames and sorts them into console folders by itself.
 
-<p align="center"><img src="docs/screenshots/tools.png" alt="Инструменты" width="900" /></p>
+<p align="center"><img src="docs/screenshots/tools.png" alt="Tools" width="900" /></p>
 
-### 📦 Сборки
-- Готовые тематические подборки: по возрасту (6+, 10+, 14+, 18+), по настроению, по жанрам и битности. Или своя сборка через фильтры.
-- Подгонка под объём флешки: 16, 32, 64, 128, 256 ГБ, с учётом места под прошивку и BIOS.
-- Синхронизация сборки с основной библиотекой с показом разницы.
-- **Конвертер образов**: `.cue/.bin`, `.iso`, `.gdi` → `.chd` (через `chdman`), а также `.pbp` и `.cso`.
-- **Каталог PortMaster** `beta`: список портов с фильтром «готово к запуску» / «нужны файлы из Steam или GOG» и автоматической раскладкой в `ports/`.
+### 📦 Builds
+- Ready-made themed collections: by age (6+, 10+, 14+, 18+), by mood, by genre and bitness. Or your own build via filters.
+- Fitting to SD card size: 16, 32, 64, 128, 256 GB, leaving room for firmware and BIOS.
+- Syncing a build with the main library, showing the differences.
+- **Image converter**: `.cue/.bin`, `.iso`, `.gdi` → `.chd` (via `chdman`), plus `.pbp` and `.cso`.
+- **PortMaster catalog** `beta`: list of ports with a "ready to run" / "needs files from Steam or GOG" filter and automatic placement into `ports/`.
 
-<p align="center"><img src="docs/screenshots/builds.png" alt="Сборки" width="900" /></p>
+<p align="center"><img src="docs/screenshots/builds.png" alt="Builds" width="900" /></p>
 
-### 🎮 Среда
-- Выбор эмулятора для каждой платформы: ядра RetroArch, DuckStation, PCSX2, RPCS3, PPSSPP, mGBA, melonDS, Ryujinx, Xemu.
-- Автопоиск установленных эмуляторов на ПК и запуск игры прямо из карточки `beta`.
-- Проверка портов PortMaster на ПК перед копированием на консоль `beta`.
+### 🎮 Environment
+- Choose an emulator per platform: RetroArch cores, DuckStation, PCSX2, RPCS3, PPSSPP, mGBA, melonDS, Ryujinx, Xemu.
+- Auto-detection of emulators installed on the PC and launching a game right from its card `beta`.
+- Checking PortMaster ports on the PC before copying them to the console `beta`.
 
-<p align="center"><img src="docs/screenshots/environment.png" alt="Среда эмуляторов" width="900" /></p>
+<p align="center"><img src="docs/screenshots/environment.png" alt="Emulator environment" width="900" /></p>
 
-### 🌍 9 языков интерфейса
-Русский, English, Deutsch, Español, Français, Italiano, 日本語, Srpski (латиница), 简体中文. Язык определяется автоматически, переключатель в шапке.
+### 🌍 9 UI languages
+Русский, English, Deutsch, Español, Français, Italiano, 日本語, Srpski (Latin), 简体中文. The language is detected automatically, with a switcher in the header.
 
-## Системные требования
+## System requirements
 
 | | |
 |---|---|
-| ОС | Windows 11 x64 |
-| Браузер | Microsoft Edge или Google Chrome (окно программы открывается через него) |
-| Для конвертации в `.chd` | `chdman` из комплекта MAME |
-| Интернет | нужен только для скрапера обложек и каталога PortMaster |
+| OS | Windows 11 x64 |
+| Browser | Microsoft Edge or Google Chrome (the app window opens through it) |
+| For `.chd` conversion | `chdman` from the MAME package |
+| Internet | only needed for the box art scraper and the PortMaster catalog |
 
-Версий для Linux и macOS пока нет, они в планах.
+There are no Linux or macOS versions yet; they are planned.
 
-## Установка
+## Installation
 
-1. Откройте страницу [Releases](https://github.com/wirgylle/AegisROM/releases) и выберите верхний (самый новый) релиз.
-2. Скачайте один из файлов:
+1. Open the [Releases](https://github.com/wirgylle/AegisROM/releases) page and pick the top (newest) release.
+2. Download one of the files:
 
-| Файл | Что это |
+| File | What it is |
 |---|---|
-| `AegisROM-Setup-vX.Y.Z-Win11-x64.exe` | **Установщик.** Рекомендуется. Ставит в `C:\Program Files\AegisROM`, создаёт ярлыки, удаляет старые копии, переносит настройки. |
-| `AegisROM-Portable-Win11-x64.exe` | **Портативная версия** в одном файле, без установки. |
-| `AegisROM-vX.Y.Z-Win11-x64.zip` | Полный архив со всеми компонентами. |
-| `aegis-scanner-win11-x64.exe` | Отдельный консольный сканер для продвинутых пользователей. |
+| `AegisROM-Setup-vX.Y.Z-Win11-x64.exe` | **Installer.** Recommended. Installs to `C:\Program Files\AegisROM`, creates shortcuts, removes old copies, migrates settings. |
+| `AegisROM-Portable-Win11-x64.exe` | **Portable version** in a single file, no installation. |
+| `AegisROM-vX.Y.Z-Win11-x64.zip` | Full archive with all components. |
+| `aegis-scanner-win11-x64.exe` | Standalone command-line scanner for advanced users. |
 
-3. Запустите установщик и следуйте шагам мастера.
+3. Run the installer and follow the wizard.
 
-> Windows SmartScreen может предупредить о неизвестном издателе: файлы пока не подписаны. Нажмите «Подробнее» → «Выполнить в любом случае».
+> Windows SmartScreen may warn about an unknown publisher: the files are not signed yet. Click "More info" → "Run anyway".
 
-Удалить программу можно через «Параметры → Приложения» или деинсталлятор в папке установки.
+You can uninstall the app via "Settings → Apps" or the uninstaller in the installation folder.
 
-## Быстрый старт
+## Quick start
 
-1. **Укажите папку с ромами.** «Инструменты» → «Библиотека» → выберите папку и запустите сканирование.
-2. **Настройте приоритет регионов** и запустите **1G1R**, чтобы убрать дубли.
-3. **Переименуйте файлы** через конструктор имён, если нужно единое оформление.
-4. **Запустите скрапер**, чтобы скачать обложки и видео.
-5. **Соберите флешку.** «Сборки» → создайте сборку под объём карты, добавьте игры кнопкой `+` в библиотеке и выгрузите на SD-карту.
-6. Если консоль не видит карту или ругается на ошибки, используйте **«Ремонт флешки»** с профилем вашей прошивки.
+1. **Choose your ROM folder.** "Tools" → "Library" → pick the folder and start the scan.
+2. **Set your region priority** and run **1G1R** to remove duplicates.
+3. **Rename files** with the file name builder if you want consistent naming.
+4. **Run the scraper** to download box art and videos.
+5. **Build your SD card.** "Builds" → create a build for your card size, add games with the `+` button in the library and export to the SD card.
+6. If the console doesn't see the card or reports errors, use **"SD card repair"** with your firmware's profile.
 
 ## FAQ
 
-**Где взять ромы?**
-AegisROM не скачивает и не распространяет игры. Используйте копии игр, которыми вы владеете.
+**Where do I get ROMs?**
+AegisROM does not download or distribute games. Use copies of games you own.
 
-**Программа удаляет файлы?**
-По умолчанию дубли после 1G1R переносятся в папку-карантин `_Duplicates_1G1R`, а не удаляются. Безвозвратное удаление включается отдельной галочкой.
+**Does the app delete files?**
+By default, duplicates found by 1G1R are moved to the `_Duplicates_1G1R` quarantine folder, not deleted. Permanent deletion is enabled by a separate checkbox.
 
-**Моя флешка с R36S называется `000001.chd`, `000002.chd`… Это поддерживается?**
-Да. Переименование по `gamelist.xml` и заголовкам разбирает такие номерные файлы и возвращает им нормальные названия.
+**My R36S card has files named `000001.chd`, `000002.chd`… Is that supported?**
+Yes. Renaming by `gamelist.xml` and headers parses these numbered files and gives them proper names back.
 
-**Где взять DAT-файлы для сверки по хешу?**
-На [datomatic.no-intro.org](https://datomatic.no-intro.org) (картриджи) и [redump.org](http://redump.org/downloads/) (диски). Скачанный `.dat` или `.zip` добавьте кнопкой «Добавить DAT» в «Инструментах». Подробнее — [docs/dat.md](docs/dat.md).
+**Where do I get DAT files for hash matching?**
+From [datomatic.no-intro.org](https://datomatic.no-intro.org) (cartridges) and [redump.org](http://redump.org/downloads/) (discs). Add the downloaded `.dat` or `.zip` with the "Add DAT" button in "Tools". More in [docs/dat.md](docs/dat.md).
 
-**Нужен ли интернет?**
-Только для скачивания обложек, видео и каталога PortMaster. Сканирование, 1G1R, переименование и сборки работают офлайн.
+**Do I need internet?**
+Only for downloading box art, videos and the PortMaster catalog. Scanning, 1G1R, renaming and builds work offline.
 
-**Будет версия для Linux / macOS / Steam Deck?**
-Планируется. Сейчас программа работает только на Windows 11.
+**Will there be a Linux / macOS / Steam Deck version?**
+It's planned. Right now the app only runs on Windows 11.
 
-**Нашёл ошибку или есть идея.**
-Создайте [Issue](https://github.com/wirgylle/AegisROM/issues) и опишите, что делали и что произошло. Скриншот сильно помогает.
+**I found a bug or have an idea.**
+Open an [Issue](https://github.com/wirgylle/AegisROM/issues) and describe what you did and what happened. A screenshot helps a lot.
 
-## Планы
+## Roadmap
 
-| Версия | Что появится |
+| Version | What's coming |
 |---|---|
-| **0.5.5 – 0.5.7** | Патчер русификаторов и ромхаков (IPS / BPS / UPS / xdelta). Отдельные папки `hackroms/` и `patch/` в каждой консоли: 1G1R не удаляет хаки как дубли, а предлагает перенести; в карточке видно, чем ром отличается от оригинала; фильтры, сборки и переименование по статусу «пропатчен» или «хак». Проверка BIOS по контрольным суммам и копирование нужных BIOS в сборку. Быстрый тест игры прямо в окне программы. |
-| **0.5.8** | Мастер первой настройки: язык, папки для библиотеки и ромов, импорт своих ромов и правила переименования. Пока библиотека собирается в фоне, приложение показывает тур по основным функциям. |
-| **0.6.0** | Менеджер сохранений (`.srm`, `.state`, карты памяти) с историей версий. Заливка сборок на консоль по Wi-Fi (SFTP / SMB / WebDAV) без извлечения карты. |
-| **0.7.0** | RetroAchievements: проверка поддержки достижений по хешу рома. PDF-мануалы, карты прохождения и плеер саундтреков в карточке игры. |
+| **0.5.5 – 0.5.7** | Patcher for translations and ROM hacks (IPS / BPS / UPS / xdelta). Separate `hackroms/` and `patch/` folders for each console: 1G1R doesn't delete hacks as duplicates but offers to move them; the game card shows how a ROM differs from the original; filters, builds and renaming by "patched" or "hack" status. BIOS verification by checksum and copying the required BIOS into a build. Quick game test right in the app window. |
+| **0.5.8** | First-run setup wizard: language, library and ROM folders, importing your own ROMs and renaming rules. While the library is built in the background, the app shows a tour of the main features. |
+| **before 0.6.0** | The app's own window instead of Edge or Chrome, with settings stored on disk. A macOS version: one `.dmg` for Intel and Apple Silicon, games launched through Mac emulators. PortMaster on Windows through a Linux environment (WSL). |
+| **0.6.0** | Save manager (`.srm`, `.state`, memory cards) with version history. Uploading builds to the console over Wi-Fi (SFTP / SMB / WebDAV) without removing the card. |
+| **0.7.0** | RetroAchievements: checking achievement support by ROM hash. PDF manuals, walkthrough maps and a soundtrack player in the game card. |
 
-Подробнее — в [docs/ROADMAP.md](docs/ROADMAP.md). Планы могут меняться.
+Details in [docs/ROADMAP.md](docs/ROADMAP.md) (in Russian). Plans may change.
 
-## Для разработчиков
+## For developers
 
-Сборка из исходников, архитектура и правила участия описаны в [docs/](docs/) и [CONTRIBUTING.md](CONTRIBUTING.md).
+Building from source, architecture and contribution rules are described in [docs/](docs/) and [CONTRIBUTING.md](CONTRIBUTING.md) (in Russian).
 
-## Лицензия
+## License
 
-Лицензия пока не выбрана. До её появления все права на код принадлежат автору.
+No license has been chosen yet. Until then, all rights to the code belong to the author.
