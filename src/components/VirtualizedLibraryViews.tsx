@@ -319,7 +319,7 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
     gridCols: 3,
   });
 
-  // Progressive background buffer index so 14,000+ rows warm smoothly without blocking UI interactions
+  // Progressive background buffer index so large lists warm smoothly without blocking UI interactions
   const [bufferedCount, setBufferedCount] = useState<number>(() =>
     Math.min(games.length, 160)
   );

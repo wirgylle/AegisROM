@@ -132,10 +132,10 @@ function sanitizeDatabasesForStorage<T extends { rows: UnifiedGameRow[] }>(dbs: 
 
 function persistDatabasesSafely<T extends { rows: UnifiedGameRow[] }>(dbs: T[]): void {
   const clean = sanitizeDatabasesForStorage(dbs);
-  // Always persist asynchronously to IndexedDB (supports 14,000+ ROMs cleanly without UI lag or 5MB localStorage limit)
+  // Always persist asynchronously to IndexedDB (handles large libraries without UI lag or the 5MB localStorage limit)
   void saveMultiDbsToIndexedDB(clean);
 
-  // Only mirror compact libraries to localStorage to avoid synchronous JSON.stringify blocking on 14k+ rows
+  // Only mirror compact libraries to localStorage to avoid synchronous JSON.stringify blocking on large libraries
   const totalRows = clean.reduce((sum, d) => sum + (d.rows?.length || 0), 0);
   if (totalRows <= 400) {
     try {
@@ -871,7 +871,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   const [, startUiTransition] = useTransition();
   const deferredSearchQuery = useDeferredValue(searchQuery);
 
-  // Asynchronously restore large (14,000+ ROM) databases from IndexedDB without blocking first paint
+  // Asynchronously restore large databases from IndexedDB without blocking first paint
   useEffect(() => {
     let alive = true;
     loadMultiDbsFromIndexedDB().then((idbDbs) => {

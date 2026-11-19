@@ -59,7 +59,7 @@ export async function analyzeMediaDirectorySignatures(
       try {
         const f: File = await entry.getFile();
         if (f.size <= 0) continue;
-        // Only inspect suspicious sizes up to 48 KB in detail to stay fast even on 14,000 ROMs
+        // Only inspect suspicious sizes up to 48 KB in detail to stay fast on large libraries
         if (f.size <= 49152) {
           const sig = await computeFileQuickSignature(f);
           const next = (signatureCounts.get(sig) || 0) + 1;
