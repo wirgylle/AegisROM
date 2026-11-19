@@ -1068,18 +1068,11 @@ func runHybridModernDesktopApp() bool {
 	launchedWindow := false
 	browserExe := findAppBrowserExecutable()
 	if browserExe != "" {
-		profileDir := filepath.Join(appDir, "WebViewProfile_0_5_4")
+		profileDir := filepath.Join(appDir, appBrowserProfileDirName)
 		_ = os.MkdirAll(profileDir, 0755)
+		prepareAppBrowserProfile(profileDir)
 
-		cmd := exec.Command(
-			browserExe,
-			"--app="+appURL,
-			"--user-data-dir="+profileDir,
-			"--window-size=1500,940",
-			"--no-first-run",
-			"--no-default-browser-check",
-			"--disable-features=TranslateUI",
-		)
+		cmd := exec.Command(browserExe, appBrowserArgs(appURL, profileDir)...)
 		if err := cmd.Start(); err == nil {
 			launchedWindow = true
 			go func() {
