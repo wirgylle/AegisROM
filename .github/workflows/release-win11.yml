@@ -74,11 +74,20 @@ jobs:
             public/downloads/AegisROM-v*-Win11-x64.zip
             public/downloads/version.json
 
+      # Заметки к релизу берутся из docs/releases/<тег>.md, если файл есть.
+      - name: Find release notes
+        id: notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          f="docs/releases/${GITHUB_REF_NAME}.md"
+          if [ -f "$f" ]; then echo "path=$f" >> "$GITHUB_OUTPUT"; fi
+
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           make_latest: true
+          body_path: ${{ steps.notes.outputs.path }}
           generate_release_notes: true
           files: |
             public/downloads/AegisROM-Setup-v*-Win11-x64.exe
