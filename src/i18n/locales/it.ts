@@ -9,6 +9,7 @@ export const IT: TranslationDict = {
   'header.appSubtitle': 'Organizzatore e Gestore Collezioni Retro',
   'header.view.a': 'Presentazione',
   'header.view.b': 'Compatto',
+  'header.viewLabel': 'Vista',
   'header.view.c': 'Editor',
   'header.journal': 'Registro',
   'header.setupExe': 'Setup .EXE',

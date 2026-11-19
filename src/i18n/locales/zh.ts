@@ -9,6 +9,7 @@ export const ZH: TranslationDict = {
   'header.appSubtitle': '复古游戏 ROM 整理与收藏管理器',
   'header.view.a': '展示视图',
   'header.view.b': '紧凑视图',
+  'header.viewLabel': '视图',
   'header.view.c': '编辑器',
   'header.journal': '日志',
   'header.setupExe': 'Setup .EXE',

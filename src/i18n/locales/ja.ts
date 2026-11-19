@@ -9,6 +9,7 @@ export const JA: TranslationDict = {
   'header.appSubtitle': 'レトロROMコレクション整理・管理ツール',
   'header.view.a': 'プレゼン表示',
   'header.view.b': 'コンパクト',
+  'header.viewLabel': '表示',
   'header.view.c': 'エディタ',
   'header.journal': 'ログ',
   'header.setupExe': 'Setup .EXE',

@@ -9,6 +9,7 @@ export const DE: TranslationDict = {
   'header.appSubtitle': 'ROM-Sammlungs-Manager & Organizer',
   'header.view.a': 'Präsentation',
   'header.view.b': 'Kompakt',
+  'header.viewLabel': 'Ansicht',
   'header.view.c': 'Editor',
   'header.journal': 'Protokoll',
   'header.setupExe': 'Setup .EXE',

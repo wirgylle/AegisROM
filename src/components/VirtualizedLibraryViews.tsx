@@ -19,10 +19,21 @@ interface VirtualizedLibraryViewsProps {
   onAddToBuild?: (game: EnrichedBuildGame) => void;
 }
 
-const GRID_CARD_HEIGHT = 208;
-const GRID_GAP = 14;
-const GRID_ROW_STRIDE = GRID_CARD_HEIGHT + GRID_GAP; // 222px deterministic row height
+// Tile grid: as many columns as fit (min 160px each); covers keep a 3:4 box,
+// so the row height is derived from the measured column width.
+const GRID_MIN_COL_WIDTH = 160;
+const GRID_GAP = 16;
+const GRID_TEXT_HEIGHT = 46; // title + meta line under the cover
 const GRID_OVERSCAN_ROWS = 3;
+
+function computeGridMetrics(width: number) {
+  const w = Math.max(width, GRID_MIN_COL_WIDTH * 2 + GRID_GAP);
+  const cols = Math.max(2, Math.floor((w + GRID_GAP) / (GRID_MIN_COL_WIDTH + GRID_GAP)));
+  const colWidth = (w - GRID_GAP * (cols - 1)) / cols;
+  const coverHeight = Math.round((colWidth * 4) / 3);
+  const cardHeight = coverHeight + GRID_TEXT_HEIGHT;
+  return { cols, coverHeight, cardHeight, rowStride: cardHeight + GRID_GAP };
+}
 
 const COMPACT_ROW_HEIGHT = 40;
 const EDITOR_ROW_HEIGHT = 42;
@@ -33,6 +44,7 @@ const warmedImageUrls = new Set<string>();
 
 interface MemoGridCardProps {
   game: EnrichedBuildGame;
+  coverHeight: number;
   isSelected: boolean;
   onSelect: (id: string) => void;
   onAddToBuild?: (game: EnrichedBuildGame) => void;
@@ -42,7 +54,7 @@ interface MemoGridCardProps {
 }
 
 const MemoGridCard = React.memo<MemoGridCardProps>(
-  ({ game, isSelected, onSelect, onAddToBuild, addBtnTitle, discLabel }) => {
+  ({ game, coverHeight, isSelected, onSelect, onAddToBuild, addBtnTitle, discLabel }) => {
     const [imgFailed, setImgFailed] = useState(false);
 
     useEffect(() => {
@@ -52,14 +64,17 @@ const MemoGridCard = React.memo<MemoGridCardProps>(
     return (
       <div
         onClick={() => onSelect(game.id)}
-        style={{ height: `${GRID_CARD_HEIGHT}px` }}
-        className={`rounded-2xl border p-3 transition-colors cursor-pointer flex flex-col justify-between overflow-hidden group ${
-          isSelected
-            ? 'border-blue-600 bg-blue-50/40 dark:bg-blue-950/40 ring-2 ring-blue-500/20'
-            : 'border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 hover:border-slate-300 dark:hover:border-slate-700'
-        }`}
+        style={{ height: `${coverHeight + GRID_TEXT_HEIGHT}px` }}
+        className="cursor-pointer flex flex-col overflow-hidden group min-w-0 p-0.5"
       >
-        <div className="h-[132px] shrink-0 rounded-xl bg-slate-950 text-white p-2 flex flex-col justify-between mb-2 relative overflow-hidden">
+        <div
+          style={{ height: `${coverHeight - 4}px` }}
+          className={`shrink-0 rounded-lg bg-slate-200/70 dark:bg-slate-800 text-white p-2 flex flex-col justify-between mb-2 relative overflow-hidden transition ${
+            isSelected
+              ? 'ring-2 ring-accent dark:ring-accent-dark'
+              : 'group-hover:ring-1 group-hover:ring-slate-300 dark:group-hover:ring-slate-600'
+          }`}
+        >
           {game.boxArtUrl && !imgFailed && (
             <img
               src={game.boxArtUrl}
@@ -68,15 +83,20 @@ const MemoGridCard = React.memo<MemoGridCardProps>(
               decoding="async"
               referrerPolicy="no-referrer"
               onError={() => setImgFailed(true)}
-              className="absolute inset-0 w-full h-full object-contain p-1.5"
+              className="absolute inset-0 w-full h-full object-contain"
             />
           )}
+          {(!game.boxArtUrl || imgFailed) && (
+            <div className="absolute inset-0 flex items-center justify-center p-3 text-center text-sm font-semibold text-slate-500 dark:text-slate-400">
+              {game.title}
+            </div>
+          )}
           <div className="relative z-10 flex items-center justify-between text-[10px] font-mono">
-            <span className="px-1.5 py-0.5 rounded bg-black/80 text-white font-bold">
+            <span className="px-1.5 py-0.5 rounded bg-slate-900/80 text-white font-semibold">
               {game.consoleShort}
             </span>
             <div className="flex items-center gap-1">
-              <span className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold">
+              <span className="px-1.5 py-0.5 rounded bg-slate-900/80 text-white font-semibold">
                 {game.region}
               </span>
               {onAddToBuild && (
@@ -87,9 +107,10 @@ const MemoGridCard = React.memo<MemoGridCardProps>(
                     onAddToBuild(game);
                   }}
                   title={addBtnTitle}
-                  className="w-5 h-5 rounded bg-blue-600 hover:bg-blue-500 text-white flex items-center justify-center shadow-xs cursor-pointer transition"
+                  aria-label={addBtnTitle}
+                  className="w-7 h-7 rounded-md bg-accent hover:bg-accent-hover text-white flex items-center justify-center shadow-xs cursor-pointer transition"
                 >
-                  <Plus className="w-3.5 h-3.5" />
+                  <Plus className="w-4 h-4" />
                 </button>
               )}
             </div>
@@ -97,12 +118,12 @@ const MemoGridCard = React.memo<MemoGridCardProps>(
         </div>
         <div className="min-w-0">
           <div
-            className="text-xs font-extrabold text-slate-900 dark:text-slate-100 truncate leading-snug"
+            className="text-[13px] font-semibold text-slate-900 dark:text-slate-100 truncate leading-snug"
             title={game.title}
           >
             {game.title}
           </div>
-          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 flex items-center justify-between gap-1.5 font-mono tabular-nums min-w-0">
+          <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 flex items-center justify-between gap-1.5 tabular-nums min-w-0">
             <span className="truncate">
               {game.discCount && game.discCount > 1
                 ? `${game.year} · ${discLabel}`
@@ -116,6 +137,7 @@ const MemoGridCard = React.memo<MemoGridCardProps>(
   },
   (prev, next) =>
     prev.isSelected === next.isSelected &&
+    prev.coverHeight === next.coverHeight &&
     prev.lang === next.lang &&
     prev.discLabel === next.discLabel &&
     prev.addBtnTitle === next.addBtnTitle &&
@@ -151,7 +173,7 @@ const MemoCompactRow = React.memo<MemoCompactRowProps>(
           : 'hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-800 dark:text-slate-200'
       }`}
     >
-      <td className="px-3 max-w-[220px] truncate align-middle" title={game.title}>
+      <td className="px-3 truncate align-middle" title={game.title}>
         <span>{game.title}</span>
         {game.discCount && game.discCount > 1 && (
           <span className="ml-1.5 text-[10px] font-mono text-slate-400 dark:text-slate-500">
@@ -163,7 +185,7 @@ const MemoCompactRow = React.memo<MemoCompactRowProps>(
         {game.consoleShort} · {game.discCount && game.discCount > 1 ? discLabel : game.bitnessGroup}
       </td>
       <td
-        className="px-3 text-slate-600 dark:text-slate-400 max-w-[150px] truncate align-middle"
+        className="px-3 text-slate-600 dark:text-slate-400 truncate align-middle"
         title={`${genreLabel} (${game.ageRating})`}
       >
         {genreLabel} ({game.ageRating})
@@ -246,13 +268,13 @@ const MemoEditorRow = React.memo<MemoEditorRowProps>(
         />
       </td>
       <td
-        className="px-3 font-mono text-rose-600 dark:text-rose-400 max-w-[200px] truncate align-middle"
+        className="px-3 font-mono text-rose-600 dark:text-rose-400 truncate align-middle"
         title={game.oldFile}
       >
         {game.oldFile}
       </td>
       <td
-        className="px-3 font-mono font-bold text-slate-900 dark:text-slate-100 max-w-[220px] truncate align-middle"
+        className="px-3 font-mono font-bold text-slate-900 dark:text-slate-100 truncate align-middle"
         title={game.cleanFile}
       >
         {game.cleanFile}
@@ -261,7 +283,7 @@ const MemoEditorRow = React.memo<MemoEditorRowProps>(
         {game.consoleShort} · {game.discCount && game.discCount > 1 ? discLabel : game.bitnessGroup} · {game.ageRating}
       </td>
       <td
-        className="px-3 text-emerald-700 dark:text-emerald-400 font-semibold max-w-[160px] truncate align-middle"
+        className="px-3 text-emerald-700 dark:text-emerald-400 font-semibold truncate align-middle"
         title={game.status}
       >
         {game.status}
@@ -316,7 +338,7 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
     scrollTop: 0,
     clientHeight: 720,
     listTopOffset: 240,
-    gridCols: 3,
+    ...computeGridMetrics(720),
   });
 
   // Progressive background buffer index so 14,000+ rows warm smoothly without blocking UI interactions
@@ -338,14 +360,15 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
       const lRect = listEl ? listEl.getBoundingClientRect() : sRect;
       const listTopOffset = Math.max(0, lRect.top - sRect.top + scrollEl.scrollTop);
       const width = listEl ? listEl.clientWidth : scrollEl.clientWidth;
-      const gridCols = width >= 540 ? 3 : 2;
+      const grid = computeGridMetrics(width);
 
       setViewportMetrics((prev) => {
         if (
           Math.abs(prev.scrollTop - scrollEl.scrollTop) < 4 &&
           Math.abs(prev.clientHeight - scrollEl.clientHeight) < 4 &&
           Math.abs(prev.listTopOffset - listTopOffset) < 4 &&
-          prev.gridCols === gridCols
+          prev.cols === grid.cols &&
+          Math.abs(prev.cardHeight - grid.cardHeight) < 2
         ) {
           return prev;
         }
@@ -353,7 +376,7 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
           scrollTop: scrollEl.scrollTop,
           clientHeight: scrollEl.clientHeight || 720,
           listTopOffset,
-          gridCols,
+          ...grid,
         };
       });
     };
@@ -425,18 +448,19 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
     const viewH = Math.max(320, viewportMetrics.clientHeight);
 
     if (viewMode === 'concept_a_sidebar') {
-      const cols = viewportMetrics.gridCols;
+      const cols = viewportMetrics.cols;
+      const stride = viewportMetrics.rowStride;
       const totalRows = Math.ceil(totalItems / cols);
-      const firstVisRow = Math.floor(relScrollTop / GRID_ROW_STRIDE);
-      const lastVisRow = Math.ceil((relScrollTop + viewH) / GRID_ROW_STRIDE);
+      const firstVisRow = Math.floor(relScrollTop / stride);
+      const lastVisRow = Math.ceil((relScrollTop + viewH) / stride);
 
       const startRow = Math.max(0, firstVisRow - GRID_OVERSCAN_ROWS);
       const endRow = Math.min(totalRows, lastVisRow + GRID_OVERSCAN_ROWS);
 
       const startIdx = startRow * cols;
       const endIdx = Math.min(totalItems, endRow * cols);
-      const topSpacerPx = startRow * GRID_ROW_STRIDE;
-      const bottomSpacerPx = Math.max(0, (totalRows - endRow) * GRID_ROW_STRIDE);
+      const topSpacerPx = startRow * stride;
+      const bottomSpacerPx = Math.max(0, (totalRows - endRow) * stride);
 
       return { startIdx, endIdx, topSpacerPx, bottomSpacerPx, totalRows };
     }
@@ -488,7 +512,7 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
     if (!scrollEl) return;
     const totalScrollable =
       viewMode === 'concept_a_sidebar'
-        ? Math.ceil(games.length / viewportMetrics.gridCols) * GRID_ROW_STRIDE
+        ? Math.ceil(games.length / viewportMetrics.cols) * viewportMetrics.rowStride
         : games.length * (viewMode === 'concept_b_split' ? COMPACT_ROW_HEIGHT : EDITOR_ROW_HEIGHT);
 
     const targetTop =
@@ -575,15 +599,18 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
             <div style={{ height: `${windowInfo.topSpacerPx}px` }} aria-hidden="true" />
           )}
           <div
-            className="grid gap-3.5"
+            className="grid"
             style={{
-              gridTemplateColumns: `repeat(${viewportMetrics.gridCols}, minmax(0, 1fr))`,
+              columnGap: `${GRID_GAP}px`,
+              rowGap: `${GRID_GAP}px`,
+              gridTemplateColumns: `repeat(${viewportMetrics.cols}, minmax(0, 1fr))`,
             }}
           >
             {visibleGames.map((g) => (
               <MemoGridCard
                 key={g.id}
                 game={g}
+                coverHeight={viewportMetrics.coverHeight}
                 isSelected={selectedGameId === g.id}
                 onSelect={onSelectGame}
                 onAddToBuild={onAddToBuild}
@@ -602,7 +629,15 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
       {/* VIEW B: Virtualized Compact High-Density List */}
       {viewMode === 'concept_b_split' && (
         <div className="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-xl">
-          <table className="w-full text-left border-collapse text-xs">
+          <table className="w-full table-fixed text-left border-collapse text-xs">
+            <colgroup>
+              <col />
+              <col className="w-[8.5rem]" />
+              <col className="w-[28%]" />
+              <col className="w-[5rem]" />
+              <col className="w-[5.5rem]" />
+              <col className="w-[3.5rem]" />
+            </colgroup>
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400">
                 <th className="py-2.5 px-3">{t('lib.col.title')}</th>
@@ -645,7 +680,15 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
       {/* VIEW C: Virtualized Editor Table */}
       {viewMode === 'concept_c_workbench' && (
         <div className="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-xl">
-          <table className="w-full text-left border-collapse text-xs">
+          <table className="w-full table-fixed text-left border-collapse text-xs">
+            <colgroup>
+              <col className="w-[3.5rem]" />
+              <col className="w-[26%]" />
+              <col />
+              <col className="w-[9rem]" />
+              <col className="w-[22%]" />
+              <col className="w-[3.5rem]" />
+            </colgroup>
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400">
                 <th className="py-2.5 px-3 whitespace-nowrap">{t('lib.col.select')}</th>

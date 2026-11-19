@@ -288,7 +288,7 @@ export const EnvironmentEmulatorsTab: React.FC<EnvironmentEmulatorsTabProps> = (
       <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-slate-200 dark:border-slate-800 pb-3">
         <div>
           <h2 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
-            {t('env.title')} · {modeShortCode}
+            {t('env.title')}
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
             {t('env.subtitle')}

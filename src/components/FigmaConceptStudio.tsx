@@ -1446,8 +1446,6 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     return filteredGames;
   }, [massFilter, enrichedGamesSource, checkedGameIds, filteredGames]);
 
-  const modeLabel = t(`header.viewFull.${selectedConcept}`);
-
   const modeShortCode = t(`header.viewShort.${selectedConcept}`);
 
   const handleSelectGame = useCallback((id: string) => {
@@ -1582,6 +1580,25 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     ? simActionText || latestLogLine
     : currentActionText || simActionText || latestLogLine;
 
+  // Narrow windows (<1024px): the inspector slides over the content; open it when a game is picked.
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const inspectorSkipFirstRef = useRef(true);
+  useEffect(() => {
+    if (inspectorSkipFirstRef.current) {
+      inspectorSkipFirstRef.current = false;
+      return;
+    }
+    setInspectorOpen(true);
+  }, [selectedGameId]);
+  useEffect(() => {
+    if (!inspectorOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setInspectorOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [inspectorOpen]);
+
   const handleCopyLogs = () => {
     navigator.clipboard.writeText(logs.join('\n')).catch(() => {});
     setCopiedLogs(true);
@@ -1593,75 +1610,23 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       {/* ==================================================================== */}
       {/* TOP BAR (Exact match to user screenshot + Journal & Install buttons) */}
       {/* ==================================================================== */}
-      <header className="bg-slate-900 dark:bg-slate-950 text-white px-4 py-2.5 flex items-center justify-between border-b border-slate-800 shrink-0 z-20">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <img src="/aegisrom-icon.png" alt="AegisROM" className="w-5 h-5 rounded-sm shrink-0" />
-          <span className="text-xs sm:text-sm font-bold tracking-tight truncate">
-            {APP_FULL_TITLE} — {modeLabel}
-          </span>
-          <span className="text-xs text-slate-400 hidden xl:inline truncate">
-            · {selectedFolderName || 'E:\\EASYROMS'} · {t('header.themeLabel')}: {isDarkMode ? t('header.themeDark') : t('header.themeLight')}
-          </span>
+      <header className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 px-4 h-12 flex items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 shrink-0 z-20">
+        <div className="flex items-center gap-2.5 min-w-0" title={APP_FULL_TITLE}>
+          <img src="/aegisrom-icon.png" alt="" className="w-6 h-6 rounded-md shrink-0" />
+          <span className="text-sm font-bold tracking-tight truncate">{APP_FULL_TITLE}</span>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
-          {/* View Mode Switcher */}
-          <div className="flex items-center gap-1 bg-slate-800 p-0.5 rounded-lg border border-slate-700">
-            <button
-              onClick={() => onSelectConcept('concept_a_sidebar')}
-              className={`px-2.5 py-1 rounded-md text-xs font-semibold transition cursor-pointer ${
-                selectedConcept === 'concept_a_sidebar'
-                  ? 'bg-blue-600 text-white shadow-2xs'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              {t('header.view.a')}
-            </button>
-            <button
-              onClick={() => onSelectConcept('concept_b_split')}
-              className={`px-2.5 py-1 rounded-md text-xs font-semibold transition cursor-pointer ${
-                selectedConcept === 'concept_b_split'
-                  ? 'bg-blue-600 text-white shadow-2xs'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              {t('header.view.b')}
-            </button>
-            <button
-              onClick={() => onSelectConcept('concept_c_workbench')}
-              className={`px-2.5 py-1 rounded-md text-xs font-semibold transition cursor-pointer ${
-                selectedConcept === 'concept_c_workbench'
-                  ? 'bg-blue-600 text-white shadow-2xs'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              {t('header.view.c')}
-            </button>
-          </div>
-
-          {/* Separate Journal Button in Header */}
-          <button
-            onClick={() => setIsLogModalOpen(true)}
-            title={t('status.journalTitle')}
-            className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition"
-          >
-            <ScrollText className="w-3.5 h-3.5 text-blue-400" />
-            <span className="hidden sm:inline">{t('header.journal')}</span>
-            <span className="px-1.5 py-0.2 bg-slate-700 rounded text-[10px] font-mono text-slate-300">
-              {logs.length}
-            </span>
-          </button>
-
+        <div className="flex items-center gap-1.5 shrink-0">
           {!isNativeDesktopHost && (
             <a
               href={DOWNLOAD_ZIP_URL}
               download={ZIP_PKG_FILENAME}
               onClick={() => onDownloadZip?.()}
-              title={ZIP_PKG_FILENAME}
-              className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition shadow-2xs"
+              title={`${t('header.downloadZip')} · ${ZIP_PKG_FILENAME}`}
+              className="h-8 px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition"
             >
-              <Archive className="w-3.5 h-3.5" />
-              <span>{t('header.downloadZip')}</span>
+              <Archive className="w-4 h-4" />
+              <span className="hidden xl:inline">{t('header.downloadZip')}</span>
             </a>
           )}
 
@@ -1670,26 +1635,26 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
               href={DOWNLOAD_SETUP_URL}
               download={SETUP_EXE_FILENAME}
               onClick={() => onDownloadExe?.()}
-              title={SETUP_EXE_FILENAME}
-              className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition shadow-2xs"
+              title={`${t('header.setupExe')} · ${SETUP_EXE_FILENAME}`}
+              className="h-8 px-2.5 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition"
             >
-              <Download className="w-3.5 h-3.5" />
-              <span>{t('header.setupExe')}</span>
+              <Download className="w-4 h-4" />
+              <span className="hidden xl:inline">{t('header.setupExe')}</span>
             </a>
           )}
 
           {/* System Language Switcher directly next to Theme Toggle */}
-          <div className="flex items-center gap-1 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-xs">
-            <Globe className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+          <div className="h-8 flex items-center gap-1 border border-slate-200 dark:border-slate-700 rounded-lg px-2 text-xs">
+            <Globe className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
             <select
               value={lang}
               onChange={(e) => setLang(e.target.value as SupportedLanguage)}
               title={t('header.langLabel')}
               aria-label={t('header.langLabel')}
-              className="bg-transparent text-slate-100 text-xs font-bold focus:outline-none cursor-pointer pr-0.5"
+              className="bg-transparent text-slate-800 dark:text-slate-100 text-xs font-semibold cursor-pointer pr-0.5 max-w-[9.5rem]"
             >
               {SUPPORTED_LANGUAGES.map((l) => (
-                <option key={l.code} value={l.code} className="bg-slate-900 text-slate-100">
+                <option key={l.code} value={l.code} className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">
                   {l.shortCode} · {l.nativeLabel}
                 </option>
               ))}
@@ -1699,14 +1664,11 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
           {/* Theme Switcher Button */}
           <button
             onClick={onToggleDarkMode}
-            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 flex items-center justify-center cursor-pointer transition"
+            className="w-8 h-8 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center cursor-pointer transition"
             title={isDarkMode ? t('header.themeLight') : t('header.themeDark')}
+            aria-label={isDarkMode ? t('header.themeLight') : t('header.themeDark')}
           >
-            {isDarkMode ? (
-              <Sun className="w-4 h-4 text-amber-400" />
-            ) : (
-              <Moon className="w-4 h-4 text-slate-200" />
-            )}
+            {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
           </button>
         </div>
       </header>
@@ -1720,67 +1682,16 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         className="hidden"
       />
 
-      {/* Top Navigation Bar when in Compact (B) or Editor (C) modes */}
-      {selectedConcept !== 'concept_a_sidebar' && (
-        <div className="px-5 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/90 flex flex-wrap items-center justify-between gap-3 shrink-0">
-          <div className="flex items-center gap-1.5">
-            {[
-              { id: 'library', label: `${t('nav.library')} (${enrichedGamesSource.length})`, icon: Database },
-              { id: 'tools', label: t('nav.tools'), icon: Wrench },
-              { id: 'builds', label: t('nav.builds'), icon: Share2 },
-              { id: 'env', label: t('nav.env'), icon: Gamepad2 },
-            ].map((tb) => {
-              const Icon = tb.icon;
-              const active = previewTab === tb.id;
-              return (
-                <button
-                  key={tb.id}
-                  onClick={() => setPreviewTab(tb.id as any)}
-                  className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                    active
-                      ? 'bg-blue-600 text-white shadow-2xs'
-                      : 'text-slate-700 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800'
-                  }`}
-                >
-                  <Icon className="w-3.5 h-3.5" />
-                  <span>{tb.label}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => openDbFileInputRef.current?.click()}
-              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-            >
-              <Database className="w-3.5 h-3.5" />
-              <span>{t('lib.openDb')}</span>
-            </button>
-            <button
-              onClick={handleSaveDatabaseToFile}
-              className="px-3 py-1.5 rounded-lg bg-slate-200/80 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-            >
-              <Download className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-              <span>{t('lib.saveDb')}</span>
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* ==================================================================== */}
       {/* MAIN 12-COLUMN WORKSPACE (Fills remaining height above status bar)   */}
       {/* ==================================================================== */}
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 min-h-0 overflow-hidden">
-        {/* LEFT COLUMN: Sidebar (Shown in Presentation View A and Compact View B) */}
-        {(selectedConcept === 'concept_a_sidebar' || selectedConcept === 'concept_b_split') && (
-          <aside className="lg:col-span-2 bg-slate-100/80 dark:bg-slate-950/60 border-r border-slate-200 dark:border-slate-800 p-4 flex flex-col min-h-0 overflow-hidden gap-4">
-            {selectedConcept === 'concept_a_sidebar' && (
-              <div className="shrink-0">
-                <div className="text-[11px] font-semibold text-slate-400 px-2.5 mb-1.5">
-                  {t('header.sections')}
-                </div>
-                <nav className="space-y-1">
+      <div className="aegis-shell flex-1">
+        {/* LEFT COLUMN: Sidebar — same in every view; collapses to an icon rail below 1280px */}
+        {(
+          <aside className="aegis-nav bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 px-3 py-3 flex flex-col min-h-0 overflow-hidden gap-4">
+            {(
+              <div className="aegis-nav-sections shrink-0">
+                <nav className="space-y-0.5" aria-label={t('header.sections')}>
                   {[
                     {
                       id: 'library',
@@ -1798,20 +1709,22 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       <button
                         key={tab.id}
                         onClick={() => setPreviewTab(tab.id as any)}
-                        className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
+                        title={tab.label}
+                        aria-current={active ? 'page' : undefined}
+                        className={`aegis-nav-item w-full flex items-center justify-between px-3 h-9 rounded-lg text-[13px] font-semibold transition-colors cursor-pointer ${
                           active
-                            ? 'bg-blue-600 text-white shadow-2xs'
-                            : 'text-slate-700 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800'
+                            ? 'bg-accent-soft text-accent dark:bg-accent-soft-dark dark:text-accent-dark'
+                            : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
                         }`}
                       >
                         <span className="flex items-center gap-2.5">
-                          <Icon className="w-4 h-4" />
-                          <span>{tab.label}</span>
+                          <Icon className="w-4 h-4 shrink-0" />
+                          <span className="aegis-nav-label">{tab.label}</span>
                         </span>
                         {tab.count && (
                           <span
-                            className={`font-mono text-[11px] tabular-nums ${
-                              active ? 'text-blue-100' : 'text-slate-400'
+                            className={`aegis-nav-count text-xs tabular-nums ${
+                              active ? 'text-accent dark:text-accent-dark' : 'text-slate-500 dark:text-slate-400'
                             }`}
                           >
                             {tab.count}
@@ -1825,15 +1738,15 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
             )}
 
             {/* DYNAMIC GROUPING & FILTERING OF ALL ROMS FOUND IN THE DATABASE (Full-height list) */}
-            <div className="flex-1 flex flex-col min-h-0">
-              <div className="flex items-center justify-between px-1 mb-1.5 shrink-0">
-                <span className="text-[11px] font-semibold text-slate-400">
-                  {t('cat.title')} ({dynamicSidebarGroups.length})
+            <div className="aegis-nav-cats flex-1 flex flex-col min-h-0 w-full">
+              <div className="flex items-center justify-between px-3 mb-1.5 shrink-0">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  {t('cat.title')}
                 </span>
               </div>
 
               {/* 4-Mode Grouping Switcher */}
-              <div className="grid grid-cols-2 gap-1 p-1 bg-slate-200/70 dark:bg-slate-900 rounded-lg mb-2 text-[10px] font-bold shrink-0">
+              <div className="grid grid-cols-2 gap-0.5 p-0.5 bg-slate-100 dark:bg-slate-800 rounded-lg mb-2 text-[11px] font-semibold shrink-0">
                 {[
                   { id: 'console', label: t('cat.byConsole') },
                   { id: 'bitness', label: t('cat.byBitness') },
@@ -1852,9 +1765,9 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         }
                       });
                     }}
-                    className={`py-1 px-1.5 rounded text-center cursor-pointer transition ${
+                    className={`py-1 px-1.5 rounded-md text-center cursor-pointer transition ${
                       sidebarGroupBy === mode.id
-                        ? 'bg-blue-600 text-white shadow-2xs'
+                        ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-2xs'
                         : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                     }`}
                   >
@@ -1873,10 +1786,10 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       }
                     });
                   }}
-                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
+                  className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-[13px] transition-colors cursor-pointer ${
                     activeSidebarFilterKey === 'ALL'
-                      ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 font-bold shadow-2xs'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+                      ? 'bg-accent-soft dark:bg-accent-soft-dark text-accent dark:text-accent-dark font-semibold'
+                      : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
                   }`}
                 >
                   <span className="truncate">
@@ -1888,7 +1801,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       ? t('cat.allGenre')
                       : t('cat.allAge')}
                   </span>
-                  <span className="font-mono text-[11px] text-slate-400 tabular-nums">
+                  <span className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">
                     {enrichedGamesSource.length}
                   </span>
                 </button>
@@ -1904,15 +1817,15 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         }
                       });
                     }}
-                    className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
+                    className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-[13px] transition-colors cursor-pointer ${
                       activeSidebarFilterKey === grp.key
-                        ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 font-bold shadow-2xs'
-                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+                        ? 'bg-accent-soft dark:bg-accent-soft-dark text-accent dark:text-accent-dark font-semibold'
+                        : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
                     }`}
                     title={grp.label}
                   >
                     <span className="truncate">{grp.label}</span>
-                    <span className="font-mono text-[11px] text-slate-400 tabular-nums ml-1.5">
+                    <span className="text-xs text-slate-500 dark:text-slate-400 tabular-nums ml-1.5">
                       {grp.count}
                     </span>
                   </button>
@@ -1925,9 +1838,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         {/* CENTER WORKSPACE COLUMN (Scrollable content area) */}
         <main
           ref={mainScrollRef}
-          className={`${
-            selectedConcept === 'concept_c_workbench' ? 'lg:col-span-8' : 'lg:col-span-6'
-          } p-5 border-r border-slate-200 dark:border-slate-800 overflow-y-auto space-y-3.5`}
+          className="min-w-0 min-h-0 p-5 bg-slate-50 dark:bg-slate-950 overflow-y-auto space-y-3.5"
         >
           {/* ============================================================ */}
           {/* TAB 1: БИБЛИОТЕКА (Чистое отображение ромов + Открыть/Сохранить БД + «+» в сборку) */}
@@ -1936,22 +1847,83 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
             <>
               <div className="flex flex-wrap items-center justify-between gap-2.5 pb-2.5 border-b border-slate-200 dark:border-slate-800">
                 <div>
-                  <h2 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
-                    {t('lib.title')} · {modeShortCode} ({filteredGames.length} {t('lib.gamesOf')} {enrichedGamesSource.length} {t('lib.gamesSuffix')})
+                  <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100 flex items-baseline gap-2 flex-wrap">
+                    <span>{t('lib.title')}</span>
+                    <span className="text-sm font-medium text-slate-500 dark:text-slate-400 tabular-nums">
+                      {filteredGames.length === enrichedGamesSource.length
+                        ? `${enrichedGamesSource.length} ${t('lib.gamesSuffix')}`
+                        : `${filteredGames.length} ${t('lib.gamesOf')} ${enrichedGamesSource.length} ${t('lib.gamesSuffix')}`}
+                    </span>
                   </h2>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 break-all">
                     {t('lib.activeDb')} <strong className="text-slate-700 dark:text-slate-200">{activeDbEntry?.name}</strong> · {t('lib.activePath')} <code className="font-mono">{effectiveLibraryPath}</code>
                   </p>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
+                  {/* Library view switcher (tiles / compact list / editor) */}
+                  <div
+                    className="flex items-center gap-0.5 p-0.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800"
+                    role="group"
+                    aria-label={t('header.viewLabel')}
+                  >
+                    {(
+                      [
+                        ['concept_a_sidebar', t('header.view.a')],
+                        ['concept_b_split', t('header.view.b')],
+                        ['concept_c_workbench', t('header.view.c')],
+                      ] as const
+                    ).map(([cid, label]) => (
+                      <button
+                        key={cid}
+                        type="button"
+                        onClick={() => onSelectConcept(cid)}
+                        aria-pressed={selectedConcept === cid}
+                        className={`h-7 px-2.5 rounded-md text-xs font-semibold transition cursor-pointer ${
+                          selectedConcept === cid
+                            ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-2xs'
+                            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Category filter: replaces the sidebar list when the sidebar is collapsed (<1280px) */}
+                  <select
+                    value={activeSidebarFilterKey}
+                    onChange={(e) => {
+                      const key = e.target.value;
+                      startUiTransition(() => setActiveSidebarFilterKey(key));
+                    }}
+                    aria-label={t('cat.title')}
+                    className="xl:hidden h-8 max-w-[14rem] bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 text-xs font-semibold text-slate-800 dark:text-slate-100"
+                  >
+                    <option value="ALL">
+                      {sidebarGroupBy === 'console'
+                        ? t('cat.allConsole')
+                        : sidebarGroupBy === 'bitness'
+                        ? t('cat.allBitness')
+                        : sidebarGroupBy === 'genre'
+                        ? t('cat.allGenre')
+                        : t('cat.allAge')}{' '}
+                      ({enrichedGamesSource.length})
+                    </option>
+                    {dynamicSidebarGroups.map((grp) => (
+                      <option key={grp.key} value={grp.key}>
+                        {grp.label} ({grp.count})
+                      </option>
+                    ))}
+                  </select>
+
                   {/* Sorting Dropdown */}
                   <div className="flex items-center gap-1.5 text-xs">
-                    <span className="text-slate-500 font-semibold">{t('lib.sort')}</span>
+                    <span className="text-slate-500 dark:text-slate-400 font-semibold">{t('lib.sort')}</span>
                     <select
                       value={librarySortBy}
                       onChange={(e) => setLibrarySortBy(e.target.value as any)}
-                      className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-800 dark:text-slate-100"
+                      className="h-8 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 text-xs font-semibold text-slate-800 dark:text-slate-100"
                     >
                       <option value="title">{t('lib.sort.title')}</option>
                       <option value="console">{t('lib.sort.console')}</option>
@@ -1969,7 +1941,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       placeholder={t('lib.searchPlaceholder')}
-                      className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600"
+                      className="w-full h-8 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg pl-8 pr-3 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
                     />
                   </div>
                 </div>
@@ -2022,7 +1994,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         void hydrateDbRowsMedia(found.id, found.rows, found.pathHint);
                       }
                     }}
-                    className="bg-white dark:bg-slate-900 border border-blue-400 dark:border-blue-600 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-900 dark:text-slate-100 min-w-[220px] max-w-full"
+                    className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 h-8 text-xs font-semibold text-slate-900 dark:text-slate-100 min-w-0 w-full sm:w-auto sm:flex-1 max-w-md"
                   >
                     {savedDatabases.map((db) => {
                       const displayName =
@@ -2044,7 +2016,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   <button
                     onClick={() => openDbFileInputRef.current?.click()}
                     disabled={activeRunning}
-                    className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition shadow-2xs disabled:opacity-50"
+                    className="h-8 px-2.5 rounded-lg bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition disabled:opacity-50"
                   >
                     <FolderOpen className="w-3.5 h-3.5 shrink-0" />
                     <span>{t('lib.openDb')}</span>
@@ -2053,9 +2025,9 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   <button
                     onClick={handleSaveDatabaseToFile}
                     disabled={activeRunning}
-                    className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition disabled:opacity-50"
+                    className="h-8 px-2.5 rounded-lg bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition disabled:opacity-50"
                   >
-                    <Download className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
+                    <Download className="w-3.5 h-3.5 shrink-0" />
                     <span>{t('lib.saveDb')}</span>
                   </button>
                 </div>
@@ -2086,7 +2058,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
                 <div>
                   <h2 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
-                    {t('tools.title')} · {modeShortCode}
+                    {t('tools.title')}
                   </h2>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                     {t('tools.subtitle')}
@@ -3088,7 +3060,17 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         </main>
 
         {/* RIGHT COLUMN: GAME INSPECTOR WITH COVER ART + HOVER VIDEO PREVIEW */}
-        <aside className="lg:col-span-4 p-5 bg-slate-50/70 dark:bg-slate-950/50 flex flex-col justify-between overflow-y-auto">
+        <div
+          className="aegis-insp-backdrop absolute inset-0 z-30 bg-slate-900/30"
+          data-open={inspectorOpen}
+          onClick={() => setInspectorOpen(false)}
+          aria-hidden="true"
+        />
+        <aside
+          className="aegis-insp min-w-0 p-5 bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 flex flex-col justify-between gap-4 overflow-y-auto"
+          data-open={inspectorOpen}
+          aria-label={t('insp.header')}
+        >
           {selectedGame && (() => {
             const resolvedEmu = resolvePriorityEmulatorForConsole(
               selectedGame.consoleShort,
@@ -3203,16 +3185,22 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
             return (
               <>
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
-                      {t('insp.header')}
-                    </span>
-                    <span className="text-[11px] font-mono text-blue-600 dark:text-blue-400 font-semibold">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 rounded-md px-2 py-0.5">
                       {selectedGame.consoleShort} · {selectedGame.bitness}
                       {hasMultiDisc && selectedGame.discs
                         ? ` · ${tf('lib.multiDiscCount', { count: selectedGame.discs.length })}`
                         : ''}
                     </span>
+                    <button
+                      type="button"
+                      onClick={() => setInspectorOpen(false)}
+                      className="lg:hidden w-8 h-8 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 flex items-center justify-center cursor-pointer"
+                      title={t('status.close')}
+                      aria-label={t('status.close')}
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
                   </div>
 
                   {/* Cover Art that plays Short Gameplay Video on Hover! */}
@@ -3227,7 +3215,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   />
 
                   <div>
-                    <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
+                    <h3 className="text-lg font-bold leading-snug text-slate-900 dark:text-slate-100">
                       {selectedGame.title}
                     </h3>
                     <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
@@ -3380,16 +3368,19 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   })()}
                 </div>
 
-                <div className="flex items-center gap-2 mt-4">
+                <div className="flex flex-wrap items-stretch gap-2">
                   <button
                     onClick={handleLaunchGame}
-                    className="flex-1 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold flex items-center justify-center gap-2 cursor-pointer shadow-xs transition"
+                    title={
+                      isNativeDesktopHost
+                        ? `${t('insp.launchNative')} «${selectedGame.title}» (${activeEmuName})`
+                        : `${t('insp.launchCmd')}: ${selectedGame.title}`
+                    }
+                    className="flex-1 min-w-[12rem] h-10 px-4 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm font-semibold flex items-center justify-center gap-2 cursor-pointer transition"
                   >
                     <Play className="w-4 h-4 fill-white shrink-0" />
                     <span className="truncate">
-                      {isNativeDesktopHost
-                        ? `${t('insp.launchNative')} «${selectedGame.title}» (${activeEmuName})`
-                        : `${t('insp.launchCmd')}: ${selectedGame.title}`}
+                      {isNativeDesktopHost ? t('insp.launchNative') : t('insp.launchCmd')}
                     </span>
                   </button>
 
@@ -3400,7 +3391,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       setNewBuildNameInput('');
                     }}
                     title={t('lib.addToBuild')}
-                    className="py-3 px-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold flex items-center gap-1.5 cursor-pointer shadow-xs transition shrink-0"
+                    className="h-10 px-3.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-100 text-sm font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition"
                   >
                     <Plus className="w-4 h-4" />
                     <span>{t('lib.addToBuild')}</span>
@@ -3417,7 +3408,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       {/* ("снизу одной строкой показывать текущее действие и в этой же строке */}
       {/*  заполнение цветом прогресса всего задания")                         */}
       {/* ==================================================================== */}
-      <footer className="relative h-11 border-t border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-950 px-4 flex items-center justify-between gap-4 overflow-hidden shrink-0 z-20">
+      <footer className="relative h-10 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 flex items-center justify-between gap-4 overflow-hidden shrink-0 z-20">
         {/* Background Color Fill of the Entire Task Progress inside the same single row */}
         <div
           className={`absolute inset-y-0 left-0 pointer-events-none transition-all duration-200 ${
@@ -3451,7 +3442,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
           )}
 
           <div
-            className="font-mono text-slate-800 dark:text-slate-200 truncate font-medium"
+            className="text-slate-600 dark:text-slate-300 truncate"
             title={statusLineText}
           >
             {statusLineText}
@@ -3463,24 +3454,23 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
           <button
             onClick={() => setIsLogModalOpen(true)}
             title={t('status.journalTitle')}
-            className="px-3 py-1.5 rounded-lg bg-white dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs flex items-center gap-1.5 cursor-pointer transition"
+            className="h-7 px-2.5 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold text-xs flex items-center gap-1.5 cursor-pointer transition"
           >
-            <ScrollText className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+            <ScrollText className="w-3.5 h-3.5" />
             <span>{t('header.journal')} ({logs.length})</span>
           </button>
 
-          <button
-            onClick={handleStopAll}
-            title={t('status.stop')}
-            className={`px-3.5 py-1.5 rounded-lg font-extrabold text-xs flex items-center gap-1.5 cursor-pointer transition ${
-              activeRunning
-                ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-sm animate-pulse'
-                : 'bg-rose-600 hover:bg-rose-700 text-white'
-            }`}
-          >
-            <OctagonX className="w-3.5 h-3.5" />
-            <span>⏹ {t('status.stop')}</span>
-          </button>
+          {/* STOP is shown only while a task is running, so red keeps meaning "something is happening" */}
+          {activeRunning && (
+            <button
+              onClick={handleStopAll}
+              title={t('status.stop')}
+              className="h-7 px-3 rounded-md bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs flex items-center gap-1.5 cursor-pointer transition"
+            >
+              <OctagonX className="w-3.5 h-3.5" />
+              <span>{t('status.stop')}</span>
+            </button>
+          )}
         </div>
       </footer>
 
