@@ -4,6 +4,8 @@
  * when opening saved `.aegisdb.json` database files without re-scanning folders!
  */
 
+import { MULTI_DBS_DISK_KEY, writeDiskValue } from './nativeStorage';
+
 const IDB_NAME = 'AegisROM_FS_Handles_v5';
 const IDB_STORE = 'directory_handles';
 
@@ -263,6 +265,9 @@ export async function saveMultiDbsToIndexedDB(dbs: any[]): Promise<void> {
           }))
         : [],
     }));
+    // Копия на диск для нативного окна (stringify откладывается до записи).
+    // Disk copy for the native window (stringify is deferred to the write).
+    writeDiskValue(MULTI_DBS_DISK_KEY, () => JSON.stringify(sanitized));
     const db = await openLargeDbCache();
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(DB_CACHE_STORE, 'readwrite');

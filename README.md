@@ -142,6 +142,7 @@ Open an [Issue](https://github.com/wirgylle/AegisROM/issues) and describe what y
 |---|---|
 | **0.5.5 – 0.5.7** | Patcher for translations and ROM hacks (IPS / BPS / UPS / xdelta). Separate `hackroms/` and `patch/` folders for each console: 1G1R doesn't delete hacks as duplicates but offers to move them; the game card shows how a ROM differs from the original; filters, builds and renaming by "patched" or "hack" status. BIOS verification by checksum and copying the required BIOS into a build. Quick game test right in the app window. |
 | **0.5.8** | First-run setup wizard: language, library and ROM folders, importing your own ROMs and renaming rules. While the library is built in the background, the app shows a tour of the main features. |
+| **before 0.6.0** | The app's own window instead of Edge or Chrome, with settings stored on disk. A macOS version: one `.dmg` for Intel and Apple Silicon, games launched through Mac emulators. PortMaster on Windows through a Linux environment (WSL). |
 | **0.6.0** | Save manager (`.srm`, `.state`, memory cards) with version history. Uploading builds to the console over Wi-Fi (SFTP / SMB / WebDAV) without removing the card. |
 | **0.7.0** | RetroAchievements: checking achievement support by ROM hash. PDF manuals, walkthrough maps and a soundtrack player in the game card. |
 

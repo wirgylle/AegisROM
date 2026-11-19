@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -376,6 +377,16 @@ func runHybridModernDesktopApp() bool {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write([]byte(`{"ok":true}`))
+	})
+
+	// Разовый перенос настроек из профиля Edge (см. native_window.go).
+	// One-time settings move out of the Edge profile (see native_window.go).
+	storageMigratedCh := make(chan struct{})
+	var storageMigratedOnce sync.Once
+	mux.HandleFunc("/api/native/storage-migrated", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+		storageMigratedOnce.Do(func() { close(storageMigratedCh) })
 	})
 
 	mux.HandleFunc("/api/native/shutdown", func(w http.ResponseWriter, r *http.Request) {
@@ -1021,6 +1032,7 @@ func runHybridModernDesktopApp() bool {
 
 	// 4–5. Библиотека, сборки, PortMaster и скрапер: общие для всех оболочек (aegisapi).
 	aegisapi.RegisterLibraryRoutes(mux, appDir, touch)
+	aegisapi.RegisterStorageRoutes(mux, appDir, touch)
 
 	// 6. Serve Embedded React 19 + Tailwind CSS SPA directly from memory with explicit anti-cache MIME headers
 	mux.Handle("/", aegisapi.SPAHandler(webAssets, indexBytes, touch))
@@ -1062,6 +1074,18 @@ func runHybridModernDesktopApp() bool {
 			}
 		}
 		time.Sleep(25 * time.Millisecond)
+	}
+
+	// Нативное окно Wails, если включено; при ошибке ниже откроется Edge.
+	// Native Wails window when enabled; on error Edge opens below.
+	if useNativeWindow(appDir) {
+		if needsLegacyStorageMigration(appDir) {
+			migrateLegacyBrowserStorage(appDir, appURL, storageMigratedCh)
+		}
+		if err := runNativeWindow(mux, appDir); err == nil {
+			_ = srv.Close()
+			return true
+		}
 	}
 
 	// Open standalone frameless desktop application window (--app=...)
