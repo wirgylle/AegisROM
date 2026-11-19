@@ -15,13 +15,14 @@ import (
 )
 
 // RegisterLibraryRoutes регистрирует API, общее для всех оболочек (десктоп, aegis-server):
-// база библиотеки (/api/db/*), сохранённые сборки, PortMaster и скрапер медиа.
+// база библиотеки (/api/db/*), сохранённые сборки, PortMaster, скрапер медиа и DAT (/api/dat/*).
 // Данные хранятся в appDir. touch вызывается на каждый запрос (heartbeat десктопа), может быть nil.
 func RegisterLibraryRoutes(mux *http.ServeMux, appDir string, touch func()) {
 	if touch == nil {
 		touch = func() {}
 	}
 	dbFilePath := filepath.Join(appDir, "aegisrom-v5-db.json")
+	registerDatRoutes(mux, appDir, touch)
 
 	// 4. Persistent AegisDB Endpoints
 	mux.HandleFunc("/api/db/state", func(w http.ResponseWriter, r *http.Request) {

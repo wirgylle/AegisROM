@@ -37,6 +37,7 @@ import {
   Table as TableIcon,
 } from 'lucide-react';
 import { computeCRC32Hex } from './utils/crc32';
+import { lookupTitlesByHash, type DatMatch } from './utils/datHashLookup';
 import {
   ConsoleSteamTabs,
   type PersistentDbState,
@@ -517,7 +518,10 @@ type TitleSource =
   | 'filename'
   | 'index-strip'
   | 'libretro-exact'
-  | 'libretro-fuzzy';
+  | 'libretro-fuzzy'
+  | 'dat-nointro'
+  | 'dat-redump'
+  | 'dat';
 
 interface ScannedRomFile {
   id: string;
@@ -1378,6 +1382,19 @@ function parseRegion(fileName: string, isRus: boolean): string {
 function parseRevision(fileName: string): string {
   const m = fileName.match(REVISION_REGEX);
   return m && m[1] ? m[1] : '';
+}
+
+// Название из DAT («Final Fantasy VII (USA) (Disc 1)») → чистое название, регион и ревизия.
+// DAT name → clean title, region and revision.
+function titleFromDatMatch(m: DatMatch, isRussian: boolean) {
+  const name = m.name || '';
+  const disc = extractDiscNumberAndBaseTitle(name);
+  return {
+    title: extractCleanTitle(disc.baseNameWithoutDisc || name),
+    region: parseRegion(name, isRussian),
+    revision: parseRevision(name),
+    source: (m.source === 'no-intro' ? 'dat-nointro' : m.source === 'redump' ? 'dat-redump' : 'dat') as TitleSource,
+  };
 }
 
 function formatSize(bytes: number): string {
@@ -6790,12 +6807,67 @@ export function App() {
       let onlineFuzzy = 0;
       let onlineMissed = 0;
 
-      // Batch server title lookup in chunks of 120
-      const resolvedTitles = new Map<string, { title: string; source: TitleSource }>();
+      const resolvedTitles = new Map<
+        string,
+        { title: string; source: TitleSource; region?: string; revision?: string; note?: string }
+      >();
       const unresolvedReasons = new Map<string, string>();
-      for (let start = 0; start < targets.length; start += 120) {
+
+      // 1. Сверка по хешу с DAT No-Intro / Redump — основной источник названия.
+      // 1. Hash match against No-Intro / Redump DATs — the primary title source.
+      let datHits = 0;
+      const datMisses = new Map<string, string>();
+      setCurrentActionText(t('app.rename.datStart'));
+      const datResults = await lookupTitlesByHash(
+        targets.map((r) => ({
+          id: r.id,
+          fileName: r.fileName,
+          extension: r.extension,
+          consoleCode: r.consoleCode,
+          system: (CONSOLE_CATALOG[r.consoleCode] || CONSOLE_CATALOG.nes).libretroSystem,
+          fileObj: r.fileObj,
+          companionFiles: r.companionFiles,
+          discs: r.discs,
+        })),
+        {
+          shouldStop: () => stopRequestedRef.current,
+          onProgress: (done, total, name) => {
+            if (done % 10 === 0 || done === total) {
+              setCurrentActionText(tf('app.rename.datHashing', { i: done, total, name }));
+              setProgressPct(5 + Math.round((done / Math.max(1, total)) * 15));
+            }
+          },
+        }
+      );
+      if (!datResults) {
+        addLog(t('app.rename.datNone'));
+      } else {
+        for (const r of targets) {
+          const m = datResults.get(r.id);
+          if (m?.matched && m.name) {
+            const d = titleFromDatMatch(m, r.isRussian);
+            if ((d.title.match(/[a-zA-Zа-яА-ЯёЁ0-9]/g) || []).length < 1) continue;
+            resolvedTitles.set(r.id, {
+              title: d.title,
+              source: d.source,
+              region: d.region,
+              revision: d.revision,
+              note: m.badDump ? t('title.note.datBadDump') : '',
+            });
+            datHits++;
+          } else if (m?.reason) {
+            datMisses.set(r.id, m.reason);
+          }
+        }
+        addLog(tf('app.rename.datSummary', { found: datHits, total: targets.length }));
+      }
+
+      // 2. Остальное — поиск по названию в индексе Libretro, пачками по 120.
+      // 2. The rest — title search in the Libretro index, in chunks of 120.
+      const onlineTargets = targets.filter((r) => !resolvedTitles.has(r.id));
+      for (let start = 0; start < onlineTargets.length; start += 120) {
         if (stopRequestedRef.current) break;
-        const slice = targets.slice(start, start + 120);
+        const slice = onlineTargets.slice(start, start + 120);
         try {
           const resp = await fetch('/api/r36s/scrape-batch', {
             method: 'POST',
@@ -6836,7 +6908,7 @@ export function App() {
           const reason = tf('title.note.onlineNetErr', { err: String(err) });
           for (const w of slice) unresolvedReasons.set(w.id, reason);
         }
-        setProgressPct(10 + Math.round(((start + slice.length) / Math.max(1, targets.length)) * 30));
+        setProgressPct(20 + Math.round(((start + slice.length) / Math.max(1, onlineTargets.length)) * 20));
       }
 
       for (let i = 0; i < updated.length; i++) {
@@ -6846,7 +6918,13 @@ export function App() {
 
         const resolved = resolvedTitles.get(r.id);
         const bestTitle = resolved?.title || r.cleanTitle;
-        const unresolvedNote = resolved ? '' : unresolvedReasons.get(r.id) || '';
+        const datMiss = datMisses.get(r.id);
+        const onlineMiss = unresolvedReasons.get(r.id) || '';
+        const unresolvedNote = resolved
+          ? resolved.note || ''
+          : datMiss
+            ? `DAT: ${datMiss}; ${onlineMiss || t('title.note.onlineNoMatch')}`
+            : onlineMiss;
         if (!resolved) {
           onlineMissed++;
           if (onlineMissed <= ONLINE_LOG_LIMIT) {
@@ -6854,11 +6932,16 @@ export function App() {
           }
         } else if (resolved.source === 'libretro-fuzzy') {
           onlineFuzzy++;
-        } else {
+        } else if (resolved.source === 'libretro-exact') {
           onlineExact++;
         }
         const newCandidate = updateRomWithFilenameConfig(
-          { ...r, cleanTitle: bestTitle },
+          {
+            ...r,
+            cleanTitle: bestTitle,
+            region: resolved?.region || r.region,
+            revision: resolved?.region ? resolved.revision || '' : r.revision,
+          },
           filenameConfigRef.current
         );
         const safeNewName = newCandidate.canonicalName.replace(/[<>:"/\\|?*]/g, '_').trim();

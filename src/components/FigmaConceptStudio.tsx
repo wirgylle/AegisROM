@@ -34,6 +34,7 @@ import {
   Check,
 } from 'lucide-react';
 import { GameInspectorCoverVideo } from './GameInspectorCoverVideo';
+import { DatFilesPanel } from './DatFilesPanel';
 import {
   APP_FULL_TITLE,
   DOWNLOAD_SETUP_URL,
@@ -2282,6 +2283,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       <span>{t('tools.lib.runScraper')}</span>
                     </button>
                   </div>
+
+                  <DatFilesPanel disabled={activeRunning} />
 
                   {/* Core Library Action Grid: 1G1R, Online Rename, XML Rename, Phantom Cleanup, Multi-Disc .M3U */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
