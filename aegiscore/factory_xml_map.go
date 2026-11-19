@@ -1,6 +1,6 @@
-package main
+package aegiscore
 
-var factoryR36sNumberMap = map[string]string{
+var FactoryR36SNumberMap = map[string]string{
 	"000001": "007 - Tomorrow Never Dies (USA)",
 	"000002": "2Xtreme (USA)",
 	"000003": "3D Lemmings",

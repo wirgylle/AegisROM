@@ -1,9 +1,17 @@
 # Архитектура
 
 ```text
+├── aegiscore/            # Ядро (aegis-core): логика без привязки к ОС, с юнит-тестами
+│   ├── catalog.go                # Каталог консолей, расширения, база серийников PS1
+│   ├── titles.go                 # Названия из заголовков (PS1/CHD/PBP, SNES, GBA, N64, NDS...), регионы
+│   ├── scan.go                   # Разбор рома, CRC/MD5, 1G1R-скоринг, дедупликация
+│   ├── gamelist.go               # gamelist.xml: устойчивый разбор, запись, сопоставление 000001 -> название
+│   ├── media.go                  # Медиа, обложки, «фантомные» папки
+│   ├── scraper.go                # Индексы Libretro thumbnails / Archive.org, скачивание
+│   └── disc.go                   # Образы дисков: BIN 2352 -> ISO, MDF/IMG -> CUE+BIN
 ├── cmd/
 │   ├── aegis-gui/        # Нативное Windows-приложение: Win32 окно + локальный HTTP API + встроенный фронтенд
-│   │   ├── main.go                   # Win32 GUI и логика
+│   │   ├── main.go                   # Классический Win32 GUI (заморожен), вызывает aegiscore
 │   │   ├── hybrid_webview_server.go  # Локальный файловый API (127.0.0.1) и раздача фронтенда
 │   │   └── webdist/                  # Генерируется: копия dist/ для //go:embed (в git только .gitkeep)
 │   ├── aegis-setup/      # Однофайловый установщик Setup.exe
@@ -25,6 +33,15 @@
 └── .github/workflows/    # CI и релизы
 ```
 
+## Ядро и оболочки
+
+Целевая схема: вся логика живёт в `aegiscore` (без `syscall`/Win32, собирается под windows/linux/darwin). Оболочки только вызывают ядро:
+
+- `cmd/aegis-gui` — классический Win32 GUI (`--classic-win32`, заморожен, не портируется) и гибридный режим: локальный HTTP API + React UI.
+- Дальше: `aegis-server` (HTTP API поверх ядра, отдаёт React UI), десктоп через Wails, Docker/NAS.
+
+Новую логику пишите в `aegiscore` с тестом, а не в `cmd/`. Ядро не трогает UI: журнал передаётся через `aegiscore.SetLogger`, выбранный пользователем gamelist.xml — через `aegiscore.SetCustomXMLPath`.
+
 ## Два режима запуска
 
 - **Браузер / dev**: `npm run dev` → Express (`server.ts`) отдаёт фронтенд через Vite и API.
@@ -32,6 +49,6 @@
 
 ## Известный технический долг
 
-- `src/App.tsx` и `cmd/aegis-gui/main.go` — монолиты по несколько тысяч строк.
+- `src/App.tsx` — монолит на несколько тысяч строк; `cmd/aegis-gui/main.go` после выноса ядра ~3.4k строк Win32-кода.
 - Исходник сканера продублирован: `cmd/aegis-scanner/main.go`, `public/downloads/aegis-scanner.go` (из него собирается релизный `.exe` и он отдаётся на скачивание), `src/data/goScannerSource.ts`.
-- Тестов пока нет.
+- Тесты есть только у `aegiscore` и guard'а локального API; у фронтенда тестов нет.
