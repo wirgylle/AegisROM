@@ -644,7 +644,7 @@ func main() {
 	// Terminate any stale older AegisROM.exe instances before binding local port
 	winsetup.KillOtherAegisRomProcesses()
 
-	// By default, launch the modern React 19 + Tailwind CSS v0.5.4 Beta Desktop App Window (1-to-1 identical to the AI Studio preview!)
+	// By default, launch the modern React 19 + Tailwind CSS Desktop App Window (1-to-1 identical to the AI Studio preview!)
 	if !useClassicWin32 {
 		if runHybridModernDesktopApp() {
 			return
@@ -707,7 +707,7 @@ func main() {
 	}
 	procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wcXml)))
 
-	title := utf16Ptr("AegisROM v0.5.4 (Beta) — Инструменты (Переименование XML + Заголовки, Комбайн 1G1R, Скрапер и Ремонт флешки R36S)")
+	title := utf16Ptr("AegisROM v"+AEGIS_APP_VERSION+" (Beta) — Инструменты (Переименование XML + Заголовки, Комбайн 1G1R, Скрапер и Ремонт флешки R36S)")
 	hwnd, _, _ := procCreateWindowExW.Call(
 		0,
 		uintptr(unsafe.Pointer(className)),
@@ -1109,7 +1109,7 @@ func createControls(hwnd uintptr) {
 	)
 	setFont(hEditLog, hFontMono)
 
-	appendLog("AegisROM v0.5.4 (Beta) готов к работе. Все инструменты переименования объединены в кнопку «3. Переименование ромов (XML + Заголовки)».")
+	appendLog("AegisROM v"+AEGIS_APP_VERSION+" (Beta) готов к работе. Все инструменты переименования объединены в кнопку «3. Переименование ромов (XML + Заголовки)».")
 	appendLog("• ГЛУБОКАЯ СВЕРКА 000001 (World).chd: программа автоматически очищает ложный тег (World) у переименованных файлов, сверяет чистый номер 000001 с выбранным вами файлом gamelist.xml и бинарным заголовком диска, и переименовывает без приписки (World)!")
 	appendLog("• КНОПКА «⏹ СТОП»: мгновенно останавливает любую операцию и сразу разблокирует все кнопки интерфейса без перезапуска программы.")
 }
@@ -2728,7 +2728,7 @@ func openXmlInspectorDialog(hwnd uintptr) {
 	}
 
 	hInst, _, _ := procGetModuleHandleW.Call(0)
-	dlgTitle := utf16Ptr("Переименование ромов по XML и заголовкам (понимает 000001 (World).chd и 000001.chd) — AegisROM v0.5.4 Beta")
+	dlgTitle := utf16Ptr("Переименование ромов по XML и заголовкам (понимает 000001 (World).chd и 000001.chd) — AegisROM v"+AEGIS_APP_VERSION+" Beta")
 	hDlg, _, _ := procCreateWindowExW.Call(
 		WS_EX_DLGMODALFRAME,
 		uintptr(unsafe.Pointer(utf16Ptr("AegisROMXmlModalClass"))),
@@ -2847,7 +2847,7 @@ func applyCheckedXmlMappings(hDlg uintptr) {
 
 	rootFolder := strings.TrimSpace(getWindowText(hEditPath))
 	if rootFolder == "" {
-		procMessageBoxW.Call(hDlg, uintptr(unsafe.Pointer(utf16Ptr("Сначала укажите путь к папке с ромами (например E:\\psx)."))), uintptr(unsafe.Pointer(utf16Ptr("AegisROM v0.5.4 Beta"))), MB_OK|MB_ICONWARNING)
+		procMessageBoxW.Call(hDlg, uintptr(unsafe.Pointer(utf16Ptr("Сначала укажите путь к папке с ромами (например E:\\psx)."))), uintptr(unsafe.Pointer(utf16Ptr("AegisROM v"+AEGIS_APP_VERSION+" Beta"))), MB_OK|MB_ICONWARNING)
 		return
 	}
 
@@ -2946,7 +2946,7 @@ func applyCheckedXmlMappings(hDlg uintptr) {
 	hXmlWnd = 0
 
 	msg := fmt.Sprintf("Переименование завершено!\n\nПереименовано ромов (включая очистку ложного тега (World), картинки в images/, -marquee.png, -thumb.png, видео и gamelist.xml): %d", renamedRoms)
-	procMessageBoxW.Call(hMainWnd, uintptr(unsafe.Pointer(utf16Ptr(msg))), uintptr(unsafe.Pointer(utf16Ptr("Переименование ромов — AegisROM v0.5.4 Beta"))), MB_OK|MB_ICONINFORMATION)
+	procMessageBoxW.Call(hMainWnd, uintptr(unsafe.Pointer(utf16Ptr(msg))), uintptr(unsafe.Pointer(utf16Ptr("Переименование ромов — AegisROM v"+AEGIS_APP_VERSION+" Beta"))), MB_OK|MB_ICONINFORMATION)
 	startScan(hMainWnd)
 }
 

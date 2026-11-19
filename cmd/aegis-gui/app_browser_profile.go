@@ -12,7 +12,11 @@ import (
 
 // appBrowserProfileDirName is the persistent Edge/Chrome profile used for the
 // --app window. Do not rename it: IndexedDB (saved folder handles) and the
-// persistent File System Access grants live in this profile.
+// persistent File System Access grants live in this profile. The "0_5_4" in
+// the name is historical and is NOT tied to the app version: keep it on every
+// version bump, otherwise users lose their granted folders.
+// Имя профиля не связано с версией приложения: при смене версии не менять,
+// иначе пропадут выданные разрешения на папки.
 const appBrowserProfileDirName = "WebViewProfile_0_5_4"
 
 // appBrowserArgs returns the command line for the standalone app window.

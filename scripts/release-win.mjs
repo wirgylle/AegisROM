@@ -13,7 +13,7 @@ import { execSync, execFileSync } from 'child_process';
 
 const ROOT = process.cwd();
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf-8'));
-const VERSION = String(pkg.version || '0.5.4').trim();
+const VERSION = String(pkg.version || '0.0.0').trim();
 
 const DOWNLOADS_DIR = path.join(ROOT, 'public', 'downloads');
 const DIST_DIR = path.join(ROOT, 'dist');

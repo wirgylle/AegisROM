@@ -319,7 +319,7 @@ func promptSelectExeOrFile(title, filter string) (string, error) {
 	return strings.TrimSpace(syscall.UTF16ToString(fileBuf)), nil
 }
 
-// Starts the hybrid React 19 + Tailwind CSS v0.5.4 Beta UI server and opens a standalone frameless desktop window.
+// Starts the hybrid React 19 + Tailwind CSS UI server and opens a standalone frameless desktop window.
 func runHybridModernDesktopApp() bool {
 	// Verify embedded index.html exists
 	indexBytes, err := embeddedWebDist.ReadFile("webdist/index.html")
@@ -364,7 +364,7 @@ func runHybridModernDesktopApp() bool {
 		w.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"nativeDesktop": true,
-			"version":       "0.5.4",
+			"version":       AEGIS_APP_VERSION,
 			"architecture":  "Hybrid Go + React 19 + Tailwind CSS v0.5 Beta WebView",
 			"appDir":        appDir,
 		})
@@ -1022,7 +1022,7 @@ func runHybridModernDesktopApp() bool {
 	// 4–5. Библиотека, сборки, PortMaster и скрапер: общие для всех оболочек (aegisapi).
 	aegisapi.RegisterLibraryRoutes(mux, appDir, touch)
 
-	// 6. Serve Embedded React 19 + Tailwind CSS v0.5.4 Beta SPA directly from memory with explicit anti-cache MIME headers
+	// 6. Serve Embedded React 19 + Tailwind CSS SPA directly from memory with explicit anti-cache MIME headers
 	mux.Handle("/", aegisapi.SPAHandler(webAssets, indexBytes, touch))
 
 	// Bind local port (try 38470 first, or any free port if busy)
@@ -1033,7 +1033,7 @@ func runHybridModernDesktopApp() bool {
 			return false
 		}
 	}
-	appURL := fmt.Sprintf("http://%s/?v=0.5.4", ln.Addr().String())
+	appURL := fmt.Sprintf("http://%s/?v=%s", ln.Addr().String(), AEGIS_APP_VERSION)
 
 	_, listenPort, err := net.SplitHostPort(ln.Addr().String())
 	if err != nil {

@@ -137,6 +137,7 @@ func RemoveOldInstallDirectory(dir string, keepDir string) {
 		"AegisROM-Setup-v0.5.2-Win11-x64.exe",
 		"AegisROM-Setup-v0.5.3-Win11-x64.exe",
 		"AegisROM-Setup-v0.5.4-Win11-x64.exe",
+		"AegisROM-Setup-v"+AppVersion+"-Win11-x64.exe",
 		"Uninstall-AegisROM.ps1",
 		"Install-AegisROM.cmd",
 		"AegisROM_Setup_GUI.ps1",

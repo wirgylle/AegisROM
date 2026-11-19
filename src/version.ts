@@ -1,4 +1,4 @@
-export const APP_VERSION = '0.5.4';
+export const APP_VERSION = '0.5.5-dev';
 export const APP_VERSION_TAG = `v${APP_VERSION} (Beta)`;
 export const APP_FULL_TITLE = `AegisROM ${APP_VERSION_TAG}`;
 export const SETUP_EXE_FILENAME = `AegisROM-Setup-v${APP_VERSION}-Win11-x64.exe`;

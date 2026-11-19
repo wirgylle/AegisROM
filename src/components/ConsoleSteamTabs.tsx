@@ -311,7 +311,7 @@ export const ConsoleSteamTabs: React.FC<ConsoleSteamTabsProps> = ({
       '@echo off',
       'chcp 65001 >nul',
       'echo ============================================================================',
-      'echo  AegisROM v0.5.4 (Beta) — Замена японских и номерных ромов (000001) на РУССКИЕ / USA',
+      'echo  AegisROM v0.5.5-dev (Beta) — Замена японских и номерных ромов (000001) на РУССКИЕ / USA',
       'echo ============================================================================',
       '',
     ];
@@ -486,7 +486,7 @@ export const ConsoleSteamTabs: React.FC<ConsoleSteamTabsProps> = ({
       '@echo off',
       'chcp 65001 >nul',
       'echo ============================================================================',
-      `echo  AegisROM v0.5.4 (Beta) — Умная выгрузка по профилю: ${selectedExportProfile.name}`,
+      `echo  AegisROM v0.5.5-dev (Beta) — Умная выгрузка по профилю: ${selectedExportProfile.name}`,
       `echo  Целевой путь: ${exportTargetDrive} | Отобрано игр: ${matchingExportRecords.length}`,
       'echo ============================================================================',
       '',
@@ -542,7 +542,7 @@ export const ConsoleSteamTabs: React.FC<ConsoleSteamTabsProps> = ({
           <div className="flex items-center gap-2.5">
             <ListChecks className="w-5 h-5 text-blue-600" />
             <h2 className="text-base font-extrabold text-slate-900">
-              Дорожная карта модулей AegisROM v0.5.4 Beta (Этапы, Задачи и Подзадачи)
+              Дорожная карта модулей AegisROM v0.5.5-dev Beta (Этапы, Задачи и Подзадачи)
             </h2>
           </div>
           <span className="px-3 py-1 rounded-lg bg-emerald-100 text-emerald-900 text-xs font-bold border border-emerald-300">
