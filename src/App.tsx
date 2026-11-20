@@ -37,6 +37,7 @@ import {
   Table as TableIcon,
 } from 'lucide-react';
 import { computeCRC32Hex } from './utils/crc32';
+import { expandTitleAbbreviations, romanToArabicInKey } from './utils/titleAliases';
 import {
   fetchDatStatus,
   fetchLibretroDats,
@@ -60,6 +61,15 @@ import {
   unescapeXml,
   type GamelistEntry,
 } from './utils/gamelistXml';
+import {
+  exportManualEdits,
+  getGamelistOriginal,
+  getManualEdit,
+  importManualEdits,
+  manualEditKey,
+  rememberGamelistOriginal,
+  type ManualEdit,
+} from './utils/manualEdits';
 import {
   ConsoleSteamTabs,
   type PersistentDbState,
@@ -619,6 +629,12 @@ interface ScannedRomFile {
   // Хак, перевод или пропатченный ром (см. utils/romHacks.ts).
   // Hack, translation or patched ROM (see utils/romHacks.ts).
   mod?: RomModInfo;
+}
+
+// Ключ ручной правки для рома: тот же, что у строки библиотеки (консоль + CRC без заголовка).
+// Manual edit key for a ROM: same as for its library row (console + headerless CRC).
+function romManualEditKey(r: { id: string; consoleCode: string; headerlessCrc32: string }): string {
+  return manualEditKey({ id: r.id, consoleShort: r.consoleCode.toUpperCase(), crc32: r.headerlessCrc32 });
 }
 
 interface PhantomFolderCandidate {
@@ -1338,7 +1354,9 @@ function extractCleanTitle(fileName: string): string {
   if (PURE_NUMBERED_ROM_REGEX.test(originalBase) || PURE_NUMBERED_ROM_REGEX.test(withoutTags)) {
     return withoutTags || originalBase;
   }
-  const base = stripLeadingIndexExcept007(withoutTags || originalBase);
+  // «FFVIII» → «Final Fantasy VIII»: иначе по сокращению не найти ни DAT-имя, ни обложку.
+  // "FFVIII" → "Final Fantasy VIII": an abbreviation matches neither a DAT name nor a cover.
+  const base = expandTitleAbbreviations(stripLeadingIndexExcept007(withoutTags || originalBase));
   // Keep legitimate dots in titles like "Dr. Mario", "Ms. Pac-Man", "G.I. Joe"; normalize underscores and multi-spaces
   const stripped = base
     .replace(/\[.*?\]|\(.*?\)/g, ' ')
@@ -1380,13 +1398,9 @@ function extractCleanTitle(fileName: string): string {
 
 function buildComparisonKey(cleanTitle: string): string {
   let s = ` ${stripLeadingIndexExcept007(cleanTitle.toLowerCase())} `;
-  s = s
-    .replace(/\bviii\b/g, '8')
-    .replace(/\bvii\b/g, '7')
-    .replace(/\bvi\b/g, '6')
-    .replace(/\biv\b/g, '4')
-    .replace(/\biii\b/g, '3')
-    .replace(/\bii\b/g, '2');
+  // II–XX → 2–20 (одиночные I, V, X не трогаем). Та же замена в aegiscore.BuildComparisonKey.
+  // II–XX → 2–20 (lone I, V, X untouched). Same mapping as aegiscore.BuildComparisonKey.
+  s = romanToArabicInKey(s);
 
   const words = s
     .split(/[^a-z0-9а-яё]+/i)
@@ -3209,6 +3223,10 @@ export function App() {
         const text = await file.text();
         if (lower.endsWith('.json')) {
           const parsed = JSON.parse(text);
+          if (parsed?.manualEdits) {
+            const n = importManualEdits(parsed.manualEdits);
+            if (n > 0) addLog(tf('ed.importedLog', { count: n }));
+          }
           if (parsed && Array.isArray(parsed.records)) {
             await handleUpdateDbState({
               ...dbState,
@@ -3323,7 +3341,9 @@ export function App() {
         const stem = r.canonicalName.replace(/\.[^/.]+$/, '');
         xmlLines.push('\t<game>');
         xmlLines.push(`\t\t<path>./${escapeXml(r.canonicalName)}</path>`);
-        xmlLines.push(`\t\t<name>${escapeXml(r.extractedInternalTitle || r.cleanTitle)}</name>`);
+        xmlLines.push(
+          `\t\t<name>${escapeXml(getManualEdit(romManualEditKey(r))?.title || r.extractedInternalTitle || r.cleanTitle)}</name>`
+        );
         xmlLines.push(`\t\t<image>./images/${escapeXml(stem)}-image.png</image>`);
         xmlLines.push(`\t\t<marquee>./marquees/${escapeXml(stem)}-marquee.png</marquee>`);
         xmlLines.push(`\t\t<video>./videos/${escapeXml(stem)}-video.mp4</video>`);
@@ -3347,6 +3367,7 @@ export function App() {
         ...dbState,
         exportedAt: new Date().toISOString(),
         totalRoms: roms.length || dbState.records.length,
+        manualEdits: exportManualEdits(),
       },
       null,
       2
@@ -7328,7 +7349,9 @@ export function App() {
         );
 
         const titleMatched = isScrapeMatched(m);
-        const officialTitle = titleMatched ? m.matchedCanonicalTitle : r.cleanTitle;
+        // Название, заданное вручную в редакторе, скраппер не меняет. / The scraper keeps a title set in the editor.
+        const officialTitle =
+          getManualEdit(romManualEditKey(r))?.title || (titleMatched ? m.matchedCanonicalTitle : r.cleanTitle);
         const newCanonicalName = computeCanonicalNameForRom({ ...r, cleanTitle: officialTitle });
         const auditReason = placeholderReasonsById.get(r.id);
 
@@ -7402,13 +7425,22 @@ export function App() {
         setProgressPct(30 + Math.round(((downloadedMediaCount) / Math.max(1, romsNeedingScrape.length)) * 65));
       }
 
+      // Скраппер по части библиотеки (редактор): вливаем результат в полный список, иначе остальные ромы пропадут.
+      // Scraping part of the library (editor): merge back into the full list, or the other ROMs would vanish.
+      const partial = targetList !== romsRef.current;
+      const scrapedById = new Map(nextRoms.map((r) => [r.id, r] as const));
+      const allRoms = partial ? romsRef.current.map((r) => scrapedById.get(r.id) || r) : nextRoms;
+      const touchedHandles = new Set<any>(
+        nextRoms.map((r) => r.targetDirHandle || r.parentHandle).filter(Boolean)
+      );
+
       const activeRoot = rootDirHandle || sdTargetDirHandle || libraryDirHandle;
       if (activeRoot) {
         const byConsoleHandle = new Map<any, ScannedRomFile[]>();
-        for (const r of nextRoms) {
+        for (const r of allRoms) {
           if (r.status !== 'verified') continue;
           const h = r.targetDirHandle || r.parentHandle;
-          if (!h) continue;
+          if (!h || !touchedHandles.has(h)) continue;
           const arr = byConsoleHandle.get(h) || [];
           arr.push(r);
           byConsoleHandle.set(h, arr);
@@ -7418,8 +7450,8 @@ export function App() {
         }
       }
 
-      romsRef.current = nextRoms;
-      setRoms(nextRoms);
+      romsRef.current = allRoms;
+      setRoms(allRoms);
       setLastScanMode('replace');
       setScanRevision((n) => n + 1);
       addLog(
@@ -7480,6 +7512,91 @@ export function App() {
       new Set(Array.from(codes).map((c) => CONSOLE_CATALOG[c]?.libretroSystem).filter(Boolean) as string[])
     );
   }, [roms, dbState.records]);
+
+  // Переименование многодисковой игры на месте: каждый диск (с .cue/.bin-дорожками) получает
+  // имя «<Название> (Регион) (Disc N)», плейлист .m3u, который ссылался на старые имена,
+  // переписывается под новые. Папку игры не переносим.
+  // In-place rename of a multi-disc game: each disc (with its .cue/.bin tracks) gets
+  // "<Title> (Region) (Disc N)", and the .m3u that listed the old names is rewritten.
+  // The game folder is not moved.
+  const renameMultiDiscInPlace = async (
+    orig: ScannedRomFile,
+    next: ScannedRomFile
+  ): Promise<{ rom: ScannedRomFile; renamedDiscs: number }> => {
+    const oldDiscs = orig.discs || [];
+    const nextDiscs = next.discs || [];
+    const parent = oldDiscs[0]?.parentHandle;
+    let renamedDiscs = 0;
+    const doneDiscs: ScannedRomFile[] = [];
+    for (let i = 0; i < oldDiscs.length; i++) {
+      const d = oldDiscs[i];
+      const target = (nextDiscs[i]?.canonicalName || d.fileName).replace(/[<>:"/\\|?*]/g, '_').trim();
+      if (d.parentHandle && d.fileObj && target && target.toLowerCase() !== d.fileName.toLowerCase()) {
+        await writeRomWithCompanionsToDir(d, d.parentHandle, target, true);
+        renamedDiscs++;
+      }
+      const slash = d.relativePath.lastIndexOf('/');
+      doneDiscs.push({
+        ...(nextDiscs[i] || d),
+        fileName: target,
+        canonicalName: target,
+        relativePath: slash >= 0 ? `${d.relativePath.slice(0, slash)}/${target}` : target,
+      });
+    }
+
+    // Старый .m3u ищем по содержимому: его имя после скана не известно.
+    // The old .m3u is found by content: its name is not known after a scan.
+    const newM3u = (next.m3uFileName || '').replace(/[<>:"/\\|?*]/g, '_').trim();
+    if (parent && newM3u && renamedDiscs > 0) {
+      const oldNames = new Set(oldDiscs.map((d) => d.fileName.toLowerCase()));
+      const oldM3us: string[] = [];
+      try {
+        for await (const [name, h] of parent.entries()) {
+          if (h.kind !== 'file' || !/\.m3u$/i.test(name)) continue;
+          const text = await (await h.getFile()).text();
+          if (text.split(/\r?\n/).some((l: string) => oldNames.has(l.trim().split(/[\\/]/).pop()?.toLowerCase() || ''))) {
+            oldM3us.push(name);
+          }
+        }
+      } catch {
+        // каталог не перечисляется — просто не переписываем m3u / cannot list the folder
+      }
+      if (oldM3us.length > 0) {
+        const fh = await parent.getFileHandle(newM3u, { create: true });
+        const w = await fh.createWritable();
+        await w.write(generateM3uPlaylistText(doneDiscs.map((d) => d.fileName)));
+        await w.close();
+        for (const old of oldM3us) {
+          if (old.toLowerCase() === newM3u.toLowerCase()) continue;
+          try {
+            await parent.removeEntry(old);
+          } catch {
+            // ignore
+          }
+          const oldStem = old.replace(/\.[^/.]+$/, '');
+          const newStem = newM3u.replace(/\.[^/.]+$/, '');
+          await renameMediaAndSavesForRom(parent, parent, oldStem, newStem);
+          if (orig.targetDirHandle && orig.targetDirHandle !== parent) {
+            await renameMediaAndSavesForRom(orig.targetDirHandle, orig.targetDirHandle, oldStem, newStem);
+          }
+        }
+      } else {
+        // Без m3u медиа обычно названы по первому диску. / Without an m3u, media follow disc 1.
+        const oldStem = oldDiscs[0].fileName.replace(/\.[^/.]+$/, '');
+        const newStem = doneDiscs[0].fileName.replace(/\.[^/.]+$/, '');
+        await renameMediaAndSavesForRom(parent, parent, oldStem, newStem);
+      }
+    }
+
+    return {
+      rom: {
+        ...next,
+        fileName: doneDiscs[0]?.fileName || next.fileName,
+        discs: doneDiscs,
+      },
+      renamedDiscs,
+    };
+  };
 
   const handleOnlineRenameRoms = async () => {
     const activeList = romsRef.current;
@@ -7670,7 +7787,11 @@ export function App() {
         const r = updated[i];
         if (r.status !== 'verified') continue;
 
-        const resolved = resolvedTitles.get(r.id);
+        // Название из редактора важнее найденного онлайн. / A title set in the editor beats the online match.
+        const userTitle = getManualEdit(romManualEditKey(r))?.title;
+        const resolved = userTitle
+          ? { title: userTitle, source: r.titleSource || ('filename' as TitleSource), note: '' }
+          : resolvedTitles.get(r.id);
         const bestTitle = resolved?.title || r.cleanTitle;
         const datMiss = datMisses.get(r.id);
         const onlineMiss = unresolvedReasons.get(r.id) || '';
@@ -7701,7 +7822,19 @@ export function App() {
         );
         const safeNewName = newCandidate.canonicalName.replace(/[<>:"/\\|?*]/g, '_').trim();
 
-        if (!r.isMultiDisc && safeNewName && safeNewName.toLowerCase() !== r.fileName.toLowerCase()) {
+        // Многодисковые игры раньше пропускались целиком: FFVIII (4 диска) так и оставался «FFVIII».
+        // Multi-disc games used to be skipped entirely, so FFVIII (4 discs) kept its old name.
+        const isMultiSet = Boolean(r.isMultiDisc && Array.isArray(r.discs) && r.discs.length > 1);
+        let multiResult: ScannedRomFile | null = null;
+        if (isMultiSet) {
+          try {
+            const res = await renameMultiDiscInPlace(r, newCandidate);
+            multiResult = res.rom;
+            if (res.renamedDiscs > 0) renamed++;
+          } catch (err) {
+            addLog(tf('app.rename.onlineSkipLog', { file: r.fileName, reason: String(err) }));
+          }
+        } else if (safeNewName && safeNewName.toLowerCase() !== r.fileName.toLowerCase()) {
           if (r.parentHandle && r.fileObj) {
             const oldStem = r.fileName.replace(/\.[^/.]+$/, '');
             const newStem = safeNewName.replace(/\.[^/.]+$/, '');
@@ -7712,8 +7845,8 @@ export function App() {
         }
 
         updated[i] = {
-          ...newCandidate,
-          fileName: r.isMultiDisc ? r.fileName : safeNewName,
+          ...(multiResult || newCandidate),
+          fileName: isMultiSet ? multiResult?.fileName || r.fileName : safeNewName,
           canonicalName: safeNewName,
           comparisonKey: buildComparisonKey(bestTitle),
           mediaStatus: tf('app.rename.ctorStatus', { name: safeNewName }),
@@ -8092,6 +8225,45 @@ export function App() {
     return { imgRel, thumbRel, marqueeRel, videoRel };
   };
 
+  // Редактор: записать gamelist.xml в папках выбранных ромов (все ромы этих папок, а не только выбранные).
+  // Editor: write gamelist.xml in the folders of the chosen ROMs (every ROM of those folders, not only the chosen).
+  const handleEditorWriteGamelist = async (targetIds: string[]) => {
+    const ids = new Set(targetIds);
+    const list = romsRef.current;
+    const handles = new Set<any>();
+    for (const r of list) {
+      if (!ids.has(r.id)) continue;
+      const h = r.targetDirHandle || r.parentHandle;
+      if (h) handles.add(h);
+    }
+    if (handles.size === 0) {
+      addLog(t('ed.noFolderAccess'));
+      return;
+    }
+    let written = 0;
+    for (const h of handles) {
+      const cRoms = list.filter((r) => r.status === 'verified' && (r.targetDirHandle || r.parentHandle) === h);
+      try {
+        await writeGamelistXmlToHandle(h, cRoms);
+        written++;
+      } catch (err) {
+        addLog(tf('ed.gamelistErr', { err: String(err) }));
+      }
+    }
+    addLog(tf('ed.gamelistWritten', { count: written }));
+  };
+
+  // Редактор: скраппер только для отмеченных ромов. / Editor: scraper for the checked ROMs only.
+  const handleEditorScrapeMedia = (targetIds: string[]) => {
+    const ids = new Set(targetIds);
+    const subset = romsRef.current.filter((r) => ids.has(r.id));
+    if (subset.length === 0) {
+      addLog(t('ed.noScannedRoms'));
+      return;
+    }
+    void handleScrapeR36SMedia(subset);
+  };
+
   const writeGamelistXmlToHandle = async (consoleDirHandle: any, consoleRoms: ScannedRomFile[]) => {
     try {
       // 1. Preserve backup of original factory gamelist.xml before modifying it
@@ -8149,8 +8321,12 @@ export function App() {
             cleanTitle = r.extractedInternalTitle;
           }
         }
-        const displayName =
-          r.isRussian && !cleanTitle.toUpperCase().includes('[RUS]')
+        // Ручная правка из редактора важнее всего, что нашли сами. / A manual editor edit beats anything found.
+        const editKey = romManualEditKey(r);
+        const userEdit: ManualEdit = getManualEdit(editKey) || {};
+        const displayName = userEdit.title
+          ? userEdit.title
+          : r.isRussian && !cleanTitle.toUpperCase().includes('[RUS]')
             ? `${cleanTitle} [RUS]`
             : cleanTitle;
         const meta = CONSOLE_CATALOG[r.consoleCode] || CONSOLE_CATALOG.nes;
@@ -8182,6 +8358,11 @@ export function App() {
         marqueeRel = await keepRef(marqueeRel, 'marquee');
         videoRel = await keepRef(videoRel, 'video');
         if (!imgRel && thumbRel) imgRel = thumbRel;
+        // Медиа из редактора: '' — убрать, строка — свой путь. / Editor media: '' removes, a string is the path.
+        if (typeof userEdit.image === 'string') imgRel = userEdit.image;
+        if (typeof userEdit.thumbnail === 'string') thumbRel = userEdit.thumbnail;
+        if (typeof userEdit.marquee === 'string') marqueeRel = userEdit.marquee;
+        if (typeof userEdit.video === 'string') videoRel = userEdit.video;
 
         lines.push('  <game>');
         lines.push(`    <path>${escapeXml(xmlPath)}</path>`);
@@ -8200,7 +8381,28 @@ export function App() {
             ? tfStatic('app.consoleDiscsPart', { count: r.discs!.length })
             : tfStatic('app.consoleCrcPart', { crc: r.headerlessCrc32 }));
         // Поля прежней записи уже экранированы — пишем как есть. / Previous fields are already escaped.
-        const pf = prev?.fields || {};
+        // Поле из редактора экранируем; прежнее значение запоминаем, чтобы вернуть при отмене правки.
+        // Editor fields get escaped; the previous value is remembered so undo can restore it.
+        const pf: Record<string, string> = { ...(prev?.fields || {}) };
+        const userTag = (tag: string, value: string | undefined) => {
+          if (value) {
+            rememberGamelistOriginal(editKey, tag, pf[tag]);
+            pf[tag] = escapeXml(value);
+            return;
+          }
+          const orig = getGamelistOriginal(editKey, tag);
+          if (orig !== undefined) {
+            if (orig) pf[tag] = orig;
+            else delete pf[tag];
+          }
+        };
+        userTag('desc', userEdit.desc);
+        userTag('rating', userEdit.rating);
+        userTag('releasedate', userEdit.year ? `${userEdit.year}0101T000000` : undefined);
+        userTag('developer', userEdit.developer);
+        userTag('publisher', userEdit.publisher);
+        userTag('genre', userEdit.genre);
+        userTag('players', userEdit.players);
         lines.push(`    <desc>${pf.desc || escapeXml(descLine)}</desc>`);
         if (imgRel) lines.push(`    <image>${escapeXml(imgRel)}</image>`);
         if (thumbRel) lines.push(`    <thumbnail>${escapeXml(thumbRel)}</thumbnail>`);
@@ -8212,7 +8414,7 @@ export function App() {
         if (pf.publisher) lines.push(`    <publisher>${pf.publisher}</publisher>`);
         lines.push(`    <genre>${pf.genre || escapeXml(localizedConsole)}</genre>`);
         if (pf.players) lines.push(`    <players>${pf.players}</players>`);
-        lines.push(`    <region>${escapeXml(r.region)}</region>`);
+        lines.push(`    <region>${escapeXml(userEdit.region || r.region)}</region>`);
         lines.push('  </game>');
 
         // Hide individual discs inside subfolder so EmulationStation / ArkOS lists only the single .m3u entry
@@ -8627,6 +8829,8 @@ export function App() {
         onChangeSdFirmwareId={(fw) => setSdFirmwareId(fw as any)}
         onMassDeleteRoms={handleMassDeleteRoms}
         onMassMoveRoms={handleMassMoveRoms}
+        onEditorWriteGamelist={(ids) => void handleEditorWriteGamelist(ids)}
+        onEditorScrapeMedia={handleEditorScrapeMedia}
         onMassSplitRoms={handleMassSplitRoms}
         onUndo={handleUndo}
         canUndo={undoStack.length > 0}

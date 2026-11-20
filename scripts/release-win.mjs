@@ -14,8 +14,8 @@ import { execSync, execFileSync } from 'child_process';
 const ROOT = process.cwd();
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf-8'));
 const BASE_VERSION = String(pkg.version || '0.0.0').trim();
-// RU: CI для dev передаёт AEGIS_BUILD_VERSION вида 0.5.6-dev+abc1234 — она видна в окне, установщике и version.json.
-// EN: CI on dev passes AEGIS_BUILD_VERSION like 0.5.6-dev+abc1234; it shows in the window, installer and version.json.
+// RU: CI для dev передаёт AEGIS_BUILD_VERSION вида 0.6.0-dev+abc1234 — она видна в окне, установщике и version.json.
+// EN: CI on dev passes AEGIS_BUILD_VERSION like 0.6.0-dev+abc1234; it shows in the window, installer and version.json.
 const VERSION = String(process.env.AEGIS_BUILD_VERSION || BASE_VERSION).trim();
 // '+' в именах файлов на GitHub неудобен / '+' is awkward in GitHub asset names.
 const FILE_VERSION = VERSION.replace(/\+/g, '.');

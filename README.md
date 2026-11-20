@@ -150,10 +150,23 @@ Open an [Issue](https://github.com/wirgylle/AegisROM/issues) and describe what y
 | **0.5.6** (released) | Hacks and patches module with an IPS/UPS/BPS/xdelta patcher, BIOS section with MD5 check, playing games in the app window, first-run setup wizard and tour, library collections, settings stored on disk. |
 | **0.5.7 – 0.5.8** | Manual editing in Editor view (names, details, media paths), Series in the library (a whole game franchise), better online renaming, compressed xdelta patches. |
 | **before 0.6.0** | The app's own window instead of Edge or Chrome, with settings stored on disk. A macOS version: one `.dmg` for Intel and Apple Silicon, games launched through Mac emulators. PortMaster on Windows through a Linux environment (WSL). |
-| **0.6.0** | Save manager (`.srm`, `.state`, memory cards) with version history. Uploading builds to the console over Wi-Fi (SFTP / SMB / WebDAV) without removing the card. |
+| **0.6.0** | Save manager (`.srm`, `.state`, memory cards) with version history. First step is in `dev`: games from the built-in Play save as files next to the ROM. Uploading builds to the console over Wi-Fi (SFTP / SMB / WebDAV) without removing the card. |
 | **0.7.0** | RetroAchievements: checking achievement support by ROM hash. PDF manuals, walkthrough maps and a soundtrack player in the game card. |
 
 Details in [docs/ROADMAP.md](docs/ROADMAP.md) (in Russian). Plans may change.
+
+## Support the developer
+
+AegisROM is free. If it saves you time, you can buy the developer a coffee: the ☕ button in the app header opens a window with the addresses and QR codes. You can also send USDT directly:
+
+| Network | USDT address |
+|---|---|
+| Tron (TRC-20) | `TJZJ6wqa3DSmN4JT4ndqYx2MGpqdsVxTE1` |
+| Solana (SPL) | `DFV4HD6SCkFTEvtf5xU1mB7DTE5cKMBBHGftpLFWPG1s` |
+| Arbitrum One, Avalanche C-Chain, Ethereum (ERC-20) | `0x2a959B2f486e7F1d033016A7c94796cF42e1eF0f` |
+
+Send only USDT, and pick the same network in your wallet or exchange as in this table. Coins sent on another network are lost.
+<!-- Addresses: src/data/donate.ts is the source; src/data/donate.test.ts checks this table matches it. -->
 
 ## For developers
 

@@ -65,6 +65,9 @@ func run(addr, distDir, dataDir, devPickDir string) error {
 		vfsOpts.PickFolder = func(string) (string, error) { return filepath.Abs(devPickDir) }
 	}
 	aegisapi.RegisterVFSRoutes(mux, dataDir, nil, vfsOpts)
+	// Запуск в окне и сохранения рядом с ромом (как в aegis-gui).
+	aegisapi.RegisterQuickTestRoutes(mux, nil)
+	aegisapi.RegisterSaveRoutes(mux, nil)
 
 	if index, err := os.ReadFile(filepath.Join(distDir, "index.html")); err == nil {
 		mux.Handle("/", aegisapi.SPAHandler(os.DirFS(distDir), index, nil))

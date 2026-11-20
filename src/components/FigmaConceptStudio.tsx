@@ -16,6 +16,7 @@ import {
   FolderInput,
   FolderOpen,
   Layers,
+  LibraryBig,
   FolderSearch,
   Undo2,
   RefreshCw,
@@ -34,6 +35,7 @@ import {
   AlertTriangle,
   Check,
   Wand2,
+  Coffee,
 } from 'lucide-react';
 import { GameInspectorCoverVideo } from './GameInspectorCoverVideo';
 import { DatFilesPanel } from './DatFilesPanel';
@@ -68,9 +70,11 @@ import {
   loadMultiDbsFromIndexedDB,
 } from '../utils/persistentHandles';
 import { VirtualizedLibraryViews, type LibraryCollectionBadge } from './VirtualizedLibraryViews';
+import { EditorToolbar, GameEditModal, useManualEditsVersion } from './LibraryEditor';
+import { applyManualEditToRow, exportManualEdits, importManualEdits } from '../utils/manualEdits';
 import { CollectionModal } from './CollectionModal';
 import { GameRelationsPanel } from './GameRelationsPanel';
-import { buildCollections, indexCollections, seriesSiblings } from '../utils/gameCollections';
+import { buildCollections, buildSeries, indexCollections, seriesSiblings } from '../utils/gameCollections';
 import { inferPortMasterPcTestPlan } from '../utils/portMasterEngine';
 import {
   SUPPORTED_LANGUAGES,
@@ -104,6 +108,7 @@ import {
 } from '../utils/multiDiscEngine';
 import { WorkbenchContextPanel, type HoveredTool } from './WorkbenchContextPanel';
 import { QuickTestModal, type QuickTestRequest } from './QuickTestModal';
+import { DonateModal } from './DonateModal';
 import { resolveQuickTestCore, pickCueDataTrack, pickBiosForRegion, fileExt } from '../utils/quickTest';
 import { getVerifiedBiosFiles } from '../utils/biosScan';
 
@@ -202,6 +207,15 @@ export interface UnifiedGameRow {
   multiDiscFolderName?: string;
   m3uFileName?: string;
   discs?: MultiDiscEntry[];
+  // Ручные правки редактора (utils/manualEdits.ts) и поля gamelist.xml, которые они задают.
+  // Editor manual edits (utils/manualEdits.ts) and the gamelist.xml fields they set.
+  developer?: string;
+  publisher?: string;
+  players?: string;
+  rating?: string;
+  desc?: string;
+  manualFields?: string[];
+  manualMedia?: Partial<Record<'image' | 'thumbnail' | 'marquee' | 'video', string>>;
 }
 
 interface FigmaConceptStudioProps {
@@ -266,6 +280,10 @@ interface FigmaConceptStudioProps {
   onChangeSdFirmwareId?: (firmwareId: string) => void;
   onMassDeleteRoms?: (targetIds: string[]) => void;
   onMassMoveRoms?: (targetIds: string[]) => void;
+  /** Редактор: записать gamelist.xml в папках этих ромов. / Editor: write gamelist.xml in these ROMs' folders. */
+  onEditorWriteGamelist?: (targetIds: string[]) => void;
+  /** Редактор: скраппер только для этих ромов. / Editor: run the scraper for these ROMs only. */
+  onEditorScrapeMedia?: (targetIds: string[]) => void;
   onMassSplitRoms?: (
     splitMode: 'by_console' | 'alphabetical' | 'disc_vs_cartridge' | 'multidisc_subfolders'
   ) => void;
@@ -635,6 +653,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   onChangeSdFirmwareId,
   onMassDeleteRoms,
   onMassMoveRoms,
+  onEditorWriteGamelist,
+  onEditorScrapeMedia,
   onMassSplitRoms,
   onUndo,
   canUndo = false,
@@ -692,6 +712,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   const [librarySyncModalOpen, setLibrarySyncModalOpen] = useState<boolean>(false);
   const [selectedDiscIndex, setSelectedDiscIndex] = useState<number | null>(null);
   const [quickTestReq, setQuickTestReq] = useState<QuickTestRequest | null>(null);
+  const [donateOpen, setDonateOpen] = useState<boolean>(false);
   const [envInitialSubTab, setEnvInitialSubTab] = useState<'emulators' | 'bios'>('emulators');
   // Подвкладка «BIOS» открывается один раз по ссылке из быстрого теста, дальше снова «Эмуляторы».
   useEffect(() => {
@@ -861,13 +882,26 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   const [libraryModFilter, setLibraryModFilter] = useState<'all' | 'modded' | RomModGroup>('all');
   // Коллекции: в «Все» одна карточка на игру, версии с других консолей под кнопкой.
   // Collections: in "All" one card per game, versions from other consoles behind a button.
-  const [groupCollections, setGroupCollections] = useState<boolean>(() => {
+  // Серии: одна карточка на всю линейку (Final Fantasy I–XII, Tactics). Режимы взаимоисключающие.
+  // Series: one card per whole game line. The two modes are mutually exclusive.
+  const [libraryGrouping, setLibraryGrouping] = useState<'none' | 'collections' | 'series'>(() => {
     try {
-      return localStorage.getItem('aegis.lib.collections') !== '0';
+      const v = localStorage.getItem('aegis.lib.grouping');
+      if (v === 'none' || v === 'collections' || v === 'series') return v;
+      return localStorage.getItem('aegis.lib.collections') === '0' ? 'none' : 'collections';
     } catch {
-      return true;
+      return 'collections';
     }
   });
+  const toggleLibraryGrouping = (mode: 'collections' | 'series') => {
+    const next = libraryGrouping === mode ? 'none' : mode;
+    setLibraryGrouping(next);
+    try {
+      localStorage.setItem('aegis.lib.grouping', next);
+    } catch {
+      // ignore
+    }
+  };
   const [collectionModalLeadId, setCollectionModalLeadId] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -1174,6 +1208,10 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       const parsed = JSON.parse(text);
       let loadedRows: UnifiedGameRow[] = [];
 
+      if (parsed && !Array.isArray(parsed) && parsed.manualEdits) {
+        const n = importManualEdits(parsed.manualEdits);
+        if (n > 0) onAddLog?.(tf('ed.importedLog', { count: n }));
+      }
       if (Array.isArray(parsed)) {
         loadedRows = parsed;
       } else if (parsed && Array.isArray(parsed.rows)) {
@@ -1250,6 +1288,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       libraryPath: effectiveLibraryPath,
       exportedAt: new Date().toISOString(),
       totalGames: gamesSource.length,
+      // Ручные правки редактора хранятся отдельно от строк. / Editor manual edits are kept apart from rows.
+      manualEdits: exportManualEdits(),
       rows: gamesSource.map((g) => ({
         ...g,
         fileObj: undefined,
@@ -1320,10 +1360,20 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     return rawGamesSource;
   }, [rawGamesSource, activeDbEntry?.id, defaultSampleGames]);
 
+  // Ручные правки редактора поверх строк базы. / Editor manual edits laid over the database rows.
+  const manualEditsVersion = useManualEditsVersion();
   const enrichedGamesSource = React.useMemo(
-    () => gamesSource.map(enrichGameForBuild),
-    [gamesSource]
+    () => gamesSource.map((g) => enrichGameForBuild(applyManualEditToRow(g))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [gamesSource, manualEditsVersion]
   );
+  const [editorEditIds, setEditorEditIds] = useState<string[] | null>(null);
+  const editorEditGames = React.useMemo(() => {
+    if (!editorEditIds) return [];
+    const set = new Set(editorEditIds);
+    return enrichedGamesSource.filter((g) => set.has(g.id));
+  }, [editorEditIds, enrichedGamesSource]);
+  const openEditorForOne = useCallback((id: string) => setEditorEditIds([id]), []);
 
   const effectiveLibraryPath =
     selectedFolderName || activeDbEntry?.pathHint || libraryPath || 'D:/AegisROM_MasterLibrary';
@@ -1474,21 +1524,40 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   // В редакторе (таблица файлов) нужны все файлы, поэтому там коллекции не сворачиваются.
   // The editor (file table) needs every file, so collections are not collapsed there.
   const collectionsActive =
-    groupCollections && activeSidebarFilterKey === 'ALL' && selectedConcept !== 'concept_c_workbench';
+    libraryGrouping !== 'none' && activeSidebarFilterKey === 'ALL' && selectedConcept !== 'concept_c_workbench';
 
   const groupedLibraryView = React.useMemo(() => {
     if (!collectionsActive) return null;
-    const cols = buildCollections(filteredGames);
     const badges = new Map<string, LibraryCollectionBadge>();
     const leadOf = new Map<string, string>();
     const membersByLead = new Map<string, typeof filteredGames>();
+    const labelByLead = new Map<string, string>();
+    if (libraryGrouping === 'series') {
+      const series = buildSeries(filteredGames);
+      const games: typeof filteredGames = [];
+      for (const s of series) {
+        const multi = s.games.length > 1;
+        if (multi) {
+          badges.set(s.lead.id, { count: s.games.length, consoles: s.consoles, kind: 'series', label: s.label });
+          labelByLead.set(s.lead.id, s.label);
+        } else if (s.members.length > 1) {
+          badges.set(s.lead.id, { count: s.members.length, consoles: s.consoles });
+        }
+        membersByLead.set(s.lead.id, s.members);
+        for (const m of s.members) leadOf.set(m.id, s.lead.id);
+        // На карточке серии — название серии. / A series card shows the series name.
+        games.push(multi ? { ...s.lead, title: s.label } : s.lead);
+      }
+      return { mode: 'series' as const, games, badges, leadOf, membersByLead, labelByLead };
+    }
+    const cols = buildCollections(filteredGames);
     for (const c of cols) {
       badges.set(c.lead.id, { count: c.members.length, consoles: c.consoles });
       membersByLead.set(c.lead.id, c.members);
       for (const m of c.members) leadOf.set(m.id, c.lead.id);
     }
-    return { games: cols.map((c) => c.lead), badges, leadOf, membersByLead };
-  }, [collectionsActive, filteredGames]);
+    return { mode: 'collections' as const, games: cols.map((c) => c.lead), badges, leadOf, membersByLead, labelByLead };
+  }, [collectionsActive, libraryGrouping, filteredGames]);
 
   // Индекс по всей библиотеке для правой панели (не зависит от фильтров).
   // Whole-library index for the right panel (does not depend on filters).
@@ -1788,6 +1857,17 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
             </a>
           )}
 
+          <button
+            type="button"
+            onClick={() => setDonateOpen(true)}
+            title={`${t('coffee.button')}. ${t('coffee.hint')}`}
+            aria-label={t('coffee.button')}
+            className="h-8 px-2.5 rounded-lg border border-amber-300/70 dark:border-amber-700/60 hover:bg-amber-50 dark:hover:bg-amber-950/40 text-amber-700 dark:text-amber-300 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition"
+          >
+            <Coffee className="w-4 h-4" />
+            <span className="hidden 2xl:inline">{t('coffee.button')}</span>
+          </button>
+
           {onOpenSetupWizard && (
             <button
               type="button"
@@ -2011,7 +2091,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         ? `${enrichedGamesSource.length} ${t('lib.gamesSuffix')}`
                         : `${filteredGames.length} ${t('lib.gamesOf')} ${enrichedGamesSource.length} ${t('lib.gamesSuffix')}`}
                       {groupedLibraryView && groupedLibraryView.games.length < filteredGames.length
-                        ? ` · ${groupedLibraryView.games.length} ${t('coll.countSuffix')}`
+                        ? ` · ${groupedLibraryView.games.length} ${t(groupedLibraryView.mode === 'series' ? 'series.countSuffix' : 'coll.countSuffix')}`
                         : ''}
                     </span>
                   </h2>
@@ -2077,28 +2157,34 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     ))}
                   </select>
 
-                  {/* Collections toggle */}
+                  {/* Collections / Series toggles (mutually exclusive) */}
                   <button
                     type="button"
-                    onClick={() => {
-                      const next = !groupCollections;
-                      setGroupCollections(next);
-                      try {
-                        localStorage.setItem('aegis.lib.collections', next ? '1' : '0');
-                      } catch {
-                        // ignore
-                      }
-                    }}
-                    aria-pressed={groupCollections}
+                    onClick={() => toggleLibraryGrouping('collections')}
+                    aria-pressed={libraryGrouping === 'collections'}
                     title={t('coll.toggleHint')}
                     className={`h-8 px-2.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
-                      groupCollections
+                      libraryGrouping === 'collections'
                         ? 'bg-accent text-white border-accent'
                         : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
                     }`}
                   >
                     <Layers className="w-3.5 h-3.5" />
                     <span>{t('coll.toggle')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleLibraryGrouping('series')}
+                    aria-pressed={libraryGrouping === 'series'}
+                    title={t('series.toggleHint')}
+                    className={`h-8 px-2.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
+                      libraryGrouping === 'series'
+                        ? 'bg-accent text-white border-accent'
+                        : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    <LibraryBig className="w-3.5 h-3.5" />
+                    <span>{t('series.toggle')}</span>
                   </button>
 
                   {/* Sorting Dropdown */}
@@ -2265,8 +2351,24 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                </div>
               </div>
 
+              {selectedConcept === 'concept_c_workbench' && (
+                <EditorToolbar
+                  visibleGames={filteredGames}
+                  allGames={enrichedGamesSource}
+                  checkedGameIds={checkedGameIds}
+                  onSetChecked={setCheckedGameIds}
+                  onEdit={setEditorEditIds}
+                  onWriteGamelist={onEditorWriteGamelist}
+                  onScrapeMedia={onEditorScrapeMedia}
+                  onMoveRoms={scannedRows.length > 0 ? onMassMoveRoms : undefined}
+                  onAddLog={onAddLog}
+                  busy={activeRunning}
+                />
+              )}
+
               {/* VIRTUALIZED + BUFFERED VIEWS WITH «+» ADD-TO-BUILD BUTTON */}
               <VirtualizedLibraryViews
+                onEditGame={openEditorForOne}
                 games={groupedLibraryView ? groupedLibraryView.games : filteredGames}
                 viewMode={selectedConcept}
                 scrollContainerRef={mainScrollRef}
@@ -3474,22 +3576,26 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
               if (file && fileExt(file.name) === 'cue') {
                 file = pickCueDataTrack(src.cueText, src.companionFiles);
               }
+              // В десктопе ром лежит на диске: и файл, и сохранения берём по этому адресу.
+              const romRef = isNativeDesktopHost
+                ? {
+                    romFileName: qtFileName,
+                    relativePath: (qtDisc ? qtDisc.relativePath : selectedGame.relativePath) || '',
+                    consoleCode: selectedGame.consoleShort,
+                    libraryPath: effectiveLibraryPath || '',
+                    sdCardPath: selectedFolderName || '',
+                  }
+                : null;
               setQuickTestReq({
                 title: selectedGame.title,
                 consoleShort: selectedGame.consoleShort,
                 core: qtCore,
                 biosFile,
+                saveTarget: romRef,
                 source: file
                   ? { kind: 'file', file }
-                  : isNativeDesktopHost
-                  ? {
-                      kind: 'native',
-                      romFileName: qtFileName,
-                      relativePath: (qtDisc ? qtDisc.relativePath : selectedGame.relativePath) || '',
-                      consoleCode: selectedGame.consoleShort,
-                      libraryPath: effectiveLibraryPath || '',
-                      sdCardPath: selectedFolderName || '',
-                    }
+                  : romRef
+                  ? { kind: 'native', ...romRef }
                   : { kind: 'pick' },
               });
             };
@@ -3861,10 +3967,22 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       {/* ==================================================================== */}
       {/* ADD GAME TO BUILD MODAL («+» в библиотеке / инспекторе)               */}
       {/* ==================================================================== */}
+      {editorEditGames.length > 0 && (
+        <GameEditModal
+          games={editorEditGames}
+          onClose={() => setEditorEditIds(null)}
+          onSaved={onEditorWriteGamelist}
+          onAddLog={onAddLog}
+        />
+      )}
+
       {collectionModalLeadId && groupedLibraryView?.membersByLead.get(collectionModalLeadId) && (
         <CollectionModal
+          mode={groupedLibraryView.labelByLead.has(collectionModalLeadId) ? 'series' : 'collection'}
           title={
-            groupedLibraryView.membersByLead.get(collectionModalLeadId)!.find((m) => m.id === collectionModalLeadId)?.title || ''
+            groupedLibraryView.labelByLead.get(collectionModalLeadId) ||
+            groupedLibraryView.membersByLead.get(collectionModalLeadId)!.find((m) => m.id === collectionModalLeadId)?.title ||
+            ''
           }
           members={groupedLibraryView.membersByLead.get(collectionModalLeadId)!}
           selectedId={selectedGame?.id || ''}
@@ -3875,6 +3993,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
           onClose={() => setCollectionModalLeadId(null)}
         />
       )}
+
+      <DonateModal open={donateOpen} onClose={() => setDonateOpen(false)} />
 
       {quickTestReq && (
         <QuickTestModal

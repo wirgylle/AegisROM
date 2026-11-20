@@ -1,20 +1,24 @@
 import React, { useEffect } from 'react';
-import { Layers, X } from 'lucide-react';
+import { Layers, LibraryBig, X } from 'lucide-react';
+import { collectionKeyOf } from '../utils/gameCollections';
 import { useI18n } from '../i18n/translations';
 import type { EnrichedBuildGame } from '../utils/buildsAndConverterEngine';
 
 // Список всех ромов одной коллекции (одна игра на разных консолях, в регионах и хаках).
 // List of every ROM in one collection (one game across consoles, regions and hacks).
+// В режиме 'series' — все игры линейки (Final Fantasy I–XII, Tactics), по году выхода.
+// In 'series' mode: every game of the line, ordered by release year.
 
 interface CollectionModalProps {
   title: string;
+  mode?: 'collection' | 'series';
   members: EnrichedBuildGame[];
   selectedId: string;
   onPick: (id: string) => void;
   onClose: () => void;
 }
 
-export const CollectionModal: React.FC<CollectionModalProps> = ({ title, members, selectedId, onPick, onClose }) => {
+export const CollectionModal: React.FC<CollectionModalProps> = ({ title, mode = 'collection', members, selectedId, onPick, onClose }) => {
   const { t, tf } = useI18n();
 
   useEffect(() => {
@@ -26,9 +30,17 @@ export const CollectionModal: React.FC<CollectionModalProps> = ({ title, members
   }, [onClose]);
 
   const consoles = Array.from(new Set(members.map((m) => m.consoleShort.toUpperCase())));
+  const isSeries = mode === 'series';
+  const gameCount = isSeries ? new Set(members.map((m) => collectionKeyOf(m))).size : 0;
   const rows = [...members].sort(
-    (a, b) => a.consoleShort.localeCompare(b.consoleShort) || (a.year || 0) - (b.year || 0) || a.region.localeCompare(b.region)
+    isSeries
+      ? (a, b) =>
+          (a.year || 9999) - (b.year || 9999) ||
+          a.title.localeCompare(b.title, undefined, { numeric: true }) ||
+          a.consoleShort.localeCompare(b.consoleShort)
+      : (a, b) => a.consoleShort.localeCompare(b.consoleShort) || (a.year || 0) - (b.year || 0) || a.region.localeCompare(b.region)
   );
+  const HeadIcon = isSeries ? LibraryBig : Layers;
 
   return (
     <div
@@ -43,13 +55,15 @@ export const CollectionModal: React.FC<CollectionModalProps> = ({ title, members
       >
         <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-start justify-between gap-3">
           <div className="flex items-start gap-2 min-w-0">
-            <Layers className="w-5 h-5 text-accent shrink-0 mt-0.5" />
+            <HeadIcon className="w-5 h-5 text-accent shrink-0 mt-0.5" />
             <div className="min-w-0">
               <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 truncate">
-                {tf('coll.modalTitle', { title })}
+                {tf(isSeries ? 'series.modalTitle' : 'coll.modalTitle', { title })}
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                {tf('coll.modalSubtitle', { count: members.length, consoles: consoles.length })}
+                {isSeries
+                  ? tf('series.modalSubtitle', { games: gameCount, count: members.length, consoles: consoles.length })
+                  : tf('coll.modalSubtitle', { count: members.length, consoles: consoles.length })}
               </p>
             </div>
           </div>
