@@ -1,10 +1,10 @@
 {
   "appName": "AegisROM",
-  "version": "0.5.6-dev",
-  "releaseDate": "2026-11-18",
+  "version": "0.6.0-dev",
+  "releaseDate": "2026-11-20",
   "defaultInstallDir": "C:\\Program Files\\AegisROM",
-  "setupExecutable": "AegisROM-Setup-v0.5.6-dev-Win11-x64.exe",
-  "zipPackage": "AegisROM-v0.5.6-dev-Win11-x64.zip",
+  "setupExecutable": "AegisROM-Setup-v0.6.0-dev-Win11-x64.exe",
+  "zipPackage": "AegisROM-v0.6.0-dev-Win11-x64.zip",
   "portableExecutable": "AegisROM-Portable-Win11-x64.exe",
   "features": [
     "100% pure Win32 GUI Setup EXE with embedded compressed payload (zero .bat / zero .ps1)",
