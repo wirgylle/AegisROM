@@ -45,7 +45,6 @@ import {
   DOWNLOAD_SETUP_URL,
   DOWNLOAD_ZIP_URL,
   SETUP_EXE_FILENAME,
-  SUPPORT_URL,
   ZIP_PKG_FILENAME,
 } from '../version';
 import { SmartBuildsAndConverterTab } from './SmartBuildsAndConverterTab';
@@ -109,6 +108,7 @@ import {
 } from '../utils/multiDiscEngine';
 import { WorkbenchContextPanel, type HoveredTool } from './WorkbenchContextPanel';
 import { QuickTestModal, type QuickTestRequest } from './QuickTestModal';
+import { DonateModal } from './DonateModal';
 import { resolveQuickTestCore, pickCueDataTrack, pickBiosForRegion, fileExt } from '../utils/quickTest';
 import { getVerifiedBiosFiles } from '../utils/biosScan';
 
@@ -712,6 +712,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   const [librarySyncModalOpen, setLibrarySyncModalOpen] = useState<boolean>(false);
   const [selectedDiscIndex, setSelectedDiscIndex] = useState<number | null>(null);
   const [quickTestReq, setQuickTestReq] = useState<QuickTestRequest | null>(null);
+  const [donateOpen, setDonateOpen] = useState<boolean>(false);
   const [envInitialSubTab, setEnvInitialSubTab] = useState<'emulators' | 'bios'>('emulators');
   // Подвкладка «BIOS» открывается один раз по ссылке из быстрого теста, дальше снова «Эмуляторы».
   useEffect(() => {
@@ -1856,19 +1857,16 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
             </a>
           )}
 
-          {SUPPORT_URL && (
-            <a
-              href={SUPPORT_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              title={`${t('coffee.button')}. ${t('coffee.hint')}`}
-              aria-label={t('coffee.button')}
-              className="h-8 px-2.5 rounded-lg border border-amber-300/70 dark:border-amber-700/60 hover:bg-amber-50 dark:hover:bg-amber-950/40 text-amber-700 dark:text-amber-300 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition"
-            >
-              <Coffee className="w-4 h-4" />
-              <span className="hidden 2xl:inline">{t('coffee.button')}</span>
-            </a>
-          )}
+          <button
+            type="button"
+            onClick={() => setDonateOpen(true)}
+            title={`${t('coffee.button')}. ${t('coffee.hint')}`}
+            aria-label={t('coffee.button')}
+            className="h-8 px-2.5 rounded-lg border border-amber-300/70 dark:border-amber-700/60 hover:bg-amber-50 dark:hover:bg-amber-950/40 text-amber-700 dark:text-amber-300 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition"
+          >
+            <Coffee className="w-4 h-4" />
+            <span className="hidden 2xl:inline">{t('coffee.button')}</span>
+          </button>
 
           {onOpenSetupWizard && (
             <button
@@ -3995,6 +3993,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
           onClose={() => setCollectionModalLeadId(null)}
         />
       )}
+
+      <DonateModal open={donateOpen} onClose={() => setDonateOpen(false)} />
 
       {quickTestReq && (
         <QuickTestModal

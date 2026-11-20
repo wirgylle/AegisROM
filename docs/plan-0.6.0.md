@@ -14,7 +14,7 @@
 | # | Задача | Зависит от | Статус |
 |---|---|---|---|
 | 1 | **Сохранения, шаг 1.** Встроенный «Запуск» пишет `.srm` и `.state` рядом с ромом, прошлые версии в `.aegis-saves/`. См. [saves.md](saves.md). | — | этот PR |
-| 2 | **Кнопка «Угостить разработчика кофе»** в шапке и раздел в README. Адрес — константа `SUPPORT_URL` в `src/version.ts`, пока пустая (кнопка скрыта). | URL от Valentin | этот PR |
+| 2 | **Кнопка «Угостить разработчика кофе»** в шапке и раздел в README. Окно доната в USDT (Tron, Solana, Arbitrum, Avalanche, Ethereum): сумма 2 / 5 / 10 / своя, адрес с копированием и локальный QR. Адреса в `src/data/donate.ts`. | — | сделано |
 | 3 | **Сохранения, шаг 2.** При переименовании рома, 1G1R и замене версии (JP → RU) сохранения переименовываются вместе с ромом, перед этим копия в историю. | 1 | — |
 | 4 | **Сохранения, шаг 3.** Блок «Сохранения» в карточке игры: текущие файлы, история, восстановить, экспорт и импорт. Скан находит `.srm/.sav/.state` и карты памяти (`.mcr/.mcd`, PS2 `.ps2`) в библиотеке и папках эмуляторов из «Среды». | 1 | — |
 | 5 | **Wi-Fi, шаг 1: SFTP.** Профили устройств (R36S/ArkOS, Anbernic/muOS и Knulli, TrimUI, Steam Deck): адрес, логин, папка ромов по прошивке. Заливка сборки по разнице размера и времени, докачка, прогресс. | — | — |
@@ -45,7 +45,7 @@ Goal of 0.6.0: game saves live as files and survive renames, and a build can be 
 | # | Task | Depends on | Status |
 |---|---|---|---|
 | 1 | **Saves, step 1.** The built-in Play writes `.srm` and `.state` next to the ROM, older versions go to `.aegis-saves/`. See [saves.md](saves.md). | — | this PR |
-| 2 | **"Buy the developer a coffee" button** in the header and a README section. The URL is `SUPPORT_URL` in `src/version.ts`, empty for now (button hidden). | URL from Valentin | this PR |
+| 2 | **"Buy the developer a coffee" button** in the header and a README section. USDT donate window (Tron, Solana, Arbitrum, Avalanche, Ethereum): amount 2 / 5 / 10 / custom, address with copy and a local QR. Addresses in `src/data/donate.ts`. | — | done |
 | 3 | **Saves, step 2.** Renaming a ROM, 1G1R and replacing a version (JP → RU) rename its saves too, with a copy into history first. | 1 | — |
 | 4 | **Saves, step 3.** A Saves block in the game card: current files, history, restore, export and import. The scan finds `.srm/.sav/.state` and memory cards (`.mcr/.mcd`, PS2 `.ps2`) in the library and in emulator folders from Environment. | 1 | — |
 | 5 | **Wi-Fi, step 1: SFTP.** Device profiles (R36S/ArkOS, Anbernic/muOS and Knulli, TrimUI, Steam Deck): address, login, ROM folder per firmware. Upload a build by size/time difference, resume, progress. | — | — |
