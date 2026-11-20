@@ -23,6 +23,7 @@ import {
   Package,
   History,
   GitCompare,
+  Wrench,
 } from 'lucide-react';
 import { UnifiedGameRow } from './FigmaConceptStudio';
 import {
@@ -195,7 +196,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
   }, [portMasterCatalog, portMasterBuildSlugs]);
 
   const [presetCategoryFilter, setPresetCategoryFilter] = useState<
-    'all' | 'age' | 'mood_audience' | 'genre' | 'bitness'
+    'all' | 'age' | 'mood_audience' | 'genre' | 'bitness' | 'status'
   >('all');
 
   // Merge user's scanned ROMs with built-in catalog so all thematic categories (6+, 10+, 14+, 18+, girls, 8/16/32-bit) are rich and populated
@@ -2070,6 +2071,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
               },
               { id: 'genre', label: t('builds.cat.genre'), icon: Flame },
               { id: 'bitness', label: t('builds.cat.bitness'), icon: Gamepad2 },
+              { id: 'status', label: t('builds.cat.status'), icon: Wrench },
             ].map((cat) => {
               const Icon = cat.icon;
               const active = presetCategoryFilter === cat.id;

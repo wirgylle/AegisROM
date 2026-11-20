@@ -80,6 +80,8 @@ export const FilenameConstructorCard: React.FC<FilenameConstructorCardProps> = (
       bitness: '16-bit',
       consoleCode: 'GENESIS',
       extension: '.md',
+      // Пример перевода, чтобы был виден тег статуса. / A translation sample so the status tag is visible.
+      modTag: 'T+Rus',
     },
     config
   );

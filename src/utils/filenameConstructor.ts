@@ -6,6 +6,17 @@ import type {
 
 const STORAGE_KEY = 'aegisrom_v5_filename_constructor';
 
+// Тег статуса: [T+Rus], [Hack], [Fixed], [Trainer], [Patched]. У оригиналов пустой, поэтому включён по умолчанию:
+// без него хак после переименования получил бы имя оригинала.
+// Status tag: [T+Rus], [Hack], [Fixed], [Trainer], [Patched]. Empty for originals, so it is on by default:
+// without it a renamed hack would get the original's name.
+const STATUS_TOKEN: FilenameTokenItem = { id: 'status', label: 'Статус (хак / перевод)', enabled: true, wrap: 'brackets' };
+
+function withStatusToken(tokens: FilenameTokenItem[]): FilenameTokenItem[] {
+  if (tokens.some((t) => t.id === 'status')) return tokens;
+  return [...tokens, { ...STATUS_TOKEN }];
+}
+
 export const DEFAULT_FILENAME_CONFIG: FilenameConstructorConfig = {
   tokens: [
     { id: 'name', label: 'Имя игры', enabled: true, wrap: 'none' },
@@ -13,6 +24,7 @@ export const DEFAULT_FILENAME_CONFIG: FilenameConstructorConfig = {
     { id: 'region', label: 'Локализация / Регион', enabled: true, wrap: 'parens' },
     { id: 'bitness', label: 'Битность', enabled: false, wrap: 'brackets' },
     { id: 'console', label: 'Консоль', enabled: false, wrap: 'brackets' },
+    STATUS_TOKEN,
   ],
   separator: ' ',
   preserveRevision: true,
@@ -41,6 +53,7 @@ export const FILENAME_CONSTRUCTOR_PRESETS: Array<{
         { id: 'region', label: 'Локализация / Регион', enabled: true, wrap: 'parens' },
         { id: 'console', label: 'Консоль', enabled: true, wrap: 'brackets' },
         { id: 'bitness', label: 'Битность', enabled: false, wrap: 'brackets' },
+        STATUS_TOKEN,
       ],
       separator: ' ',
       preserveRevision: true,
@@ -57,6 +70,7 @@ export const FILENAME_CONSTRUCTOR_PRESETS: Array<{
         { id: 'name', label: 'Имя игры', enabled: true, wrap: 'none' },
         { id: 'year', label: 'Год выхода', enabled: true, wrap: 'parens' },
         { id: 'region', label: 'Локализация / Регион', enabled: true, wrap: 'parens' },
+        STATUS_TOKEN,
       ],
       separator: ' ',
       preserveRevision: true,
@@ -73,6 +87,7 @@ export const FILENAME_CONSTRUCTOR_PRESETS: Array<{
         { id: 'region', label: 'Локализация / Регион', enabled: false, wrap: 'parens' },
         { id: 'bitness', label: 'Битность', enabled: false, wrap: 'brackets' },
         { id: 'console', label: 'Консоль', enabled: false, wrap: 'brackets' },
+        STATUS_TOKEN,
       ],
       separator: ' ',
       preserveRevision: false,
@@ -87,7 +102,7 @@ export function loadFilenameConstructorConfig(): FilenameConstructorConfig {
       const parsed = JSON.parse(raw);
       if (parsed && Array.isArray(parsed.tokens) && parsed.tokens.length >= 4) {
         return {
-          tokens: parsed.tokens,
+          tokens: withStatusToken(parsed.tokens),
           separator: parsed.separator === ' - ' || parsed.separator === '_' ? parsed.separator : ' ',
           preserveRevision: Boolean(parsed.preserveRevision ?? true),
         };
@@ -148,6 +163,8 @@ export interface FilenameFormatInput {
   consoleCode?: string;
   extension?: string;
   revision?: string;
+  // Тег статуса из utils/romHacks.ts (modTag). / Status tag from utils/romHacks.ts (modTag).
+  modTag?: string;
 }
 
 export function formatRomStemByConfig(
@@ -166,6 +183,7 @@ export function formatRomStemByConfig(
     region: regionVal,
     bitness: bitVal,
     console: consoleVal,
+    status: sanitizeWindowsSafeStem(input.modTag || ''),
   };
 
   const parts: string[] = [];

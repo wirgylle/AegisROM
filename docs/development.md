@@ -33,6 +33,7 @@ API защищён токеном (как в AegisROM.exe). `aegis-server` пи�
 
 ```bash
 npm run lint      # tsc --noEmit
+npm test          # node --test: патчер и распознавание хаков / patcher and hack detection
 npm run build     # vite build -> dist/
 
 # Go: фронтенд в cmd/aegis-gui/webdist и payload Setup'а — генерируемые файлы.
