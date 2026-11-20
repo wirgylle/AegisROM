@@ -10,6 +10,7 @@
 | [desktop-shell.md](desktop-shell.md) | Нативное окно (Wails), хранение настроек, план macOS |
 | [quick-test.md](quick-test.md) | Быстрый тест игры в окне: WASM-ядра, лицензии, сборка / Quick test: WASM cores, licenses, build |
 | [ROADMAP.md](ROADMAP.md) | Дорожная карта: что и в какой версии планируется |
+| [setup-wizard.md](setup-wizard.md) | Мастер первоначальной настройки и тур: шаги, фоновый конвейер, как добавить шаг тура |
 | [bios.md](bios.md) | Раздел BIOS: база хешей, проверка, копирование в сборку |
 | [releasing.md](releasing.md) | Версионирование и выпуск релиза через GitHub Releases |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Ветки `main`/`dev`, pull request'ы, CI |

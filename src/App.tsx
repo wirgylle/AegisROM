@@ -68,7 +68,20 @@ import {
   normalizeDiskOutputExt,
   normalizeRegionTag,
   saveFilenameConstructorConfig,
+  FILENAME_CONSTRUCTOR_PRESETS,
 } from './utils/filenameConstructor';
+import {
+  SetupWizard,
+  SetupRunPanel,
+  SETUP_DONE_STORAGE_KEY,
+  INSTALL_MODE_STORAGE_KEY,
+  type SetupFolderKind,
+  type SetupWizardResult,
+  type SetupPickResult,
+  type SetupRunState,
+  type SetupStage,
+  type TourTarget,
+} from './components/SetupWizard';
 import {
   buildDiscTargetFilename,
   buildMultiDiscFolderName,
@@ -1860,6 +1873,13 @@ export function App() {
     records: [],
   });
 
+  // Always-current DB state for long async chains (setup wizard: scan -> transfer -> save),
+  // where closures would otherwise see the state from the render they started in.
+  const dbStateRef = useRef<PersistentDbState>(dbState);
+  useEffect(() => {
+    dbStateRef.current = dbState;
+  }, [dbState]);
+
   const [downloadStatus, setDownloadStatus] = useState<string>('');
 
   const [undoStack, setUndoStack] = useState<UndoAction[]>([]);
@@ -2214,6 +2234,7 @@ export function App() {
   }, []);
 
   const handleUpdateDbState = async (next: PersistentDbState) => {
+    dbStateRef.current = next;
     setDbState(next);
     if ((next.records?.length || 0) <= 400) {
       try {
@@ -2278,6 +2299,7 @@ export function App() {
     folderTitle: string,
     replaceAll = false
   ) => {
+    const dbState = dbStateRef.current;
     const winners = deduplicated.filter((r) => r.status === 'verified');
     if (winners.length === 0 && !replaceAll) return;
 
@@ -6131,6 +6153,64 @@ export function App() {
   // =========================================================================
   // BUFFER AUTO-PROCESSOR (АВТО-РАЗБОР БУФЕРНОЙ ПАПКИ + КОНСТРУКТОР ИМЁН)
   // =========================================================================
+  // Inspect + 1G1R-dedupe raw buffer entries (shared by the Combain tool and the setup wizard).
+  const inspectBufferEntries = async (entries: DiscoveredScanEntry[]): Promise<ScannedRomFile[]> => {
+    const paired = await pairDiscCueAndTrackFiles(entries);
+    const inspected: ScannedRomFile[] = [];
+    for (const e of paired) {
+      if (stopRequestedRef.current) break;
+      const item = await inspectFileObject(
+        e.file,
+        e.relPath,
+        e.parentHandle,
+        e.gamelistMap,
+        e.companionFiles,
+        e.cueText,
+        e.pairedFormatExt
+      );
+      if (item) inspected.push(item);
+    }
+    return collapseMultiDiscScannedRoms(
+      deduplicateAcrossSubfolders(inspected, getPriorityArray(priorityPreset)),
+      filenameConfigRef.current
+    );
+  };
+
+  // Walk a buffer folder handle and collect ROM entries (skips quarantine and media folders).
+  const walkBufferDirHandle = async (handle: any): Promise<DiscoveredScanEntry[]> => {
+    const entries: DiscoveredScanEntry[] = [];
+    const walkBuf = async (dh: any, prefix: string) => {
+      let glMap: Map<string, string> | undefined;
+      try {
+        const glH = await dh.getFileHandle('gamelist.xml');
+        glMap = parseGamelistXmlString(await (await glH.getFile()).text());
+      } catch {}
+      for await (const entry of dh.values()) {
+        if (stopRequestedRef.current) return;
+        if (entry.name.startsWith('.')) continue;
+        if (entry.kind === 'directory') {
+          const low = entry.name.toLowerCase();
+          if (['_duplicates_1g1r', '_baddumps_junk', 'images', 'videos', 'marquees'].includes(low)) continue;
+          await walkBuf(entry, prefix ? `${prefix}/${entry.name}` : entry.name);
+        } else if (entry.kind === 'file') {
+          const dot = entry.name.lastIndexOf('.');
+          const ext = dot !== -1 ? entry.name.slice(dot).toLowerCase() : '';
+          if (EXT_TO_DEFAULT_CONSOLE[ext]) {
+            const file = await entry.getFile();
+            entries.push({
+              file,
+              relPath: prefix ? `${prefix}/${entry.name}` : entry.name,
+              parentHandle: dh,
+              gamelistMap: glMap,
+            });
+          }
+        }
+      }
+    };
+    await walkBuf(handle, '');
+    return entries;
+  };
+
   const handleSelectBufferFolder = async () => {
     if (isAnyProcessRunning) return;
     const win = window as any;
@@ -6140,24 +6220,8 @@ export function App() {
       folderTitle: string,
       dirHandle: any
     ) => {
-      const paired = await pairDiscCueAndTrackFiles(entries);
-      const inspected: ScannedRomFile[] = [];
-      for (const e of paired) {
-        const item = await inspectFileObject(
-          e.file,
-          e.relPath,
-          e.parentHandle,
-          e.gamelistMap,
-          e.companionFiles,
-          e.cueText,
-          e.pairedFormatExt
-        );
-        if (item) inspected.push(item);
-      }
-      const deduped = collapseMultiDiscScannedRoms(
-        deduplicateAcrossSubfolders(inspected, getPriorityArray(priorityPreset)),
-        filenameConfigRef.current
-      );
+      if (!dirHandle) stopRequestedRef.current = false;
+      const deduped = await inspectBufferEntries(entries);
       setBufferDirHandle(dirHandle);
       setBufferFolderName(folderTitle);
       setBufferScannedRoms(deduped);
@@ -6175,35 +6239,8 @@ export function App() {
         const handle = await win.showDirectoryPicker({ mode: 'readwrite' });
         await saveDirectoryHandle('buffer_source', handle, handle.name);
         setPendingRestoreHandles((prev) => prev.filter((h) => h.key !== 'buffer_source'));
-        const entries: DiscoveredScanEntry[] = [];
-        const walkBuf = async (dh: any, prefix: string) => {
-          let glMap: Map<string, string> | undefined;
-          try {
-            const glH = await dh.getFileHandle('gamelist.xml');
-            glMap = parseGamelistXmlString(await (await glH.getFile()).text());
-          } catch {}
-          for await (const entry of dh.values()) {
-            if (entry.name.startsWith('.')) continue;
-            if (entry.kind === 'directory') {
-              const low = entry.name.toLowerCase();
-              if (['_duplicates_1g1r', '_baddumps_junk', 'images', 'videos', 'marquees'].includes(low)) continue;
-              await walkBuf(entry, prefix ? `${prefix}/${entry.name}` : entry.name);
-            } else if (entry.kind === 'file') {
-              const dot = entry.name.lastIndexOf('.');
-              const ext = dot !== -1 ? entry.name.slice(dot).toLowerCase() : '';
-              if (EXT_TO_DEFAULT_CONSOLE[ext]) {
-                const file = await entry.getFile();
-                entries.push({
-                  file,
-                  relPath: prefix ? `${prefix}/${entry.name}` : entry.name,
-                  parentHandle: dh,
-                  gamelistMap: glMap,
-                });
-              }
-            }
-          }
-        };
-        await walkBuf(handle, '');
+        stopRequestedRef.current = false;
+        const entries = await walkBufferDirHandle(handle);
         await processDiscoveredBuffer(entries, handle.name, handle);
         return;
       } catch (err: any) {
@@ -6404,17 +6441,45 @@ export function App() {
     addLog(tf('app.buf.cmdDownloadedLog', { count: sourceList.length }));
   };
 
-  const handleRunBufferAutoProcess = async () => {
-    if (isAnyProcessRunning) return;
-    const sourceList = bufferScannedRoms.length > 0 ? bufferScannedRoms : romsRef.current;
+  /**
+   * Combain: copy/move buffer ROMs into the library, sorted by console and renamed.
+   * `override` lets the setup wizard run it in one async chain with explicit inputs
+   * instead of state that has not re-rendered yet.
+   */
+  const combineMoveModeState = combineMoveMode;
+  const combineDedup1G1RState = combineDedup1G1R;
+  const combineSortFoldersState = combineSortFolders;
+  const combineAddToLibraryState = combineAddToLibrary;
+  const filenameConfigState = filenameConfig;
+  const handleRunBufferAutoProcess = async (override?: {
+    sourceList: ScannedRomFile[];
+    targetHandle: any;
+    moveMode: 'move' | 'copy';
+    filenameConfig?: FilenameConstructorConfig;
+    sourceName?: string;
+  }): Promise<{ moved: number; dups: number } | void> => {
+    if (isAnyProcessRunning && !override) return;
+    const sourceList =
+      override?.sourceList ??
+      (bufferScannedRoms.length > 0 ? bufferScannedRoms : romsRef.current);
+    const combineMoveMode = override?.moveMode ?? combineMoveModeState;
+    const combineDedup1G1R = override ? true : combineDedup1G1RState;
+    const combineSortFolders = override ? true : combineSortFoldersState;
+    const combineAddToLibrary = override ? true : combineAddToLibraryState;
+    const filenameConfig = override?.filenameConfig ?? filenameConfigState;
 
     if (sourceList.length === 0) {
+      if (override) return;
       await handleSelectBufferFolder();
       return;
     }
 
     const activeTargetHandle =
-      combineTargetDirHandle || sortTargetDirHandle || libraryDirHandle || rootDirHandle;
+      override?.targetHandle ||
+      combineTargetDirHandle ||
+      sortTargetDirHandle ||
+      libraryDirHandle ||
+      rootDirHandle;
 
     if (!activeTargetHandle) {
       handleDownloadBufferCmdScript();
@@ -6425,7 +6490,9 @@ export function App() {
     setIsProcessingBuffer(true);
     setProgressPct(5);
     const startBufMsg = tf('app.buf.startMsg', {
-      src: bufferFolderName || selectedFolderName || t('app.bufferFolderDefault'),
+      src: override
+        ? override.sourceName || t('app.bufferFolderDefault')
+        : bufferFolderName || selectedFolderName || t('app.bufferFolderDefault'),
       count: sourceList.length,
       dst: activeTargetHandle.name,
     });
@@ -6581,7 +6648,7 @@ export function App() {
         syncScannedRomsIntoDb(merged, activeTargetHandle.name, false);
       }
 
-      if (combineMoveMode === 'move' && bufferScannedRoms.length > 0) {
+      if (!override && combineMoveMode === 'move' && bufferScannedRoms.length > 0) {
         setBufferScannedRoms([]);
       }
 
@@ -6601,6 +6668,338 @@ export function App() {
     } finally {
       setIsProcessingBuffer(false);
       setProgressPct(100);
+    }
+    return { moved: movedOrCopied, dups: quarantinedDups };
+  };
+
+  // ==========================================================================
+  // Мастер первоначальной настройки / first-run setup wizard (roadmap 0.5.8)
+  // ==========================================================================
+  const [setupWizardOpen, setSetupWizardOpen] = useState(false);
+  const [setupWizardKey, setSetupWizardKey] = useState(0);
+  const setupHandlesRef = useRef<Record<SetupFolderKind, any>>({
+    library: null,
+    storage: null,
+    own: null,
+  });
+  const [setupFolders, setSetupFolders] = useState<Record<SetupFolderKind, string | null>>({
+    library: null,
+    storage: null,
+    own: null,
+  });
+  const [setupOwnConflict, setSetupOwnConflict] = useState(false);
+  const [setupRun, setSetupRun] = useState<SetupRunState | null>(null);
+  const [setupTourOpen, setSetupTourOpen] = useState(false);
+  const [navigateRequest, setNavigateRequest] = useState<{
+    target: TourTarget;
+    nonce: number;
+  } | null>(null);
+  const setupRunningRef = useRef(false);
+  const setupFsSupported =
+    typeof window !== 'undefined' && typeof (window as any).showDirectoryPicker === 'function';
+
+  const markSetupDone = () => {
+    try {
+      localStorage.setItem(SETUP_DONE_STORAGE_KEY, new Date().toISOString());
+    } catch {}
+  };
+
+  // First launch: open the wizard unless this install already has a library
+  // (saved folder handles or cached DB records from an earlier version).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (localStorage.getItem(SETUP_DONE_STORAGE_KEY)) return;
+      } catch {
+        return;
+      }
+      let existing = false;
+      try {
+        const raw = localStorage.getItem('aegisrom_v0_5_db');
+        if (raw && (JSON.parse(raw)?.records?.length || 0) > 0) existing = true;
+      } catch {}
+      if (!existing) {
+        try {
+          existing = (await listAllSavedDirectoryHandles()).length > 0;
+        } catch {}
+      }
+      if (cancelled) return;
+      if (existing) markSetupDone();
+      else setSetupWizardOpen(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleOpenSetupWizard = () => {
+    if (setupRunningRef.current) return;
+    const storage = sortTargetDirHandle || combineTargetDirHandle || null;
+    setupHandlesRef.current = { library: libraryDirHandle || null, storage, own: null };
+    setSetupFolders({
+      library: libraryDirHandle?.name || null,
+      storage: storage?.name || null,
+      own: null,
+    });
+    setSetupOwnConflict(false);
+    setSetupWizardKey((k) => k + 1);
+    setSetupWizardOpen(true);
+  };
+
+  // True when the two folders are the same or one lies inside the other.
+  const areDirHandlesOverlapping = async (a: any, b: any): Promise<boolean> => {
+    if (!a || !b) return false;
+    try {
+      if (typeof a.isSameEntry === 'function' && (await a.isSameEntry(b))) return true;
+    } catch {}
+    try {
+      if (typeof a.resolve === 'function' && (await a.resolve(b)) !== null) return true;
+      if (typeof b.resolve === 'function' && (await b.resolve(a)) !== null) return true;
+    } catch {}
+    return false;
+  };
+
+  const handleSetupPickFolder = async (kind: SetupFolderKind): Promise<SetupPickResult> => {
+    const win = window as any;
+    if (typeof win.showDirectoryPicker !== 'function') return { ok: false };
+    try {
+      const handle = await win.showDirectoryPicker({ mode: 'readwrite', id: `aegis-setup-${kind}` });
+      setupHandlesRef.current = { ...setupHandlesRef.current, [kind]: handle };
+      setSetupFolders((prev) => ({ ...prev, [kind]: handle.name }));
+      const { storage, own } = setupHandlesRef.current;
+      setSetupOwnConflict(await areDirHandlesOverlapping(storage, own));
+      return { ok: true };
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return { ok: false };
+      return { ok: false, error: String(err?.message || err) };
+    }
+  };
+
+  const handleSetupClearFolder = (kind: SetupFolderKind) => {
+    setupHandlesRef.current = { ...setupHandlesRef.current, [kind]: null };
+    setSetupFolders((prev) => ({ ...prev, [kind]: null }));
+    if (kind === 'own' || kind === 'storage') setSetupOwnConflict(false);
+  };
+
+  const handleSetupLater = () => {
+    markSetupDone();
+    setSetupWizardOpen(false);
+  };
+
+  const updateSetupStage = (id: SetupStage['id'], patch: Partial<SetupStage>) => {
+    setSetupRun((prev) =>
+      prev
+        ? { ...prev, stages: prev.stages.map((st) => (st.id === id ? { ...st, ...patch } : st)) }
+        : prev
+    );
+  };
+
+  const handleSetupStop = () => {
+    handleEmergencyStop();
+    setSetupRun((prev) =>
+      prev
+        ? {
+            ...prev,
+            stopped: true,
+            stages: prev.stages.map((st) =>
+              st.status === 'pending' || st.status === 'running'
+                ? { ...st, status: 'skipped' as const }
+                : st
+            ),
+          }
+        : prev
+    );
+  };
+
+  const handleTourNavigate = (target: TourTarget) => {
+    setNavigateRequest({ target, nonce: Date.now() });
+  };
+
+  /**
+   * Builds the library step by step with the existing tools:
+   * library file -> scan ROM storage -> scan own ROMs -> copy/move + sort + rename -> save.
+   * Runs in the background while the tour is shown.
+   */
+  const runInitialSetupPipeline = async (result: SetupWizardResult) => {
+    if (setupRunningRef.current) return;
+    const { library, storage } = setupHandlesRef.current;
+    const own = setupOwnConflict ? null : setupHandlesRef.current.own;
+    if (!library || !storage) return;
+    setupRunningRef.current = true;
+    setSetupWizardOpen(false);
+    markSetupDone();
+    try {
+      localStorage.setItem(INSTALL_MODE_STORAGE_KEY, result.installMode);
+    } catch {}
+
+    setSetupRun({
+      stages: [
+        { id: 'library', status: 'pending' },
+        { id: 'scanStorage', status: 'pending' },
+        { id: 'scanOwn', status: own ? 'pending' : 'skipped' },
+        { id: 'transfer', status: own ? 'pending' : 'skipped' },
+        { id: 'save', status: 'pending' },
+      ],
+      transferMode: result.ownMode,
+      finished: false,
+      stopped: false,
+    });
+    setSetupTourOpen(true);
+    setNavigateRequest({ target: { tab: 'library' }, nonce: Date.now() });
+    addLog(t('setup.log.start'));
+    stopRequestedRef.current = false;
+    const stopped = () => stopRequestedRef.current;
+    const errText = (e: any) => String(e?.message || e);
+    const verifiedCount = () => romsRef.current.filter((r) => r.status === 'verified').length;
+
+    let cfg = filenameConfigRef.current;
+    if (result.renamePresetId) {
+      const preset = FILENAME_CONSTRUCTOR_PRESETS.find((p) => p.id === result.renamePresetId);
+      if (preset) {
+        handleChangeFilenameConfig(preset.config);
+        cfg = preset.config;
+      }
+    }
+
+    try {
+      // 1. Library file
+      updateSetupStage('library', { status: 'running' });
+      try {
+        await saveDirectoryHandle('library_root', library, library.name);
+        setPendingRestoreHandles((prev) => prev.filter((h) => h.key !== 'library_root'));
+        setLibraryDirHandle(library);
+        setMediaAccessVersion((v) => v + 1);
+        await handleUpdateDbState({
+          ...dbStateRef.current,
+          masterLibraryPath: library.name,
+          sdCardMountPath: storage.name,
+          lastSyncedAt: new Date().toISOString(),
+        });
+        const dbFh = await library.getFileHandle('aegisrom_db.json', { create: true });
+        if ((await dbFh.getFile()).size === 0) {
+          const w = await dbFh.createWritable();
+          await w.write(JSON.stringify(dbStateRef.current, null, 2));
+          await w.close();
+        }
+        updateSetupStage('library', { status: 'done', detail: library.name });
+      } catch (e) {
+        updateSetupStage('library', { status: 'error', detail: errText(e) });
+      }
+      if (stopped()) return;
+
+      // 2. Scan the ROM storage (ROMs already there become the library)
+      updateSetupStage('scanStorage', { status: 'running', detail: storage.name });
+      for (const key of ['scan_root', 'sort_target', 'combine_target']) {
+        await saveDirectoryHandle(key, storage, storage.name);
+      }
+      setPendingRestoreHandles((prev) =>
+        prev.filter((h) => !['scan_root', 'sort_target', 'combine_target'].includes(h.key))
+      );
+      setRootDirHandle(storage);
+      setSelectedFolderName(storage.name);
+      setSortTargetDirHandle(storage);
+      setSortTargetFolderName(storage.name);
+      setCombineTargetDirHandle(storage);
+      setCombineTargetFolderName(storage.name);
+      scanModeRef.current = 'replace';
+      await scanDirectoryHandleRecursively(storage, 'replace');
+      if (stopped()) return;
+      updateSetupStage('scanStorage', {
+        status: 'done',
+        detail: tf('setup.stage.found', { count: verifiedCount() }),
+      });
+
+      // 3-4. Own ROMs: scan, then copy/move into the storage sorted by console and renamed
+      if (own) {
+        updateSetupStage('scanOwn', { status: 'running', detail: own.name });
+        let found: ScannedRomFile[] = [];
+        let scanOwnFailed = false;
+        try {
+          await saveDirectoryHandle('buffer_source', own, own.name);
+          setPendingRestoreHandles((prev) => prev.filter((h) => h.key !== 'buffer_source'));
+          setBufferDirHandle(own);
+          setBufferFolderName(own.name);
+          setIsScanning(true);
+          setCurrentActionText(tf('app.scan.scanning', { name: own.name }));
+          found = await inspectBufferEntries(await walkBufferDirHandle(own));
+        } catch (e) {
+          scanOwnFailed = true;
+          updateSetupStage('scanOwn', { status: 'error', detail: errText(e) });
+        } finally {
+          setIsScanning(false);
+        }
+        if (stopped()) return;
+        if (!scanOwnFailed) {
+          updateSetupStage('scanOwn', {
+            status: 'done',
+            detail: tf('setup.stage.found', { count: found.length }),
+          });
+        }
+
+        if (found.length > 0) {
+          updateSetupStage('transfer', { status: 'running' });
+          try {
+            const res = await handleRunBufferAutoProcess({
+              sourceList: found,
+              targetHandle: storage,
+              moveMode: result.ownMode,
+              filenameConfig: cfg,
+              sourceName: own.name,
+            });
+            if (stopped()) return;
+            updateSetupStage('transfer', {
+              status: 'done',
+              detail: res ? tf('setup.stage.placed', { count: res.moved, dups: res.dups }) : '',
+            });
+          } catch (e) {
+            updateSetupStage('transfer', { status: 'error', detail: errText(e) });
+          }
+        } else {
+          updateSetupStage('transfer', { status: 'skipped' });
+        }
+      }
+      if (stopped()) return;
+
+      // 5. Save the library file next to the chosen folder
+      updateSetupStage('save', { status: 'running' });
+      try {
+        const dbFh = await library.getFileHandle('aegisrom_db.json', { create: true });
+        const w = await dbFh.createWritable();
+        await w.write(
+          JSON.stringify(
+            { ...dbStateRef.current, exportedAt: new Date().toISOString() },
+            null,
+            2
+          )
+        );
+        await w.close();
+        updateSetupStage('save', { status: 'done', detail: 'aegisrom_db.json' });
+      } catch (e) {
+        updateSetupStage('save', { status: 'error', detail: errText(e) });
+      }
+
+      const count = verifiedCount();
+      setSetupRun((prev) => (prev ? { ...prev, finished: true, gamesCount: count } : prev));
+      addLog(tf('setup.log.done', { count }));
+    } finally {
+      setupRunningRef.current = false;
+      if (stopRequestedRef.current) {
+        addLog(t('setup.log.stopped'));
+        setSetupRun((prev) =>
+          prev
+            ? {
+                ...prev,
+                stopped: true,
+                stages: prev.stages.map((st) =>
+                  st.status === 'pending' || st.status === 'running'
+                    ? { ...st, status: 'skipped' as const }
+                    : st
+                ),
+              }
+            : prev
+        );
+      }
     }
   };
 
@@ -7995,6 +8394,8 @@ export function App() {
       />
 
       <FigmaConceptStudio
+        navigateRequest={navigateRequest}
+        onOpenSetupWizard={handleOpenSetupWizard}
         selectedConcept={selectedFigmaConcept}
         onSelectConcept={(cid) => {
           setSelectedFigmaConcept(cid);
@@ -8244,6 +8645,27 @@ export function App() {
           </div>
         </div>
       )}
+
+      <SetupWizard
+        key={setupWizardKey}
+        open={setupWizardOpen}
+        fsSupported={setupFsSupported}
+        folders={setupFolders}
+        ownSameAsStorage={setupOwnConflict}
+        onPickFolder={handleSetupPickFolder}
+        onClearFolder={handleSetupClearFolder}
+        onLater={handleSetupLater}
+        onStart={runInitialSetupPipeline}
+      />
+
+      <SetupRunPanel
+        run={setupRun}
+        tourOpen={setupTourOpen}
+        onCloseTour={() => setSetupTourOpen(false)}
+        onDismissRun={() => setSetupRun(null)}
+        onStop={handleSetupStop}
+        onNavigate={handleTourNavigate}
+      />
 
       {/* R36S (ArkOS / DarkOS) Media Preview Modal */}
       {previewRom && (

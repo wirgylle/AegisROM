@@ -33,6 +33,7 @@ import {
   Scissors,
   AlertTriangle,
   Check,
+  Wand2,
 } from 'lucide-react';
 import { GameInspectorCoverVideo } from './GameInspectorCoverVideo';
 import { DatFilesPanel } from './DatFilesPanel';
@@ -200,6 +201,13 @@ export interface UnifiedGameRow {
 }
 
 interface FigmaConceptStudioProps {
+  /** Tour / setup wizard: switch to a section (and Tools sub-tab) when nonce changes. */
+  navigateRequest?: {
+    target: { tab: 'library' | 'tools' | 'builds' | 'env'; toolsMode?: 'library' | 'sd_folder' | 'combine' };
+    nonce: number;
+  } | null;
+  /** Opens the first-run setup wizard again (top bar wand button). */
+  onOpenSetupWizard?: () => void;
   selectedConcept: FigmaConceptId;
   onSelectConcept: (id: FigmaConceptId) => void;
   isDarkMode: boolean;
@@ -576,6 +584,8 @@ function buildSampleDefaultGames(): UnifiedGameRow[] {
 }
 
 export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
+  navigateRequest,
+  onOpenSetupWizard,
   selectedConcept,
   onSelectConcept,
   isDarkMode,
@@ -666,6 +676,11 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   );
   const [previewTab, setPreviewTab] = useState<'library' | 'tools' | 'builds' | 'env'>('library');
   const [toolsMode, setToolsMode] = useState<'library' | 'sd_folder' | 'combine'>('library');
+  useEffect(() => {
+    if (!navigateRequest) return;
+    setPreviewTab(navigateRequest.target.tab);
+    if (navigateRequest.target.toolsMode) setToolsMode(navigateRequest.target.toolsMode);
+  }, [navigateRequest?.nonce]);
   const [renameOnSortRules, setRenameOnSortRules] = useState<boolean>(true);
   const [librarySyncModalOpen, setLibrarySyncModalOpen] = useState<boolean>(false);
   const [selectedDiscIndex, setSelectedDiscIndex] = useState<number | null>(null);
@@ -1718,6 +1733,18 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
               <Download className="w-4 h-4" />
               <span className="hidden xl:inline">{t('header.setupExe')}</span>
             </a>
+          )}
+
+          {onOpenSetupWizard && (
+            <button
+              type="button"
+              onClick={onOpenSetupWizard}
+              title={t('header.setupWizard')}
+              aria-label={t('header.setupWizard')}
+              className="w-8 h-8 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center cursor-pointer transition"
+            >
+              <Wand2 className="w-4 h-4" />
+            </button>
           )}
 
           {/* System Language Switcher directly next to Theme Toggle */}
