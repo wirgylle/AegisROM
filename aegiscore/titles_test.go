@@ -208,3 +208,25 @@ func TestDetectHeaderSkip(t *testing.T) {
 		t.Errorf("smc no header: %d", got)
 	}
 }
+
+// Римские номера в ключе сравнения: FFVIII с двоеточием, IX и XII совпадают с цифрами.
+// Roman numbers in the comparison key match digits, also with a colon and above VIII.
+func TestBuildComparisonKeyRoman(t *testing.T) {
+	cases := [][2]string{
+		{"Final Fantasy VIII", "Final Fantasy 8"},
+		{"Final Fantasy IX", "Final Fantasy 9"},
+		{"Final Fantasy XII", "Final Fantasy 12"},
+		{"Street Fighter II: The World Warrior", "Street Fighter 2 - The World Warrior"},
+	}
+	for _, c := range cases {
+		if a, b := BuildComparisonKey(c[0]), BuildComparisonKey(c[1]); a != b {
+			t.Errorf("%q → %q, %q → %q", c[0], a, c[1], b)
+		}
+	}
+	if BuildComparisonKey("Mega Man X") == BuildComparisonKey("Mega Man 10") {
+		t.Error("Mega Man X не должен совпадать с Mega Man 10")
+	}
+	if got := BuildComparisonKey(ExtractCleanTitle("Final Fantasy VIII (USA) (Disc 1).png")); got != "finalfantasy8disc1" && got != "finalfantasy8" {
+		t.Errorf("ключ FFVIII из индекса Libretro: %q", got)
+	}
+}

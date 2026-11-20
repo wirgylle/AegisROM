@@ -50,7 +50,11 @@ export function normalizeGameTitle(title: string): string {
   return s.replace(/\s+/g, ' ');
 }
 
-const ROMAN: Record<string, true> = { ii: true, iii: true, iv: true, v: true, vi: true, vii: true, viii: true, ix: true };
+// X одна не номер: «Mega Man X» — отдельная серия. / A lone X is not a number: "Mega Man X" is its own series.
+const ROMAN: Record<string, true> = {
+  ii: true, iii: true, iv: true, v: true, vi: true, vii: true, viii: true, ix: true,
+  xi: true, xii: true, xiii: true, xiv: true, xv: true, xvi: true,
+};
 
 function isPartNumber(tok: string): boolean {
   return /^\d{1,2}$/.test(tok) || ROMAN[tok] === true;
@@ -153,4 +157,92 @@ export function seriesSiblings<T extends CollectionInput>(index: CollectionIndex
   const own = index.byKey.get(key);
   if (!own || !own.seriesKey) return [];
   return (index.bySeries.get(own.seriesKey) || []).filter((c) => c.key !== key);
+}
+
+// ---------------------------------------------------------------------------
+// Серии: вся линейка игры. Final Fantasy, Final Fantasy VII, Final Fantasy Tactics,
+// Final Fantasy X-2 — одна серия «Final Fantasy». Коллекция же — одна игра на разных консолях.
+// Series: the whole line of a game. A collection is one game across consoles.
+
+export interface GameSeries<T extends CollectionInput = CollectionInput> {
+  key: string;
+  /** Название серии для карточки. / Series name for the card. */
+  label: string;
+  lead: T;
+  /** Игры серии (каждая — коллекция версий). / Games of the series (each a collection of versions). */
+  games: GameCollection<T>[];
+  members: T[];
+  consoles: string[];
+}
+
+/**
+ * Название серии из названия игры: «Final Fantasy VIII (USA)» → «Final Fantasy»,
+ * «Castlevania: Bloodlines» → «Castlevania». Сохраняет регистр исходника.
+ * Series name from a game title, keeping the original case.
+ */
+export function seriesLabelOf(title: string, seriesKey: string): string {
+  const raw = String(title || '')
+    .replace(/\[[^\]]*\]|\([^)]*\)/g, ' ')
+    .split(/\s*:\s+|\s+-\s+|\s+–\s+/)[0]
+    .replace(/\s+/g, ' ')
+    .trim();
+  const want = seriesKey.split(' ').filter(Boolean).length;
+  const words = raw.split(' ');
+  // Берём столько слов исходника, сколько слов в ключе (артикль в начале ключ не считает).
+  // Take as many source words as the key has (a leading article is not in the key).
+  const lead = /^(the|a|an)$/i.test(words[0] || '') ? 1 : 0;
+  let out = words.slice(0, lead + want).join(' ').replace(/[,.;]+$/, '');
+  if (normalizeGameTitle(out) !== seriesKey) {
+    out = seriesKey.replace(/(^|\s)(\S)/g, (_m, sp, ch) => sp + ch.toUpperCase());
+  }
+  return out;
+}
+
+function startsWithWords(full: string, prefix: string): boolean {
+  return full === prefix || full.startsWith(prefix + ' ');
+}
+
+/**
+ * Группирует отфильтрованный список по сериям. Основа серии — ключ серии игры, у которой
+ * в названии есть номер части или подзаголовок, либо который встречается у двух и больше игр.
+ * Игра попадает в самую короткую подходящую основу: «Final Fantasy Tactics» → «final fantasy».
+ * Groups a filtered list by series. A series base is the series key of a game with a part
+ * number or subtitle, or one shared by two or more games. A game joins the shortest base
+ * its title starts with.
+ */
+export function buildSeries<T extends CollectionInput>(games: readonly T[]): GameSeries<T>[] {
+  const cols = buildCollections(games);
+  const keyCount = new Map<string, number>();
+  const bases = new Set<string>();
+  for (const c of cols) {
+    if (!c.seriesKey) continue;
+    keyCount.set(c.seriesKey, (keyCount.get(c.seriesKey) || 0) + 1);
+    if (c.seriesKey !== c.key) bases.add(c.seriesKey);
+  }
+  for (const [k, n] of keyCount) if (n > 1) bases.add(k);
+  const sortedBases = Array.from(bases).sort((a, b) => a.length - b.length);
+
+  const byKey = new Map<string, GameSeries<T>>();
+  const order: GameSeries<T>[] = [];
+  for (const c of cols) {
+    const base = sortedBases.find((b) => startsWithWords(c.key, b)) || c.seriesKey || c.key;
+    let s = byKey.get(base);
+    if (!s) {
+      s = { key: base, label: '', lead: c.lead, games: [], members: [], consoles: [] };
+      byKey.set(base, s);
+      order.push(s);
+    }
+    s.games.push(c);
+    s.members.push(...c.members);
+    for (const cs of c.consoles) if (!s.consoles.includes(cs)) s.consoles.push(cs);
+  }
+  for (const s of order) {
+    // Лицо серии: первая часть (название ровно как серия), иначе первая по порядку с обложкой.
+    // Series lead: the first entry (title equal to the series), else the first with box art.
+    const exact = s.games.find((c) => c.key === s.key);
+    const withArt = s.games.find((c) => c.lead.boxArtUrl);
+    s.lead = (exact || withArt || s.games[0]).lead;
+    s.label = s.games.length > 1 ? seriesLabelOf(s.lead.title, s.key) : s.lead.title;
+  }
+  return order;
 }

@@ -37,6 +37,7 @@ import {
   Table as TableIcon,
 } from 'lucide-react';
 import { computeCRC32Hex } from './utils/crc32';
+import { expandTitleAbbreviations, romanToArabicInKey } from './utils/titleAliases';
 import {
   fetchDatStatus,
   fetchLibretroDats,
@@ -1353,7 +1354,9 @@ function extractCleanTitle(fileName: string): string {
   if (PURE_NUMBERED_ROM_REGEX.test(originalBase) || PURE_NUMBERED_ROM_REGEX.test(withoutTags)) {
     return withoutTags || originalBase;
   }
-  const base = stripLeadingIndexExcept007(withoutTags || originalBase);
+  // «FFVIII» → «Final Fantasy VIII»: иначе по сокращению не найти ни DAT-имя, ни обложку.
+  // "FFVIII" → "Final Fantasy VIII": an abbreviation matches neither a DAT name nor a cover.
+  const base = expandTitleAbbreviations(stripLeadingIndexExcept007(withoutTags || originalBase));
   // Keep legitimate dots in titles like "Dr. Mario", "Ms. Pac-Man", "G.I. Joe"; normalize underscores and multi-spaces
   const stripped = base
     .replace(/\[.*?\]|\(.*?\)/g, ' ')
@@ -1395,13 +1398,9 @@ function extractCleanTitle(fileName: string): string {
 
 function buildComparisonKey(cleanTitle: string): string {
   let s = ` ${stripLeadingIndexExcept007(cleanTitle.toLowerCase())} `;
-  s = s
-    .replace(/\bviii\b/g, '8')
-    .replace(/\bvii\b/g, '7')
-    .replace(/\bvi\b/g, '6')
-    .replace(/\biv\b/g, '4')
-    .replace(/\biii\b/g, '3')
-    .replace(/\bii\b/g, '2');
+  // II–XX → 2–20 (одиночные I, V, X не трогаем). Та же замена в aegiscore.BuildComparisonKey.
+  // II–XX → 2–20 (lone I, V, X untouched). Same mapping as aegiscore.BuildComparisonKey.
+  s = romanToArabicInKey(s);
 
   const words = s
     .split(/[^a-z0-9а-яё]+/i)
@@ -7514,6 +7513,91 @@ export function App() {
     );
   }, [roms, dbState.records]);
 
+  // Переименование многодисковой игры на месте: каждый диск (с .cue/.bin-дорожками) получает
+  // имя «<Название> (Регион) (Disc N)», плейлист .m3u, который ссылался на старые имена,
+  // переписывается под новые. Папку игры не переносим.
+  // In-place rename of a multi-disc game: each disc (with its .cue/.bin tracks) gets
+  // "<Title> (Region) (Disc N)", and the .m3u that listed the old names is rewritten.
+  // The game folder is not moved.
+  const renameMultiDiscInPlace = async (
+    orig: ScannedRomFile,
+    next: ScannedRomFile
+  ): Promise<{ rom: ScannedRomFile; renamedDiscs: number }> => {
+    const oldDiscs = orig.discs || [];
+    const nextDiscs = next.discs || [];
+    const parent = oldDiscs[0]?.parentHandle;
+    let renamedDiscs = 0;
+    const doneDiscs: ScannedRomFile[] = [];
+    for (let i = 0; i < oldDiscs.length; i++) {
+      const d = oldDiscs[i];
+      const target = (nextDiscs[i]?.canonicalName || d.fileName).replace(/[<>:"/\\|?*]/g, '_').trim();
+      if (d.parentHandle && d.fileObj && target && target.toLowerCase() !== d.fileName.toLowerCase()) {
+        await writeRomWithCompanionsToDir(d, d.parentHandle, target, true);
+        renamedDiscs++;
+      }
+      const slash = d.relativePath.lastIndexOf('/');
+      doneDiscs.push({
+        ...(nextDiscs[i] || d),
+        fileName: target,
+        canonicalName: target,
+        relativePath: slash >= 0 ? `${d.relativePath.slice(0, slash)}/${target}` : target,
+      });
+    }
+
+    // Старый .m3u ищем по содержимому: его имя после скана не известно.
+    // The old .m3u is found by content: its name is not known after a scan.
+    const newM3u = (next.m3uFileName || '').replace(/[<>:"/\\|?*]/g, '_').trim();
+    if (parent && newM3u && renamedDiscs > 0) {
+      const oldNames = new Set(oldDiscs.map((d) => d.fileName.toLowerCase()));
+      const oldM3us: string[] = [];
+      try {
+        for await (const [name, h] of parent.entries()) {
+          if (h.kind !== 'file' || !/\.m3u$/i.test(name)) continue;
+          const text = await (await h.getFile()).text();
+          if (text.split(/\r?\n/).some((l: string) => oldNames.has(l.trim().split(/[\\/]/).pop()?.toLowerCase() || ''))) {
+            oldM3us.push(name);
+          }
+        }
+      } catch {
+        // каталог не перечисляется — просто не переписываем m3u / cannot list the folder
+      }
+      if (oldM3us.length > 0) {
+        const fh = await parent.getFileHandle(newM3u, { create: true });
+        const w = await fh.createWritable();
+        await w.write(generateM3uPlaylistText(doneDiscs.map((d) => d.fileName)));
+        await w.close();
+        for (const old of oldM3us) {
+          if (old.toLowerCase() === newM3u.toLowerCase()) continue;
+          try {
+            await parent.removeEntry(old);
+          } catch {
+            // ignore
+          }
+          const oldStem = old.replace(/\.[^/.]+$/, '');
+          const newStem = newM3u.replace(/\.[^/.]+$/, '');
+          await renameMediaAndSavesForRom(parent, parent, oldStem, newStem);
+          if (orig.targetDirHandle && orig.targetDirHandle !== parent) {
+            await renameMediaAndSavesForRom(orig.targetDirHandle, orig.targetDirHandle, oldStem, newStem);
+          }
+        }
+      } else {
+        // Без m3u медиа обычно названы по первому диску. / Without an m3u, media follow disc 1.
+        const oldStem = oldDiscs[0].fileName.replace(/\.[^/.]+$/, '');
+        const newStem = doneDiscs[0].fileName.replace(/\.[^/.]+$/, '');
+        await renameMediaAndSavesForRom(parent, parent, oldStem, newStem);
+      }
+    }
+
+    return {
+      rom: {
+        ...next,
+        fileName: doneDiscs[0]?.fileName || next.fileName,
+        discs: doneDiscs,
+      },
+      renamedDiscs,
+    };
+  };
+
   const handleOnlineRenameRoms = async () => {
     const activeList = romsRef.current;
     if (activeList.length === 0 || isAnyProcessRunning) return;
@@ -7738,7 +7822,19 @@ export function App() {
         );
         const safeNewName = newCandidate.canonicalName.replace(/[<>:"/\\|?*]/g, '_').trim();
 
-        if (!r.isMultiDisc && safeNewName && safeNewName.toLowerCase() !== r.fileName.toLowerCase()) {
+        // Многодисковые игры раньше пропускались целиком: FFVIII (4 диска) так и оставался «FFVIII».
+        // Multi-disc games used to be skipped entirely, so FFVIII (4 discs) kept its old name.
+        const isMultiSet = Boolean(r.isMultiDisc && Array.isArray(r.discs) && r.discs.length > 1);
+        let multiResult: ScannedRomFile | null = null;
+        if (isMultiSet) {
+          try {
+            const res = await renameMultiDiscInPlace(r, newCandidate);
+            multiResult = res.rom;
+            if (res.renamedDiscs > 0) renamed++;
+          } catch (err) {
+            addLog(tf('app.rename.onlineSkipLog', { file: r.fileName, reason: String(err) }));
+          }
+        } else if (safeNewName && safeNewName.toLowerCase() !== r.fileName.toLowerCase()) {
           if (r.parentHandle && r.fileObj) {
             const oldStem = r.fileName.replace(/\.[^/.]+$/, '');
             const newStem = safeNewName.replace(/\.[^/.]+$/, '');
@@ -7749,8 +7845,8 @@ export function App() {
         }
 
         updated[i] = {
-          ...newCandidate,
-          fileName: r.isMultiDisc ? r.fileName : safeNewName,
+          ...(multiResult || newCandidate),
+          fileName: isMultiSet ? multiResult?.fileName || r.fileName : safeNewName,
           canonicalName: safeNewName,
           comparisonKey: buildComparisonKey(bestTitle),
           mediaStatus: tf('app.rename.ctorStatus', { name: safeNewName }),
