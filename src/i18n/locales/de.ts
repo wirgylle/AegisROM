@@ -273,6 +273,8 @@ export const DE: TranslationDict = {
   'qt.logStart': 'Schnelltest: „{title}“ in {core} ({file})',
   'qt.logError': 'Schnelltest „{title}“: {err}',
   'qt.footer': 'Integriertes EmulatorJS (WASM) läuft offline. Steuerung und Einstellungen in der Leiste unten im Player. Nur ein schneller Check: zum Spielen den Emulator aus dem Bereich Umgebung verwenden.',
+  'qt.needBios': '{console} benötigt ein BIOS, aber kein geprüftes BIOS wurde gefunden. Füge es unter Umgebung → BIOS hinzu: dort steht, welche Datei nötig ist und woher sie kommt.',
+  'qt.openBios': 'BIOS-Bereich öffnen',
   'insp.launchLog': 'Starte „{title}“ ({rom}) in „{emu}“...',
   'insp.launchOk': 'Gestartet (PID {pid}): {title} → {emu}',
   'insp.launchOkLog': 'Emulator gestartet (PID {pid}): {cmd}',

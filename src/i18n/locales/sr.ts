@@ -273,6 +273,8 @@ export const SR: TranslationDict = {
   'qt.logStart': 'Brzi test: „{title}“ u {core} ({file})',
   'qt.logError': 'Brzi test „{title}“: {err}',
   'qt.footer': 'Ugrađeni EmulatorJS (WASM) radi bez interneta. Kontrole i podešavanja su na traci na dnu plejera. Ovo je brza provera: za pravu igru koristi emulator iz odeljka Okruženje.',
+  'qt.needBios': '{console} zahteva BIOS, a provereni BIOS nije pronađen. Dodaj ga u Okruženje → BIOS: tamo piše koji fajl treba i gde ga naći.',
+  'qt.openBios': 'Otvori odeljak BIOS',
   'insp.launchLog': 'Pokretanje „{title}“ ({rom}) u „{emu}“...',
   'insp.launchOk': 'Pokrenuto (PID {pid}): {title} → {emu}',
   'insp.launchOkLog': 'Emulator pokrenut (PID {pid}): {cmd}',

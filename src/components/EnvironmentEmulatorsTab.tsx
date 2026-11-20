@@ -99,6 +99,8 @@ interface EnvironmentEmulatorsTabProps {
   portMasterSourceConfigs?: Record<string, PortMasterSourceConfig>;
   onUpdatePortMasterSourceConfig?: (slug: string, cfg: PortMasterSourceConfig) => void;
   onPortMasterCatalogLoaded?: (games: PortMasterGame[]) => void;
+  /** Какую подвкладку открыть при показе (например, «BIOS» из быстрого теста). */
+  initialSubTab?: 'emulators' | 'bios' | 'portmaster';
 }
 
 export const EnvironmentEmulatorsTab: React.FC<EnvironmentEmulatorsTabProps> = ({
@@ -116,9 +118,10 @@ export const EnvironmentEmulatorsTab: React.FC<EnvironmentEmulatorsTabProps> = (
   portMasterSourceConfigs = {},
   onUpdatePortMasterSourceConfig,
   onPortMasterCatalogLoaded,
+  initialSubTab = 'emulators',
 }) => {
   const { t, tf } = useI18n();
-  const [envSubTab, setEnvSubTab] = useState<'emulators' | 'bios' | 'portmaster'>('emulators');
+  const [envSubTab, setEnvSubTab] = useState<'emulators' | 'bios' | 'portmaster'>(initialSubTab);
   const [detectedPaths, setDetectedPaths] = useState<Record<string, string>>({});
   const [installedCores, setInstalledCores] = useState<string[]>([]);
   const [scanChecked, setScanChecked] = useState<boolean>(false);

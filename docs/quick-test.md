@@ -17,11 +17,19 @@
 | Game Boy Advance | mGBA | MPL-2.0 | необязателен (есть встроенная замена) |
 | PC Engine / TurboGrafx-16 (HuCard) | Beetle PCE | GPL-2.0 | не нужен |
 | PlayStation | PCSX ReARMed | GPL-2.0 | необязателен (есть встроенная замена HLE) |
+| Sega CD / Mega-CD | Genesis Plus GX | своя, только некоммерческое использование | **нужен** (`bios_CD_U/E/J.bin` по региону игры) |
+| PC Engine CD / TurboGrafx-CD | Beetle PCE | GPL-2.0 | **нужен** (`syscard3.pce`), образ только CHD |
 | Atari 2600 | Stella 2014 | GPL-2.0 | не нужен |
 
 Плеер: [EmulatorJS](https://github.com/EmulatorJS/EmulatorJS) 4.2.3, GPL-3.0. Исходники ядер: репозитории `EmulatorJS/<ядро>` на GitHub.
 
-Для каких консолей теста пока нет: Sega CD, PC Engine CD, Saturn, Dreamcast, PS2, N64, NDS и всё новее. Для Sega CD и PC Engine CD нужен BIOS, их добавим вместе с разделом BIOS. N64, NDS и PSP тяжёлые и требуют потоков WebAssembly.
+Для каких консолей теста пока нет: Saturn, Dreamcast, PS2, N64, NDS и всё новее. N64, NDS и PSP тяжёлые и требуют потоков WebAssembly.
+
+### BIOS
+
+BIOS берётся из раздела «Среда → BIOS»: только файлы, проверенные по MD5 (`getVerifiedBiosFiles` в `src/utils/biosScan.ts`). Доступ к папке BIOS запрашивается по клику на «Быстрый тест». Для Sega CD выбирается BIOS под регион игры. Если консоли BIOS обязателен, а проверенного нет, окно теста объясняет это и ведёт в раздел BIOS. Для PS1 и GBA BIOS необязателен, но если он есть, тест берёт его.
+
+EmulatorJS 4.2.3 не принимает BIOS как `File`, поэтому `player.js` упаковывает его в zip без сжатия: при распаковке ядро получает файл с правильным именем.
 
 ### Откуда берётся файл игры
 
@@ -54,11 +62,19 @@ The **Quick test** button in the game card runs the ROM right inside the AegisRO
 | Game Boy Advance | mGBA | MPL-2.0 | optional (built-in replacement) |
 | PC Engine / TurboGrafx-16 (HuCard) | Beetle PCE | GPL-2.0 | not needed |
 | PlayStation | PCSX ReARMed | GPL-2.0 | optional (built-in HLE BIOS) |
+| Sega CD / Mega-CD | Genesis Plus GX | own, non-commercial use only | **required** (`bios_CD_U/E/J.bin` by game region) |
+| PC Engine CD / TurboGrafx-CD | Beetle PCE | GPL-2.0 | **required** (`syscard3.pce`), CHD images only |
 | Atari 2600 | Stella 2014 | GPL-2.0 | not needed |
 
 Player: [EmulatorJS](https://github.com/EmulatorJS/EmulatorJS) 4.2.3, GPL-3.0. Core sources: the `EmulatorJS/<core>` repositories on GitHub.
 
-Not covered yet: Sega CD, PC Engine CD, Saturn, Dreamcast, PS2, N64, NDS and newer. Sega CD and PC Engine CD need a BIOS and will come with the BIOS section. N64, NDS and PSP are heavy and need WebAssembly threads.
+Not covered yet: Saturn, Dreamcast, PS2, N64, NDS and newer. N64, NDS and PSP are heavy and need WebAssembly threads.
+
+### BIOS
+
+The BIOS comes from Environment → BIOS: only files verified by MD5 (`getVerifiedBiosFiles` in `src/utils/biosScan.ts`). Access to the BIOS folder is requested on the Quick test click. For Sega CD the BIOS matching the game region is picked. If a console requires a BIOS and no verified one exists, the test window explains it and links to the BIOS section. For PS1 and GBA the BIOS is optional but used when present.
+
+EmulatorJS 4.2.3 does not accept a BIOS as a `File`, so `player.js` wraps it in an uncompressed zip; on extraction the core gets the file under its proper name.
 
 ### Where the game file comes from
 

@@ -100,7 +100,8 @@ import {
 } from '../utils/multiDiscEngine';
 import { WorkbenchContextPanel, type HoveredTool } from './WorkbenchContextPanel';
 import { QuickTestModal, type QuickTestRequest } from './QuickTestModal';
-import { resolveQuickTestCore, pickCueDataTrack, fileExt } from '../utils/quickTest';
+import { resolveQuickTestCore, pickCueDataTrack, pickBiosForRegion, fileExt } from '../utils/quickTest';
+import { getVerifiedBiosFiles } from '../utils/biosScan';
 
 export interface MultiDiscEntry {
   id: string;
@@ -670,6 +671,11 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   const [librarySyncModalOpen, setLibrarySyncModalOpen] = useState<boolean>(false);
   const [selectedDiscIndex, setSelectedDiscIndex] = useState<number | null>(null);
   const [quickTestReq, setQuickTestReq] = useState<QuickTestRequest | null>(null);
+  const [envInitialSubTab, setEnvInitialSubTab] = useState<'emulators' | 'bios'>('emulators');
+  // Подвкладка «BIOS» открывается один раз по ссылке из быстрого теста, дальше снова «Эмуляторы».
+  useEffect(() => {
+    if (previewTab !== 'env') setEnvInitialSubTab('emulators');
+  }, [previewTab]);
 
   // Shared Saved Builds state across Library (+ button Modal) and Builds tab
   const [savedBuilds, setSavedBuilds] = useState<SavedBuildRecord[]>(() => loadSavedBuildsLocal());
@@ -3184,6 +3190,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
               libraryPortSlugs={libraryPortSlugs}
               onAddPortToLibrary={handleAddPortMasterToLibrary}
               libraryPath={effectiveLibraryPath}
+              initialSubTab={envInitialSubTab}
             />
           )}
         </main>
@@ -3344,8 +3351,19 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
               ? qtDisc.cleanFile || qtDisc.oldFile
               : selectedGame.oldFile || selectedGame.cleanFile;
             const qtCore = resolveQuickTestCore(selectedGame.consoleShort, qtFileName);
-            const handleQuickTest = () => {
+            const handleQuickTest = async () => {
               if (!qtCore) return;
+              // BIOS из раздела «BIOS»: только проверенные по MD5. Запрос доступа к папке
+              // допустим только по клику, поэтому берём их здесь, а не в окне теста.
+              let biosFile: File | null = null;
+              if (qtCore.biosKey) {
+                try {
+                  const list = await getVerifiedBiosFiles(qtCore.biosKey, true);
+                  biosFile = pickBiosForRegion(list, selectedGame.region)?.file || null;
+                } catch {
+                  biosFile = null;
+                }
+              }
               const src = qtDisc || selectedGame;
               let file: File | undefined | null = src.fileObj;
               if (file && fileExt(file.name) === 'cue') {
@@ -3355,6 +3373,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                 title: selectedGame.title,
                 consoleShort: selectedGame.consoleShort,
                 core: qtCore,
+                biosFile,
                 source: file
                   ? { kind: 'file', file }
                   : isNativeDesktopHost
@@ -3719,6 +3738,11 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
           request={quickTestReq}
           onClose={() => setQuickTestReq(null)}
           onAddLog={onAddLog}
+          onOpenBios={() => {
+            setQuickTestReq(null);
+            setEnvInitialSubTab('bios');
+            setPreviewTab('env');
+          }}
         />
       )}
 

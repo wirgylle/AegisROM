@@ -45,7 +45,7 @@
 ### Быстрый тест игры в окне — в `dev`
 - Кнопка «Быстрый тест» в карточке игры: запуск через WebAssembly-ядро (EmulatorJS) для 8/16/32-битных систем.
 - Нужна, чтобы за пару секунд проверить язык рома, русификатор или рабочий ли образ перед добавлением в сборку.
-- Сейчас: NES, SNES, Mega Drive, Master System, Game Gear, GB/GBC, GBA, PC Engine, PS1, Atari 2600. Ядра лежат локально, в сеть плеер не ходит. Sega CD и PC Engine CD добавим вместе с разделом BIOS. См. [docs/quick-test.md](quick-test.md).
+- Сейчас: NES, SNES, Mega Drive, Master System, Game Gear, GB/GBC, GBA, PC Engine, PS1, Atari 2600. Плюс Sega CD и PC Engine CD с BIOS из раздела «BIOS». Ядра лежат локально, в сеть плеер не ходит. См. [docs/quick-test.md](quick-test.md).
 
 ## 0.5.8 — мастер первоначальной настройки
 
