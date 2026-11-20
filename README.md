@@ -49,7 +49,9 @@ The app scans your collection and identifies games by checksums and disc serial 
 - **Box art and video scraper** (Libretro, Archive.org). Finds empty placeholder images and re-downloads them, leaves good files alone.
 - **Names by hash**: matching against No-Intro (cartridges) and Redump (discs) DAT files by CRC32 / SHA1, and by serial number for PBP and large images. A name found this way takes priority over online search, and its source is shown in the game card. How to add a DAT: [docs/dat.md](docs/dat.md).
 - **Renaming**: by hash from a DAT, online search, `gamelist.xml` and ROM headers. Understands numbered files like `000001.chd`, as found on stock R36S cards.
-- **File name builder**: title, region, language, translation author, disc number, extension case.
+- **File name builder**: title, region, language, translation author, disc number, extension case, `[T+Rus]` / `[Hack]` status tag.
+- **Hacks and translations** `beta`: detected by name tags (`[T+Rus]`, `[h1]`, `(Hack)`), by DAT hash and by patches in `patch/`. 1G1R doesn't delete them as duplicates but offers to move them to `hackroms/`. The game card shows how a ROM differs from the original. Status filter and sort, "Russian translations only" and "No hacks" builds.
+- **ROM patcher** `beta`: IPS, UPS, BPS and xdelta. Adds a `[T+Rus]` or `[Hack]` tag, puts the result in `hackroms/` and the patch in `patch/`. Details: [docs/hacks.en.md](docs/hacks.en.md) · [Русский](docs/hacks.md).
 - **Cleanup** of junk: `._*` files, stray images, empty service folders.
 - **SD card repair** for your firmware: restores the folder structure and clears the Dirty Bit flag for **ArkOS, AmberELEC, ROCKNIX, OnionOS, GarlicOS, muOS, Batocera / Knulli, EmuELEC, RetroDeck**.
 - **Combine**: drop new ROMs into a buffer folder, and the app identifies, renames and sorts them into console folders by itself.
@@ -140,7 +142,7 @@ Open an [Issue](https://github.com/wirgylle/AegisROM/issues) and describe what y
 
 | Version | What's coming |
 |---|---|
-| **0.5.5 – 0.5.7** | Patcher for translations and ROM hacks (IPS / BPS / UPS / xdelta). Separate `hackroms/` and `patch/` folders for each console: 1G1R doesn't delete hacks as duplicates but offers to move them; the game card shows how a ROM differs from the original; filters, builds and renaming by "patched" or "hack" status. BIOS verification by checksum and copying the required BIOS into a build. Quick game test right in the app window. |
+| **0.5.5 – 0.5.7** | The patcher and hacks module are already in `dev`; next: compressed xdelta patches. BIOS verification by checksum and copying the required BIOS into a build. Quick game test right in the app window. |
 | **0.5.8** | First-run setup wizard: language, library and ROM folders, importing your own ROMs and renaming rules. While the library is built in the background, the app shows a tour of the main features. |
 | **before 0.6.0** | The app's own window instead of Edge or Chrome, with settings stored on disk. A macOS version: one `.dmg` for Intel and Apple Silicon, games launched through Mac emulators. PortMaster on Windows through a Linux environment (WSL). |
 | **0.6.0** | Save manager (`.srm`, `.state`, memory cards) with version history. Uploading builds to the console over Wi-Fi (SFTP / SMB / WebDAV) without removing the card. |

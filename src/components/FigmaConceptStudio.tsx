@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import { GameInspectorCoverVideo } from './GameInspectorCoverVideo';
 import { DatFilesPanel } from './DatFilesPanel';
+import { PatcherPanel } from './PatcherPanel';
 import {
   APP_FULL_TITLE,
   DOWNLOAD_SETUP_URL,
@@ -56,6 +57,10 @@ import { downloadXmlTemplateFile } from './XmlMappingModal';
 import { SyncDiffModal } from './SyncDiffModal';
 import { FilenameConstructorCard } from './FilenameConstructorCard';
 import { DEFAULT_FILENAME_CONFIG } from '../utils/filenameConstructor';
+import { modGroup, type RomModGroup, type RomModKind } from '../utils/romHacks';
+
+// Порядок при сортировке по статусу. / Order when sorting by status.
+const MOD_SORT_RANK: Record<RomModGroup, number> = { original: 1, translation: 2, hack: 3, patched: 4 };
 import {
   isDeadOrLocalBlobUrl,
   saveMultiDbsToIndexedDB,
@@ -155,6 +160,12 @@ export interface UnifiedGameRow {
   titleSource?: string;
   // Почему настоящее название не найдено (пусто, если найдено).
   titleNote?: string;
+  // Хак / перевод / патч: вид, тег, язык перевода и описание отличий (utils/romHacks.ts).
+  // Hack / translation / patch: kind, tag, translation language and what differs (utils/romHacks.ts).
+  modKind?: string;
+  modTag?: string;
+  modLang?: string;
+  modNote?: string;
   title: string;
   oldFile: string;
   cleanFile: string;
@@ -817,8 +828,10 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
 
   // Library Main Sorting Mode: 'title' | 'console' | 'bitness' | 'genre' | 'age' | 'size'
   const [librarySortBy, setLibrarySortBy] = useState<
-    'title' | 'console' | 'bitness' | 'genre' | 'age' | 'size'
+    'title' | 'console' | 'bitness' | 'genre' | 'age' | 'size' | 'status'
   >('title');
+  // Фильтр по статусу: оригиналы, переводы, хаки, прочие патчи. / Status filter: originals, translations, hacks, other patches.
+  const [libraryModFilter, setLibraryModFilter] = useState<'all' | 'modded' | RomModGroup>('all');
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedGameId, setSelectedGameId] = useState<string>('g1');
@@ -1357,6 +1370,10 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
           continue;
         }
       }
+      if (libraryModFilter !== 'all') {
+        const grp = modGroup((g.modKind as RomModKind) || 'original');
+        if (libraryModFilter === 'modded' ? grp === 'original' : grp !== libraryModFilter) continue;
+      }
       if (hasQuery) {
         const hit =
           g.title.toLowerCase().includes(q) ||
@@ -1404,11 +1421,18 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       if (librarySortBy === 'size') {
         return b.sizeMB - a.sizeMB;
       }
+      if (librarySortBy === 'status') {
+        return (
+          (MOD_SORT_RANK[modGroup((a.modKind as RomModKind) || 'original')] || 9) -
+            (MOD_SORT_RANK[modGroup((b.modKind as RomModKind) || 'original')] || 9) ||
+          activeCollator.compare(a.title, b.title)
+        );
+      }
       return 0;
     });
 
     return filtered;
-  }, [enrichedGamesSource, activeSidebarFilterKey, sidebarGroupBy, deferredSearchQuery, librarySortBy, t, activeCollator]);
+  }, [enrichedGamesSource, activeSidebarFilterKey, sidebarGroupBy, deferredSearchQuery, librarySortBy, libraryModFilter, t, activeCollator]);
 
   const selectedGame = React.useMemo(
     () =>
@@ -1984,6 +2008,24 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       <option value="genre">{t('lib.sort.genre')}</option>
                       <option value="age">{t('lib.sort.age')}</option>
                       <option value="size">{t('lib.sort.size')}</option>
+                      <option value="status">{t('lib.sort.status')}</option>
+                    </select>
+                  </div>
+
+                  {/* Status Filter (hacks / translations / patches) */}
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <span className="text-slate-500 dark:text-slate-400 font-semibold">{t('lib.modFilter')}</span>
+                    <select
+                      value={libraryModFilter}
+                      onChange={(e) => setLibraryModFilter(e.target.value as any)}
+                      className="h-8 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 text-xs font-semibold text-slate-800 dark:text-slate-100"
+                    >
+                      <option value="all">{t('lib.modFilter.all')}</option>
+                      <option value="original">{t('lib.modFilter.original')}</option>
+                      <option value="modded">{t('lib.modFilter.modded')}</option>
+                      <option value="translation">{t('lib.modFilter.translation')}</option>
+                      <option value="hack">{t('lib.modFilter.hack')}</option>
+                      <option value="patched">{t('lib.modFilter.patched')}</option>
                     </select>
                   </div>
 
@@ -2289,6 +2331,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   </div>
 
                   <DatFilesPanel disabled={activeRunning} />
+
+                  <PatcherPanel disabled={activeRunning} />
 
                   {/* Core Library Action Grid: 1G1R, Online Rename, XML Rename, Phantom Cleanup, Multi-Disc .M3U */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
@@ -3389,6 +3433,24 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         <span className="text-slate-900 dark:text-slate-100 truncate">
                           {t(`title.src.${selectedGame.titleSource}`, selectedGame.titleSource)}
                         </span>
+                      </div>
+                    )}
+                    {selectedGame.modKind && selectedGame.modKind !== 'original' && (
+                      <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800 gap-2">
+                        <span className="text-slate-500 dark:text-slate-400 shrink-0">{t('insp.modStatus')}</span>
+                        <span className="text-violet-600 dark:text-violet-400 text-right" title={selectedGame.modNote}>
+                          <span className="font-bold">
+                            {t(`hack.kind.${selectedGame.modKind}`, selectedGame.modKind)}
+                            {selectedGame.modTag ? ` [${selectedGame.modTag}]` : ''}
+                          </span>
+                          {selectedGame.modNote && <span className="block">{selectedGame.modNote}</span>}
+                        </span>
+                      </div>
+                    )}
+                    {(!selectedGame.modKind || selectedGame.modKind === 'original') && selectedGame.modNote && (
+                      <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800 gap-2">
+                        <span className="text-slate-500 dark:text-slate-400 shrink-0">{t('insp.modStatus')}</span>
+                        <span className="text-emerald-600 dark:text-emerald-400 text-right">{selectedGame.modNote}</span>
                       </div>
                     )}
                     {selectedGame.titleNote && (
