@@ -252,6 +252,8 @@ interface FigmaConceptStudioProps {
   onChangeAutoGroupMultiDisc?: (val: boolean) => void;
   onScrapeMedia?: () => void;
   onOnlineRename?: () => void;
+  // Системы Libretro из библиотеки (для автозагрузки DAT). / Libretro systems in the library (DAT auto-download).
+  datSystems?: string[];
   onScanPhantomFolders?: () => void;
   onRepairSdCard?: (firmwareId?: string) => void;
   sdTargetFolderName?: string;
@@ -620,6 +622,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   onChangeAutoGroupMultiDisc,
   onScrapeMedia,
   onOnlineRename,
+  datSystems,
   onScanPhantomFolders,
   onRepairSdCard,
   sdTargetFolderName = '',
@@ -2363,7 +2366,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     </button>
                   </div>
 
-                  <DatFilesPanel disabled={activeRunning} />
+                  <DatFilesPanel disabled={activeRunning} systems={datSystems} />
 
                   <PatcherPanel disabled={activeRunning} />
 

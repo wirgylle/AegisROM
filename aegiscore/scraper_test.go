@@ -96,3 +96,22 @@ func TestLibretroIndexFailureIsCached(t *testing.T) {
 		t.Errorf("FindBestLibretroMatch = %q", got)
 	}
 }
+
+// Не найдено — никаких догадок «<название> (USA).png»: пустые ссылки не затрут рабочую обложку.
+// Not found — no guessed "<title> (USA).png": empty URLs never replace a working cover.
+func TestLibretroThumbnailURLs(t *testing.T) {
+	if b, s, m := LibretroThumbnailURLs("Sony - PlayStation", ""); b != "" || s != "" || m != "" {
+		t.Errorf("empty name must give empty URLs: %q %q %q", b, s, m)
+	}
+	if b, _, _ := LibretroThumbnailURLs("", "Contra (USA)"); b != "" {
+		t.Errorf("empty system must give empty URL: %q", b)
+	}
+	b, s, m := LibretroThumbnailURLs("Nintendo - Nintendo Entertainment System", "Contra (USA)")
+	want := libretroThumbnailsBase + "/Nintendo%20-%20Nintendo%20Entertainment%20System/Named_Boxarts/Contra%20%28USA%29.png"
+	if b != want {
+		t.Errorf("boxart = %q, want %q", b, want)
+	}
+	if !strings.Contains(s, "/Named_Snaps/") || !strings.Contains(m, "/Named_Titles/") {
+		t.Errorf("snap/title = %q %q", s, m)
+	}
+}
