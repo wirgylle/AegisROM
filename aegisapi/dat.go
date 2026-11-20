@@ -105,6 +105,35 @@ func registerDatRoutes(mux *http.ServeMux, appDir string, touch func()) {
 		writeJSON(w, reload())
 	})
 
+	// POST /api/dat/fetch-libretro — {"systems":["Sony - PlayStation"],"force":false}:
+	// скачать DAT No-Intro/Redump из libretro-database и перечитать папку.
+	// Download No-Intro/Redump DATs from libretro-database and reload the folder.
+	mux.HandleFunc("/api/dat/fetch-libretro", func(w http.ResponseWriter, r *http.Request) {
+		touch()
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Systems []string `json:"systems"`
+			Force   bool     `json:"force"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+			http.Error(w, "bad JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if len(req.Systems) > 64 {
+			http.Error(w, "too many systems", http.StatusRequestEntityTooLarge)
+			return
+		}
+		ensure()
+		reloadMu.Lock()
+		fetched, skipped, failed := libretroFetchAll(dir, req.Systems, req.Force)
+		reloadMu.Unlock()
+		st := reload()
+		writeJSON(w, map[string]any{"fetched": fetched, "skipped": skipped, "failed": failed, "status": st})
+	})
+
 	mux.HandleFunc("/api/dat/lookup", func(w http.ResponseWriter, r *http.Request) {
 		touch()
 		if r.Method != http.MethodPost {

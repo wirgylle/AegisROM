@@ -1,16 +1,25 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Database, RefreshCw, Upload } from 'lucide-react';
+import { Database, Download, RefreshCw, Upload } from 'lucide-react';
 import { useI18n } from '../i18n/translations';
-import { fetchDatStatus, importDatFile, reloadDats, type DatStatus } from '../utils/datHashLookup';
+import {
+  fetchDatStatus,
+  fetchLibretroDats,
+  importDatFile,
+  reloadDats,
+  type DatStatus,
+} from '../utils/datHashLookup';
 
 // Панель DAT-файлов в «Инструментах»: что загружено, добавить, перечитать папку.
 // DAT files panel in Tools: what is loaded, add, reload the folder.
-export function DatFilesPanel({ disabled }: { disabled?: boolean }) {
+// systems — системы Libretro из библиотеки, для кнопки автозагрузки.
+// systems — Libretro systems in the library, for the auto-download button.
+export function DatFilesPanel({ disabled, systems = [] }: { disabled?: boolean; systems?: string[] }) {
   const { t, tf } = useI18n();
   const [status, setStatus] = useState<DatStatus | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
@@ -54,6 +63,40 @@ export function DatFilesPanel({ disabled }: { disabled?: boolean }) {
     }
   };
 
+  const onFetchLibretro = async () => {
+    setBusy(true);
+    setError('');
+    setInfo('');
+    try {
+      if (systems.length === 0) {
+        setInfo(t('tools.dat.fetchNone'));
+        return;
+      }
+      const res = await fetchLibretroDats(systems);
+      setStatus(res.status);
+      setUnavailable(false);
+      const realFailed = res.failed.filter((f) => f.set);
+      if (res.fetched.length === 0 && res.skipped.length === 0 && realFailed.length === 0) {
+        setInfo(t('tools.dat.fetchNone'));
+      } else {
+        setInfo(
+          tf('tools.dat.fetchDone', {
+            count: res.fetched.length,
+            skipped: res.skipped.length,
+            failed: realFailed.length,
+          })
+        );
+      }
+      if (realFailed.length > 0) {
+        setError(realFailed.map((f) => `${f.system}: ${f.reason}`).join('; '));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const loaded = (status?.dats || []).filter((d) => !d.error);
   const broken = (status?.dats || []).filter((d) => d.error);
   const btn =
@@ -69,7 +112,11 @@ export function DatFilesPanel({ disabled }: { disabled?: boolean }) {
             {loaded.length > 0 ? tf('tools.dat.loaded', { dats: loaded.length, games: status.games }) : t('tools.dat.empty')}
           </span>
         )}
-        <div className="ml-auto flex gap-1.5">
+        <div className="ml-auto flex flex-wrap gap-1.5">
+          <button type="button" className={btn} disabled={disabled || busy || unavailable} onClick={() => void onFetchLibretro()}>
+            <Download className="w-3.5 h-3.5 shrink-0" />
+            <span>{t('tools.dat.fetch')}</span>
+          </button>
           <button type="button" className={btn} disabled={disabled || busy || unavailable} onClick={() => inputRef.current?.click()}>
             <Upload className="w-3.5 h-3.5 shrink-0" />
             <span>{t('tools.dat.import')}</span>
@@ -89,6 +136,8 @@ export function DatFilesPanel({ disabled }: { disabled?: boolean }) {
         />
       </div>
       <p className="text-slate-500 dark:text-slate-400">{t('tools.dat.desc')}</p>
+      <p className="text-slate-500 dark:text-slate-400">{t('tools.dat.where')}</p>
+      {info && <p className="text-emerald-700 dark:text-emerald-400">{info}</p>}
       {unavailable && <p className="text-amber-600 dark:text-amber-400">{t('tools.dat.unavailable')}</p>}
       {status?.dir && <p className="text-slate-500 dark:text-slate-400 break-all">{tf('tools.dat.folder', { dir: status.dir })}</p>}
       {loaded.length > 0 && (

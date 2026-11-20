@@ -315,6 +315,68 @@ export async function importDatFile(file: File): Promise<DatStatus> {
   return (await resp.json()) as DatStatus;
 }
 
+// Автозагрузка DAT из libretro-database: No-Intro (картриджи) и Redump (диски).
+// Auto-download of DATs from libretro-database: No-Intro (cartridges) and Redump (discs).
+export interface LibretroDatFetchItem {
+  system: string;
+  set?: string;
+  file?: string;
+  games?: number;
+  reason?: string;
+}
+
+export interface LibretroDatFetchResult {
+  fetched: LibretroDatFetchItem[];
+  skipped: LibretroDatFetchItem[];
+  failed: LibretroDatFetchItem[];
+  status: DatStatus;
+}
+
+export async function fetchLibretroDats(systems: string[], force = false): Promise<LibretroDatFetchResult> {
+  const resp = await fetch('/api/dat/fetch-libretro', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ systems, force }),
+  });
+  if (!resp.ok) throw new Error((await resp.text()).trim() || `HTTP ${resp.status}`);
+  const data = await resp.json();
+  return {
+    fetched: data.fetched || [],
+    skipped: data.skipped || [],
+    failed: data.failed || [],
+    status: data.status,
+  };
+}
+
+// Как aegiscore/dat.NormalizeSystem: убрать суффиксы в скобках, нижний регистр.
+// Mirrors aegiscore/dat.NormalizeSystem: drop parenthesised suffixes, lowercase.
+export function normalizeDatSystem(name: string): string {
+  let s = (name || '').trim();
+  for (;;) {
+    const i = s.lastIndexOf('(');
+    if (i <= 0 || !s.endsWith(')')) break;
+    s = s.slice(0, i).trim();
+  }
+  return s.toLowerCase();
+}
+
+// Системы из списка, для которых нет ни одного загруженного DAT.
+// Systems from the list that have no loaded DAT.
+export function systemsWithoutDat(status: DatStatus | null, systems: string[]): string[] {
+  const have = new Set(
+    (status?.dats || []).filter((d) => !d.error && d.games > 0).map((d) => normalizeDatSystem(d.system || d.name))
+  );
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const sys of systems) {
+    const n = normalizeDatSystem(sys);
+    if (!n || seen.has(n)) continue;
+    seen.add(n);
+    if (!have.has(n)) out.push(sys);
+  }
+  return out;
+}
+
 export interface LookupOptions {
   onProgress?: (done: number, total: number, fileName: string) => void;
   shouldStop?: () => boolean;

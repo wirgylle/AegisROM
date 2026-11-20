@@ -37,7 +37,29 @@ import {
   Table as TableIcon,
 } from 'lucide-react';
 import { computeCRC32Hex } from './utils/crc32';
-import { lookupTitlesByHash, type DatMatch } from './utils/datHashLookup';
+import {
+  fetchDatStatus,
+  fetchLibretroDats,
+  lookupTitlesByHash,
+  systemsWithoutDat,
+  type DatMatch,
+} from './utils/datHashLookup';
+import {
+  isReadableTitle,
+  isScrapeMatched,
+  mergeScrapedUrls,
+  slotsToDownload,
+  type MediaSlot,
+} from './utils/scrapePlan';
+import {
+  findGamelistEntry,
+  indexGamelistEntries,
+  normalizeGamelistPath,
+  parseGamelistEntries,
+  relativeFileExists,
+  unescapeXml,
+  type GamelistEntry,
+} from './utils/gamelistXml';
 import {
   ConsoleSteamTabs,
   type PersistentDbState,
@@ -102,6 +124,7 @@ import {
   auditRomMediaOnDisk,
   isFetchedMediaPayloadValid,
   type FolderMediaSignatureStats,
+  type RomMediaAuditResult,
 } from './utils/mediaPlaceholderDetector';
 import { useI18n, tStatic, tfStatic, getActiveLocale } from './i18n/translations';
 import {
@@ -1776,6 +1799,9 @@ export function App() {
   const [combineAddToLibrary, setCombineAddToLibrary] = useState<boolean>(true);
 
   const stopRequestedRef = useRef<boolean>(false);
+  // Системы, для которых в libretro-database нет DAT (не спрашиваем повторно в этой сессии).
+  // Systems without a DAT in libretro-database (not asked again this session).
+  const libretroDatUnsupportedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     romsRef.current = roms;
@@ -7145,6 +7171,24 @@ export function App() {
       const statsCache = new Map<string, FolderMediaSignatureStats>();
       const romsNeedingScrape: ScannedRomFile[] = [];
       const placeholderReasonsById = new Map<string, string>();
+      // Аудит по ромам: какие слоты уже рабочие и не должны перекачиваться.
+      // Per-ROM audit: which slots already work and must not be re-downloaded.
+      const auditsById = new Map<string, RomMediaAuditResult>();
+      // gamelist.xml каждой папки: обложки там могут называться не по имени рома.
+      // Each folder's gamelist.xml: covers there may be named differently from the ROM.
+      const gamelistIdxCache = new Map<any, Map<string, GamelistEntry>>();
+      const gamelistIndexFor = async (dirHandle: any) => {
+        let idx = gamelistIdxCache.get(dirHandle);
+        if (!idx) {
+          idx = new Map();
+          try {
+            const fh = await dirHandle.getFileHandle('gamelist.xml');
+            idx = indexGamelistEntries(parseGamelistEntries(await (await fh.getFile()).text()));
+          } catch {}
+          gamelistIdxCache.set(dirHandle, idx);
+        }
+        return idx;
+      };
       let skippedRealMediaCount = 0;
       let placeholderDetectedCount = 0;
       let missingMediaCount = 0;
@@ -7167,6 +7211,29 @@ export function App() {
             scrapeShortVideos,
             statsCache
           );
+          // Медиа, на которое ссылается gamelist.xml, тоже считается рабочим.
+          // Media referenced by gamelist.xml also counts as working.
+          const glEntry = findGamelistEntry(
+            await gamelistIndexFor(consoleDirHandle),
+            w.isMultiDisc && w.m3uFileName ? w.m3uFileName : w.fileName
+          );
+          if (glEntry) {
+            const imgRef = glEntry.fields.image || glEntry.fields.thumbnail;
+            if (audit.image.status !== 'valid' && imgRef && (await relativeFileExists(consoleDirHandle, imgRef))) {
+              audit.image = { status: 'valid', reason: 'gamelist.xml', fileName: unescapeXml(imgRef) };
+            }
+            const mqRef = glEntry.fields.marquee;
+            if (audit.marquee.status !== 'valid' && mqRef && (await relativeFileExists(consoleDirHandle, mqRef))) {
+              audit.marquee = { status: 'valid', reason: 'gamelist.xml', fileName: unescapeXml(mqRef) };
+            }
+            const vRef = glEntry.fields.video;
+            if (audit.video.status !== 'valid' && vRef && (await relativeFileExists(consoleDirHandle, vRef))) {
+              audit.video = { status: 'valid', reason: 'gamelist.xml', fileName: unescapeXml(vRef) };
+            }
+            audit.isFullyValid =
+              audit.image.status === 'valid' && (!scrapeShortVideos || audit.video.status === 'valid');
+          }
+          auditsById.set(w.id, audit);
           if (audit.isFullyValid) {
             skippedRealMediaCount++;
             continue;
@@ -7245,6 +7312,7 @@ export function App() {
 
       const nextRoms = [...targetList];
       let downloadedMediaCount = 0;
+      let unmatchedCount = 0;
 
       for (let i = 0; i < nextRoms.length; i++) {
         if (stopRequestedRef.current) break;
@@ -7259,14 +7327,57 @@ export function App() {
           })
         );
 
-        const titleMatched = m.matched !== false && Boolean(m.matchedCanonicalTitle);
+        const titleMatched = isScrapeMatched(m);
         const officialTitle = titleMatched ? m.matchedCanonicalTitle : r.cleanTitle;
         const newCanonicalName = computeCanonicalNameForRom({ ...r, cleanTitle: officialTitle });
-
-        const hasVid = Boolean(m.videoUrl);
         const auditReason = placeholderReasonsById.get(r.id);
+
+        // Качаем только слоты без рабочего файла и только для найденного названия.
+        // Файл пишется лишь после проверки скачанного (saveRemoteMediaToHandle), так что
+        // рабочее медиа не затирается, если замена не скачалась.
+        // Download only slots without a working file, and only for a matched title.
+        // A file is written only after the download is verified, so working media is never
+        // overwritten by a failed replacement.
+        const consoleDirHandle = r.targetDirHandle || r.parentHandle;
+        const activeRoot = rootDirHandle || sdTargetDirHandle || libraryDirHandle;
+        const hasDisk = Boolean(activeRoot && consoleDirHandle);
+        const saved: Partial<Record<MediaSlot, boolean>> | null = hasDisk ? {} : null;
+        if (hasDisk && titleMatched && saved) {
+          const slots = slotsToDownload(auditsById.get(r.id) || null, scrapeShortVideos);
+          const romBaseNoExt = (
+            r.isMultiDisc && r.multiDiscFolderName
+              ? r.multiDiscFolderName
+              : r.fileName.replace(/\.[^/.]+$/, '')
+          ).trim();
+          const dirFor = async (name: string) => {
+            try {
+              return await consoleDirHandle.getDirectoryHandle(name, { create: true });
+            } catch {
+              return null;
+            }
+          };
+          const jobs: Array<[MediaSlot, string | undefined, string, string, 'image' | 'video']> = [
+            ['image', m.boxArtUrl, 'images', `${romBaseNoExt}-image.png`, 'image'],
+            ['thumb', m.snapUrl, 'images', `${romBaseNoExt}-thumb.png`, 'image'],
+            ['marquee', m.marqueeUrl, 'marquees', `${romBaseNoExt}-marquee.png`, 'image'],
+            ['video', m.videoUrl, 'videos', `${romBaseNoExt}-video.mp4`, 'video'],
+          ];
+          for (const [slot, url, folder, fileName, kind] of jobs) {
+            if (!url || !slots.has(slot)) continue;
+            const dh = await dirFor(folder);
+            if (!dh) continue;
+            saved[slot] = await saveRemoteMediaToHandle(url, dh, fileName, kind);
+          }
+        }
+
+        const savedSlots = saved ? (Object.keys(saved) as MediaSlot[]).filter((k) => saved[k]) : [];
+        const gotSomething = saved ? savedSlots.length > 0 : titleMatched;
+        if (!titleMatched) unmatchedCount++;
+        if (gotSomething) downloadedMediaCount++;
+
         nextRoms[i] = {
           ...r,
+          ...mergeScrapedUrls(r, m, saved),
           cleanTitle: officialTitle,
           canonicalName: newCanonicalName,
           titleSource: titleMatched
@@ -7275,67 +7386,18 @@ export function App() {
               : 'libretro-exact'
             : r.titleSource,
           titleNote: titleMatched ? '' : m.reason || r.titleNote,
-          scrapedBoxArtUrl: m.boxArtUrl,
-          scrapedSnapUrl: m.snapUrl,
-          scrapedMarqueeUrl: m.marqueeUrl,
-          scrapedVideoUrl: m.videoUrl,
-          mediaStatus: auditReason
+          mediaStatus: !titleMatched
+            ? tf('app.scrape.notMatchedStatus', { reason: m.reason || t('title.note.onlineNoMatch') })
+            : saved && !gotSomething
+            ? t('app.scrape.nothingSavedStatus')
+            : auditReason
             ? tf('app.scrape.reDownloadedStatus', { reason: auditReason })
-            : hasVid
+            : saved
+            ? tf('app.scrape.savedStatus', { slots: savedSlots.join(', ') })
+            : m.videoUrl
             ? '✔ images/ + marquees/ + videos/'
             : '✔ images/ + marquees/',
         };
-        downloadedMediaCount++;
-
-        const consoleDirHandle = r.targetDirHandle || r.parentHandle;
-        const activeRoot = rootDirHandle || sdTargetDirHandle || libraryDirHandle;
-        if (activeRoot && consoleDirHandle) {
-          try {
-            const imagesHandle = await consoleDirHandle.getDirectoryHandle('images', {
-              create: true,
-            });
-            const marqueesHandle = await consoleDirHandle.getDirectoryHandle('marquees', {
-              create: true,
-            });
-            const videosHandle = await consoleDirHandle.getDirectoryHandle('videos', {
-              create: true,
-            });
-
-            const romBaseNoExt = (
-              r.isMultiDisc && r.multiDiscFolderName
-                ? r.multiDiscFolderName
-                : r.fileName.replace(/\.[^/.]+$/, '')
-            ).trim();
-
-            await saveRemoteMediaToHandle(
-              m.boxArtUrl,
-              imagesHandle,
-              `${romBaseNoExt}-image.png`,
-              'image'
-            );
-            await saveRemoteMediaToHandle(
-              m.snapUrl,
-              imagesHandle,
-              `${romBaseNoExt}-thumb.png`,
-              'image'
-            );
-            await saveRemoteMediaToHandle(
-              m.marqueeUrl,
-              marqueesHandle,
-              `${romBaseNoExt}-marquee.png`,
-              'image'
-            );
-
-            if (scrapeShortVideos && m.videoUrl) {
-              await saveRemoteMediaToHandle(
-                m.videoUrl,
-                videosHandle,
-                `${romBaseNoExt}-video.mp4`,
-                'video'
-              );
-            }
-          } catch {}
-        }
 
         setProgressPct(30 + Math.round(((downloadedMediaCount) / Math.max(1, romsNeedingScrape.length)) * 65));
       }
@@ -7366,6 +7428,9 @@ export function App() {
           downloaded: downloadedMediaCount,
         })
       );
+      if (unmatchedCount > 0) {
+        addLog(tf('app.scrape.unmatchedSummary', { count: unmatchedCount }));
+      }
 
       if (exportBatAfter) {
         generateWindowsCatalogBatScript(nextRoms);
@@ -7405,6 +7470,17 @@ export function App() {
   // =========================================================================
   // ONLINE RENAME WITH CONSTRUCTOR + SD TARGET PICKER + MASS OPERATIONS
   // =========================================================================
+  // Системы Libretro всех ромов библиотеки и текущего скана — для кнопки «Скачать DAT».
+  // Libretro systems of all library and scanned ROMs — for the "Download DATs" button.
+  const datSystems = useMemo(() => {
+    const codes = new Set<string>();
+    for (const r of roms) codes.add(r.consoleCode);
+    for (const rec of dbState.records || []) if (rec?.consoleCode) codes.add(rec.consoleCode);
+    return Array.from(
+      new Set(Array.from(codes).map((c) => CONSOLE_CATALOG[c]?.libretroSystem).filter(Boolean) as string[])
+    );
+  }, [roms, dbState.records]);
+
   const handleOnlineRenameRoms = async () => {
     const activeList = romsRef.current;
     if (activeList.length === 0 || isAnyProcessRunning) return;
@@ -7435,6 +7511,43 @@ export function App() {
       const datMisses = new Map<string, string>();
       // Уточнённый статус хака по хешу. / Hack status refined by hash.
       const datMods = new Map<string, RomModInfo>();
+      // 0. Для консолей без DAT — скачать DAT No-Intro / Redump из libretro-database.
+      // Без DAT ромы с номерами и «кракозябрами» вместо имён не опознать: искать по имени нечего.
+      // 0. Consoles without a DAT get No-Intro / Redump DATs from libretro-database.
+      // Without a DAT, numbered and garbled names cannot be identified: there is no name to search.
+      const neededSystems = Array.from(
+        new Set(
+          targets
+            .map((r) => (CONSOLE_CATALOG[r.consoleCode] || CONSOLE_CATALOG.nes).libretroSystem)
+            .filter((sys) => sys && !libretroDatUnsupportedRef.current.has(sys))
+        )
+      );
+      try {
+        const missing = systemsWithoutDat(await fetchDatStatus(), neededSystems);
+        if (missing.length > 0) {
+          const fetchingMsg = tf('app.rename.datFetching', { systems: missing.join(', ') });
+          setCurrentActionText(fetchingMsg);
+          addLog(fetchingMsg);
+          const res = await fetchLibretroDats(missing);
+          const failedNames: string[] = [];
+          for (const f of res.failed) {
+            // Без набора — системы нет в libretro-database, больше не спрашиваем.
+            // No set means the system is not in libretro-database; do not ask again.
+            if (!f.set) libretroDatUnsupportedRef.current.add(f.system);
+            else failedNames.push(`${f.system} (${f.reason || '?'})`);
+          }
+          addLog(
+            tf('app.rename.datFetched', {
+              count: res.fetched.length,
+              games: res.fetched.reduce((n, f) => n + (f.games || 0), 0),
+              failed: failedNames.join(', ') || '—',
+            })
+          );
+        }
+      } catch (err) {
+        addLog(tf('app.rename.datFetchErr', { err: String(err) }));
+      }
+
       setCurrentActionText(t('app.rename.datStart'));
       const datResults = await lookupTitlesByHash(
         targets.map((r) => ({
@@ -7491,7 +7604,20 @@ export function App() {
 
       // 2. Остальное — поиск по названию в индексе Libretro, пачками по 120.
       // 2. The rest — title search in the Libretro index, in chunks of 120.
-      const onlineTargets = targets.filter((r) => !resolvedTitles.has(r.id));
+      // Нечитаемое название (номер, «кракозябры») по имени не ищем: нечёткий поиск по мусору
+      // даёт чужую игру. Такие ромы опознаются только по хешу (DAT).
+      // Unreadable titles (numbers, mojibake) are not searched by name: a fuzzy search on junk
+      // returns a wrong game. Such ROMs can only be identified by hash (DAT).
+      const searchTitleById = new Map<string, string>();
+      for (const r of targets) {
+        if (resolvedTitles.has(r.id)) continue;
+        const q = [r.extractedInternalTitle, r.cleanTitle].find(
+          (x) => x && isReadableTitle(extractCleanTitle(x))
+        );
+        if (q) searchTitleById.set(r.id, q);
+        else unresolvedReasons.set(r.id, t('title.note.unreadableTitle'));
+      }
+      const onlineTargets = targets.filter((r) => searchTitleById.has(r.id));
       for (let start = 0; start < onlineTargets.length; start += 120) {
         if (stopRequestedRef.current) break;
         const slice = onlineTargets.slice(start, start + 120);
@@ -7502,10 +7628,11 @@ export function App() {
             body: JSON.stringify({
               items: slice.map((w) => {
                 const meta = CONSOLE_CATALOG[w.consoleCode] || CONSOLE_CATALOG.nes;
+                const q = searchTitleById.get(w.id) || w.cleanTitle;
                 return {
                   id: w.id,
-                  cleanTitle: w.extractedInternalTitle || w.cleanTitle,
-                  comparisonKey: w.comparisonKey,
+                  cleanTitle: q,
+                  comparisonKey: q === w.cleanTitle ? w.comparisonKey : buildComparisonKey(extractCleanTitle(q)),
                   region: w.region,
                   libretroSystem: meta.libretroSystem,
                   archiveVideoId: meta.archiveVideoId,
@@ -7969,11 +8096,20 @@ export function App() {
     try {
       // 1. Preserve backup of original factory gamelist.xml before modifying it
       let backupMap = new Map<string, string>();
+      // Записи текущего gamelist.xml: из них берём медиа, описание и прочие поля, которые
+      // сами не нашли, и переносим записи ромов, которых нет в списке, но файл есть.
+      // Current gamelist.xml entries: media, description and other fields we did not find
+      // ourselves come from here, and entries for ROMs outside the list (file still present) are kept.
+      let prevEntries: GamelistEntry[] = [];
+      let prevIdx = new Map<string, GamelistEntry>();
+      let factoryIdx = new Map<string, GamelistEntry>();
       try {
         const origHandle = await consoleDirHandle.getFileHandle('gamelist.xml');
         const origFile = await origHandle.getFile();
         const origText = await origFile.text();
         backupMap = parseGamelistXmlString(origText);
+        prevEntries = parseGamelistEntries(origText);
+        prevIdx = indexGamelistEntries(prevEntries);
         try {
           await consoleDirHandle.getFileHandle('gamelist_factory_backup.xml');
         } catch {
@@ -7996,8 +8132,10 @@ export function App() {
         for (const [k, v] of bMap.entries()) {
           if (!backupMap.has(k)) backupMap.set(k, v);
         }
+        factoryIdx = indexGamelistEntries(parseGamelistEntries(bText));
       } catch {}
 
+      const writtenPaths = new Set<string>();
       const lines: string[] = ['<?xml version="1.0" encoding="utf-8"?>', '<gameList>'];
       for (const r of consoleRoms) {
         const baseNoExt = r.fileName.replace(/\.[^/.]+$/, '');
@@ -8017,7 +8155,7 @@ export function App() {
             : cleanTitle;
         const meta = CONSOLE_CATALOG[r.consoleCode] || CONSOLE_CATALOG.nes;
 
-        const { imgRel, thumbRel, marqueeRel, videoRel } = await resolveExistingMediaInDirHandle(
+        let { imgRel, thumbRel, marqueeRel, videoRel } = await resolveExistingMediaInDirHandle(
           consoleDirHandle,
           r.isMultiDisc && r.multiDiscFolderName ? r.multiDiscFolderName : baseNoExt,
           cleanTitle
@@ -8028,6 +8166,22 @@ export function App() {
           isMulti && r.multiDiscFolderName && r.m3uFileName
             ? `./${r.multiDiscFolderName}/${r.m3uFileName}`
             : `./${r.fileName}`;
+        writtenPaths.add(normalizeGamelistPath(xmlPath));
+
+        // Медиа и поля из прежней записи, если сами не нашли. Ссылку берём, только если файл на месте.
+        // Media and fields from the previous entry when not found ourselves; a link only if the file exists.
+        const prevKey = isMulti && r.m3uFileName ? r.m3uFileName : r.fileName;
+        const prev = findGamelistEntry(prevIdx, prevKey) || findGamelistEntry(factoryIdx, prevKey);
+        const keepRef = async (cur: string, tag: string) => {
+          const ref = prev?.fields[tag];
+          if (cur || !ref) return cur;
+          return (await relativeFileExists(consoleDirHandle, ref)) ? unescapeXml(ref) : cur;
+        };
+        imgRel = await keepRef(imgRel, 'image');
+        thumbRel = await keepRef(thumbRel, 'thumbnail');
+        marqueeRel = await keepRef(marqueeRel, 'marquee');
+        videoRel = await keepRef(videoRel, 'video');
+        if (!imgRel && thumbRel) imgRel = thumbRel;
 
         lines.push('  <game>');
         lines.push(`    <path>${escapeXml(xmlPath)}</path>`);
@@ -8045,13 +8199,19 @@ export function App() {
           (isMulti
             ? tfStatic('app.consoleDiscsPart', { count: r.discs!.length })
             : tfStatic('app.consoleCrcPart', { crc: r.headerlessCrc32 }));
-        lines.push(`    <desc>${escapeXml(descLine)}</desc>`);
+        // Поля прежней записи уже экранированы — пишем как есть. / Previous fields are already escaped.
+        const pf = prev?.fields || {};
+        lines.push(`    <desc>${pf.desc || escapeXml(descLine)}</desc>`);
         if (imgRel) lines.push(`    <image>${escapeXml(imgRel)}</image>`);
         if (thumbRel) lines.push(`    <thumbnail>${escapeXml(thumbRel)}</thumbnail>`);
         if (marqueeRel) lines.push(`    <marquee>${escapeXml(marqueeRel)}</marquee>`);
         if (videoRel) lines.push(`    <video>${escapeXml(videoRel)}</video>`);
-        lines.push('    <rating>0.9</rating>');
-        lines.push(`    <genre>${escapeXml(localizedConsole)}</genre>`);
+        lines.push(`    <rating>${pf.rating || '0.9'}</rating>`);
+        if (pf.releasedate) lines.push(`    <releasedate>${pf.releasedate}</releasedate>`);
+        if (pf.developer) lines.push(`    <developer>${pf.developer}</developer>`);
+        if (pf.publisher) lines.push(`    <publisher>${pf.publisher}</publisher>`);
+        lines.push(`    <genre>${pf.genre || escapeXml(localizedConsole)}</genre>`);
+        if (pf.players) lines.push(`    <players>${pf.players}</players>`);
         lines.push(`    <region>${escapeXml(r.region)}</region>`);
         lines.push('  </game>');
 
@@ -8060,6 +8220,7 @@ export function App() {
           for (let di = 0; di < r.discs!.length; di++) {
             const d = r.discs![di];
             lines.push('  <game>');
+            writtenPaths.add(normalizeGamelistPath(`./${r.multiDiscFolderName}/${d.fileName}`));
             lines.push(
               `    <path>${escapeXml(`./${r.multiDiscFolderName}/${d.fileName}`)}</path>`
             );
@@ -8070,6 +8231,14 @@ export function App() {
             lines.push('  </game>');
           }
         }
+      }
+      // Записи ромов вне списка (хаки, другие статусы, подпапки) не выкидываем, если файл на месте.
+      // Entries for ROMs outside the list (hacks, other statuses, subfolders) stay if the file exists.
+      for (const e of prevEntries) {
+        const key = normalizeGamelistPath(e.path);
+        if (!key || writtenPaths.has(key)) continue;
+        writtenPaths.add(key);
+        if (await relativeFileExists(consoleDirHandle, e.path)) lines.push(`  ${e.raw}`);
       }
       lines.push('</gameList>');
 
@@ -8448,6 +8617,7 @@ export function App() {
         onChangeAutoGroupMultiDisc={setAutoGroupMultiDisc}
         onScrapeMedia={() => handleScrapeR36SMedia(roms)}
         onOnlineRename={() => handleOnlineRenameRoms()}
+        datSystems={datSystems}
         onScanPhantomFolders={handleScanPhantomFolders}
         onRepairSdCard={(fw) => handleRepairR36SSDCard(fw as any)}
         sdTargetFolderName={sdTargetFolderName}

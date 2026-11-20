@@ -8,6 +8,10 @@ AegisROM находит настоящее название игры по хеш
 
 ### Где взять DAT
 
+Проще всего: «Инструменты» → «DAT-файлы» → **«Скачать DAT для моих консолей»**. AegisROM сам скачает DAT No-Intro (картриджи) и Redump (диски) из [libretro-database](https://github.com/libretro/libretro-database/tree/master/metadat) для консолей, которые есть в библиотеке. «Онлайн-переименование» делает то же самое автоматически, если для какой-то консоли DAT нет. Повторно уже скачанные DAT не качаются.
+
+Вручную:
+
 | Что | Где | Формат |
 |---|---|---|
 | Картриджи (NES, SNES, GB/GBA, Mega Drive, N64…) | [datomatic.no-intro.org](https://datomatic.no-intro.org) → Download → Standard DAT | `.dat` (Logiqx XML) или `.zip` |
@@ -22,10 +26,12 @@ AegisROM находит настоящее название игры по хеш
 
 ### Как работает
 
+0. Если для консоли нет DAT, он скачивается из libretro-database.
 1. «Онлайн-переименование» сначала считает хеш каждого рома и ищет его во всех загруженных DAT.
 2. Порядок сверки: SHA1 → MD5 → CRC32 + размер → CRC32 без заголовка → серийник диска.
 3. Если совпадений несколько, выигрывает DAT той же системы.
-4. Что не нашлось в DAT, ищется по названию в индексе Libretro, как раньше.
+4. Что не нашлось в DAT, ищется по названию в индексе Libretro. Нечитаемые названия (номер вместо имени, «кракозябры» от неверной кодировки) по имени не ищутся: нечёткий поиск по ним давал чужую игру. Такие ромы опознаются только по хешу.
+4a. Не нашлось нигде — имя файла остаётся как есть, причина видна в карточке.
 5. В карточке игры в поле «Источник названия» видно «DAT No-Intro (по хешу)» или «DAT Redump (по хешу)». Если не нашлось, там же причина.
 
 ### Что и как хешируется
@@ -50,6 +56,10 @@ AegisROM finds a game's real title by the file hash in DAT files. This is more r
 
 ### Where to get DATs
 
+Easiest: Tools → "DAT files" → **"Download DATs for my consoles"**. AegisROM downloads No-Intro (cartridge) and Redump (disc) DATs from [libretro-database](https://github.com/libretro/libretro-database/tree/master/metadat) for the consoles in your library. "Online rename" does the same automatically when a console has no DAT. DATs already downloaded are not fetched again.
+
+By hand:
+
 | What | Where | Format |
 |---|---|---|
 | Cartridges (NES, SNES, GB/GBA, Mega Drive, N64…) | [datomatic.no-intro.org](https://datomatic.no-intro.org) → Download → Standard DAT | `.dat` (Logiqx XML) or `.zip` |
@@ -64,10 +74,12 @@ Tools → "DAT files" block → "Add DAT". You can pick several `.dat`, `.xml` o
 
 ### How it works
 
+0. When a console has no DAT, it is downloaded from libretro-database.
 1. "Online rename" first hashes every ROM and looks it up in all loaded DATs.
 2. Match order: SHA1 → MD5 → CRC32 + size → headerless CRC32 → disc serial.
 3. When several entries match, the DAT for the same system wins.
-4. Whatever is not in the DATs is searched by name in the Libretro index, as before.
+4. Whatever is not in the DATs is searched by name in the Libretro index. Unreadable titles (a number instead of a name, garbled text from a wrong encoding) are not searched by name: a fuzzy search on them returned a wrong game. Such ROMs are identified by hash only.
+4a. Nothing found anywhere — the file name stays as is, and the reason is shown in the game card.
 5. The game card's "Title source" shows "No-Intro DAT (hash match)" or "Redump DAT (hash match)". When nothing matched, the reason is shown there.
 
 ### What gets hashed
@@ -93,6 +105,7 @@ Hashing is local, no files leave the computer. Large images are read in full, so
 | `GET /api/dat/status` | loaded DATs and the folder path |
 | `POST /api/dat/reload` | reread the folder |
 | `POST /api/dat/import?name=<file>` | store a DAT/ZIP from the request body (validated first) and reload |
+| `POST /api/dat/fetch-libretro` | `{"systems":["Sony - PlayStation"],"force":false}` → download DATs from libretro-database (allow-list of systems, validated before storing) and reload; `{fetched, skipped, failed, status}` |
 | `POST /api/dat/lookup` | `{"items":[{id, system, size, crc32, headerlessCrc32, headerlessSize, sha1, md5, serial}]}` → `{"results":[{id, matched, name, source, datName, matchedBy, reason}]}` |
 
-Code: `aegiscore/dat` (parser and index), `aegisapi/dat.go` (routes), `src/utils/datHashLookup.ts` (hashing in the browser), `src/components/DatFilesPanel.tsx`.
+Code: `aegiscore/dat` (parser and index), `aegisapi/dat.go` (routes), `aegisapi/dat_libretro.go` (libretro-database download), `src/utils/datHashLookup.ts` (hashing in the browser), `src/components/DatFilesPanel.tsx`.

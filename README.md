@@ -127,7 +127,7 @@ By default, duplicates found by 1G1R are moved to the `_Duplicates_1G1R` quarant
 Yes. Renaming by `gamelist.xml` and headers parses these numbered files and gives them proper names back.
 
 **Where do I get DAT files for hash matching?**
-From [datomatic.no-intro.org](https://datomatic.no-intro.org) (cartridges) and [redump.org](http://redump.org/downloads/) (discs). Add the downloaded `.dat` or `.zip` with the "Add DAT" button in "Tools". More in [docs/dat.md](docs/dat.md).
+Press "Download DATs for my consoles" in "Tools": AegisROM fetches No-Intro and Redump DATs from libretro-database for the consoles in your library. Online rename does this by itself when a DAT is missing. You can also download DATs from [datomatic.no-intro.org](https://datomatic.no-intro.org) (cartridges) and [redump.org](http://redump.org/downloads/) (discs) and add them with "Add DAT". More in [docs/dat.md](docs/dat.md).
 
 **Do I need internet?**
 Only for downloading box art, videos and the PortMaster catalog. Scanning, 1G1R, renaming and builds work offline.
