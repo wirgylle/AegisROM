@@ -12,7 +12,7 @@ import (
 	"aegisgui/cmd/winsetup"
 )
 
-const AEGIS_APP_VERSION = winsetup.AppVersion
+var AEGIS_APP_VERSION = winsetup.AppVersion
 
 type InstalledAppInfo struct {
 	IsInstalled      bool                         `json:"isInstalled"`
