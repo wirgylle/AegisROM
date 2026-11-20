@@ -11,6 +11,7 @@ import { IT } from './locales/it';
 import { SETUP_STRINGS } from './locales/setup';
 import { BIOS_STRINGS } from './biosStrings';
 import { COLLECTION_STRINGS } from './collectionStrings';
+import { EDITOR_STRINGS } from './editorStrings';
 import { SAVE_STRINGS } from './saveStrings';
 
 export type SupportedLanguage =
@@ -78,18 +79,18 @@ export function detectSystemLanguage(): SupportedLanguage {
 
 // Отдельные файлы строк (мастер настройки, BIOS) подмешиваются сюда.
 // Separate string files (setup wizard, BIOS) are merged here.
-const EN_ALL = { ...EN, ...SETUP_STRINGS.en, ...BIOS_STRINGS.en, ...COLLECTION_STRINGS.en, ...SAVE_STRINGS.en };
+const EN_ALL = { ...EN, ...SETUP_STRINGS.en, ...BIOS_STRINGS.en, ...COLLECTION_STRINGS.en, ...SAVE_STRINGS.en, ...EDITOR_STRINGS.en };
 
 const DICTS: Record<SupportedLanguage, TranslationDict> = {
-  ru: { ...RU, ...SETUP_STRINGS.ru, ...BIOS_STRINGS.ru, ...COLLECTION_STRINGS.ru, ...SAVE_STRINGS.ru },
+  ru: { ...RU, ...SETUP_STRINGS.ru, ...BIOS_STRINGS.ru, ...COLLECTION_STRINGS.ru, ...SAVE_STRINGS.ru, ...EDITOR_STRINGS.ru },
   en: EN_ALL,
-  de: { ...DE, ...SETUP_STRINGS.de, ...BIOS_STRINGS.de, ...COLLECTION_STRINGS.de },
-  es: { ...ES, ...SETUP_STRINGS.es, ...BIOS_STRINGS.es, ...COLLECTION_STRINGS.es },
-  ja: { ...JA, ...SETUP_STRINGS.ja, ...BIOS_STRINGS.ja, ...COLLECTION_STRINGS.ja },
-  zh: { ...ZH, ...SETUP_STRINGS.zh, ...BIOS_STRINGS.zh, ...COLLECTION_STRINGS.zh },
-  sr: { ...SR, ...SETUP_STRINGS.sr, ...BIOS_STRINGS.sr, ...COLLECTION_STRINGS.sr },
-  fr: { ...FR, ...SETUP_STRINGS.fr, ...BIOS_STRINGS.fr, ...COLLECTION_STRINGS.fr },
-  it: { ...IT, ...SETUP_STRINGS.it, ...BIOS_STRINGS.it, ...COLLECTION_STRINGS.it },
+  de: { ...DE, ...SETUP_STRINGS.de, ...BIOS_STRINGS.de, ...COLLECTION_STRINGS.de, ...EDITOR_STRINGS.de },
+  es: { ...ES, ...SETUP_STRINGS.es, ...BIOS_STRINGS.es, ...COLLECTION_STRINGS.es, ...EDITOR_STRINGS.es },
+  ja: { ...JA, ...SETUP_STRINGS.ja, ...BIOS_STRINGS.ja, ...COLLECTION_STRINGS.ja, ...EDITOR_STRINGS.ja },
+  zh: { ...ZH, ...SETUP_STRINGS.zh, ...BIOS_STRINGS.zh, ...COLLECTION_STRINGS.zh, ...EDITOR_STRINGS.zh },
+  sr: { ...SR, ...SETUP_STRINGS.sr, ...BIOS_STRINGS.sr, ...COLLECTION_STRINGS.sr, ...EDITOR_STRINGS.sr },
+  fr: { ...FR, ...SETUP_STRINGS.fr, ...BIOS_STRINGS.fr, ...COLLECTION_STRINGS.fr, ...EDITOR_STRINGS.fr },
+  it: { ...IT, ...SETUP_STRINGS.it, ...BIOS_STRINGS.it, ...COLLECTION_STRINGS.it, ...EDITOR_STRINGS.it },
 };
 
 let activeLangRuntime: SupportedLanguage = detectSystemLanguage();

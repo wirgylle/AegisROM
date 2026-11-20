@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, CheckCircle2, Layers, LibraryBig, Plus } from 'lucide-react';
+import { ArrowDown, ArrowUp, CheckCircle2, Layers, LibraryBig, Pencil, Plus } from 'lucide-react';
 import type { EnrichedBuildGame } from '../utils/buildsAndConverterEngine';
 import { localizeGenre, useI18n } from '../i18n/translations';
 
@@ -20,6 +20,8 @@ interface VirtualizedLibraryViewsProps {
   /** Коллекции: id карточки-лица → число версий и консоли. / Collections: lead card id → version count and consoles. */
   collections?: Map<string, LibraryCollectionBadge>;
   onOpenCollection?: (leadId: string) => void;
+  /** Редактор: открыть правку одного рома. / Editor: open the single-ROM edit dialog. */
+  onEditGame?: (id: string) => void;
 }
 
 export interface LibraryCollectionBadge {
@@ -183,6 +185,7 @@ const MemoGridCard = React.memo<MemoGridCardProps>(
     prev.game.discCount === next.game.discCount &&
     prev.collectionCount === next.collectionCount &&
     prev.collectionConsoles === next.collectionConsoles &&
+    prev.game === next.game &&
     prev.collectionTitle === next.collectionTitle &&
     prev.collectionIsSeries === next.collectionIsSeries &&
     prev.onOpenCollection === next.onOpenCollection &&
@@ -283,6 +286,7 @@ const MemoCompactRow = React.memo<MemoCompactRowProps>(
     prev.genreLabel === next.genreLabel &&
     prev.collectionCount === next.collectionCount &&
     prev.collectionConsoles === next.collectionConsoles &&
+    prev.game === next.game &&
     prev.collectionTitle === next.collectionTitle &&
     prev.collectionIsSeries === next.collectionIsSeries &&
     prev.onOpenCollection === next.onOpenCollection &&
@@ -303,15 +307,19 @@ interface MemoEditorRowProps {
   onSelect: (id: string) => void;
   onToggleCheck: (id: string) => void;
   onAddToBuild?: (game: EnrichedBuildGame) => void;
+  onEditGame?: (id: string) => void;
   addBtnTitle: string;
+  editBtnTitle: string;
+  manualTitle: string;
   discLabel: string;
   lang: string;
 }
 
 const MemoEditorRow = React.memo<MemoEditorRowProps>(
-  ({ game, isSelected, isChecked, onSelect, onToggleCheck, onAddToBuild, addBtnTitle, discLabel }) => (
+  ({ game, isSelected, isChecked, onSelect, onToggleCheck, onAddToBuild, onEditGame, addBtnTitle, editBtnTitle, manualTitle, discLabel }) => (
     <tr
       onClick={() => onSelect(game.id)}
+      onDoubleClick={() => onEditGame?.(game.id)}
       style={{ height: `${EDITOR_ROW_HEIGHT}px` }}
       className={`cursor-pointer transition-colors ${
         isSelected
@@ -339,13 +347,23 @@ const MemoEditorRow = React.memo<MemoEditorRowProps>(
       >
         {game.oldFile}
       </td>
-      <td
-        className="px-3 font-mono font-bold text-slate-900 dark:text-slate-100 truncate align-middle"
-        title={game.cleanFile}
-      >
-        {game.cleanFile}
+      <td className="px-3 align-middle min-w-0" title={`${game.title}\n${game.cleanFile}`}>
+        <div className="flex items-center gap-1 min-w-0 leading-tight">
+          {game.manualFields && game.manualFields.length > 0 && (
+            <span
+              className="shrink-0 text-accent dark:text-accent-dark font-bold"
+              title={`${manualTitle}: ${game.manualFields.join(', ')}`}
+            >
+              ✎
+            </span>
+          )}
+          <span className="font-semibold text-slate-900 dark:text-slate-100 truncate">{game.title}</span>
+        </div>
+        <div className="font-mono text-[10px] text-slate-500 dark:text-slate-400 truncate leading-tight">
+          {game.cleanFile}
+        </div>
       </td>
-      <td className="px-3 font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap align-middle">
+      <td className="px-3 font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap truncate align-middle">
         {game.consoleShort} · {game.discCount && game.discCount > 1 ? discLabel : game.bitnessGroup} · {game.ageRating}
       </td>
       <td
@@ -355,6 +373,20 @@ const MemoEditorRow = React.memo<MemoEditorRowProps>(
         {game.status}
       </td>
       <td className="px-2 text-right whitespace-nowrap align-middle">
+        {onEditGame && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onEditGame(game.id);
+            }}
+            title={editBtnTitle}
+            aria-label={editBtnTitle}
+            className="w-6 h-6 mr-1 rounded-md border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center justify-center cursor-pointer"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+          </button>
+        )}
         {onAddToBuild && (
           <button
             type="button"
@@ -372,6 +404,8 @@ const MemoEditorRow = React.memo<MemoEditorRowProps>(
     </tr>
   ),
   (prev, next) =>
+    prev.game === next.game &&
+    prev.onEditGame === next.onEditGame &&
     prev.isSelected === next.isSelected &&
     prev.isChecked === next.isChecked &&
     prev.lang === next.lang &&
@@ -398,6 +432,7 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
   onAddToBuild,
   collections,
   onOpenCollection,
+  onEditGame,
 }) => {
   const { t, tf, locale, lang } = useI18n();
   const badgeOf = (id: string) => {
@@ -768,17 +803,17 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
           <table className="w-full table-fixed text-left border-collapse text-xs">
             <colgroup>
               <col className="w-[3.5rem]" />
-              <col className="w-[26%]" />
+              <col className="w-[24%]" />
               <col />
-              <col className="w-[9rem]" />
-              <col className="w-[22%]" />
-              <col className="w-[3.5rem]" />
+              <col className="w-[11.5rem]" />
+              <col className="w-[18%]" />
+              <col className="w-[4.5rem]" />
             </colgroup>
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400">
                 <th className="py-2.5 px-3 whitespace-nowrap">{t('lib.col.select')}</th>
                 <th className="py-2.5 px-3">{t('lib.col.oldFile')}</th>
-                <th className="py-2.5 px-3">{t('lib.col.cleanFile')}</th>
+                <th className="py-2.5 px-3">{t('ed.col.titleFile')}</th>
                 <th className="py-2.5 px-3 whitespace-nowrap">{t('lib.col.consoleBit')}</th>
                 <th className="py-2.5 px-3">{t('lib.col.status')}</th>
                 <th className="py-2.5 px-2 text-right whitespace-nowrap">{t('lib.col.actions')}</th>
@@ -799,7 +834,10 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
                   onSelect={onSelectGame}
                   onToggleCheck={onToggleCheck}
                   onAddToBuild={onAddToBuild}
+                  onEditGame={onEditGame}
                   addBtnTitle={addBtnTitle}
+                  editBtnTitle={t('ed.editOne')}
+                  manualTitle={t('ed.manualBadge')}
                   discLabel={g.discCount && g.discCount > 1 ? tf('lib.discShort', { count: g.discCount }) : ''}
                   lang={lang}
                 />

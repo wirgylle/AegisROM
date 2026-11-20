@@ -71,6 +71,8 @@ import {
   loadMultiDbsFromIndexedDB,
 } from '../utils/persistentHandles';
 import { VirtualizedLibraryViews, type LibraryCollectionBadge } from './VirtualizedLibraryViews';
+import { EditorToolbar, GameEditModal, useManualEditsVersion } from './LibraryEditor';
+import { applyManualEditToRow, exportManualEdits, importManualEdits } from '../utils/manualEdits';
 import { CollectionModal } from './CollectionModal';
 import { GameRelationsPanel } from './GameRelationsPanel';
 import { buildCollections, buildSeries, indexCollections, seriesSiblings } from '../utils/gameCollections';
@@ -205,6 +207,15 @@ export interface UnifiedGameRow {
   multiDiscFolderName?: string;
   m3uFileName?: string;
   discs?: MultiDiscEntry[];
+  // Ручные правки редактора (utils/manualEdits.ts) и поля gamelist.xml, которые они задают.
+  // Editor manual edits (utils/manualEdits.ts) and the gamelist.xml fields they set.
+  developer?: string;
+  publisher?: string;
+  players?: string;
+  rating?: string;
+  desc?: string;
+  manualFields?: string[];
+  manualMedia?: Partial<Record<'image' | 'thumbnail' | 'marquee' | 'video', string>>;
 }
 
 interface FigmaConceptStudioProps {
@@ -269,6 +280,10 @@ interface FigmaConceptStudioProps {
   onChangeSdFirmwareId?: (firmwareId: string) => void;
   onMassDeleteRoms?: (targetIds: string[]) => void;
   onMassMoveRoms?: (targetIds: string[]) => void;
+  /** Редактор: записать gamelist.xml в папках этих ромов. / Editor: write gamelist.xml in these ROMs' folders. */
+  onEditorWriteGamelist?: (targetIds: string[]) => void;
+  /** Редактор: скраппер только для этих ромов. / Editor: run the scraper for these ROMs only. */
+  onEditorScrapeMedia?: (targetIds: string[]) => void;
   onMassSplitRoms?: (
     splitMode: 'by_console' | 'alphabetical' | 'disc_vs_cartridge' | 'multidisc_subfolders'
   ) => void;
@@ -638,6 +653,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   onChangeSdFirmwareId,
   onMassDeleteRoms,
   onMassMoveRoms,
+  onEditorWriteGamelist,
+  onEditorScrapeMedia,
   onMassSplitRoms,
   onUndo,
   canUndo = false,
@@ -1190,6 +1207,10 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       const parsed = JSON.parse(text);
       let loadedRows: UnifiedGameRow[] = [];
 
+      if (parsed && !Array.isArray(parsed) && parsed.manualEdits) {
+        const n = importManualEdits(parsed.manualEdits);
+        if (n > 0) onAddLog?.(tf('ed.importedLog', { count: n }));
+      }
       if (Array.isArray(parsed)) {
         loadedRows = parsed;
       } else if (parsed && Array.isArray(parsed.rows)) {
@@ -1266,6 +1287,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       libraryPath: effectiveLibraryPath,
       exportedAt: new Date().toISOString(),
       totalGames: gamesSource.length,
+      // Ручные правки редактора хранятся отдельно от строк. / Editor manual edits are kept apart from rows.
+      manualEdits: exportManualEdits(),
       rows: gamesSource.map((g) => ({
         ...g,
         fileObj: undefined,
@@ -1336,10 +1359,20 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     return rawGamesSource;
   }, [rawGamesSource, activeDbEntry?.id, defaultSampleGames]);
 
+  // Ручные правки редактора поверх строк базы. / Editor manual edits laid over the database rows.
+  const manualEditsVersion = useManualEditsVersion();
   const enrichedGamesSource = React.useMemo(
-    () => gamesSource.map(enrichGameForBuild),
-    [gamesSource]
+    () => gamesSource.map((g) => enrichGameForBuild(applyManualEditToRow(g))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [gamesSource, manualEditsVersion]
   );
+  const [editorEditIds, setEditorEditIds] = useState<string[] | null>(null);
+  const editorEditGames = React.useMemo(() => {
+    if (!editorEditIds) return [];
+    const set = new Set(editorEditIds);
+    return enrichedGamesSource.filter((g) => set.has(g.id));
+  }, [editorEditIds, enrichedGamesSource]);
+  const openEditorForOne = useCallback((id: string) => setEditorEditIds([id]), []);
 
   const effectiveLibraryPath =
     selectedFolderName || activeDbEntry?.pathHint || libraryPath || 'D:/AegisROM_MasterLibrary';
@@ -2320,8 +2353,24 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                </div>
               </div>
 
+              {selectedConcept === 'concept_c_workbench' && (
+                <EditorToolbar
+                  visibleGames={filteredGames}
+                  allGames={enrichedGamesSource}
+                  checkedGameIds={checkedGameIds}
+                  onSetChecked={setCheckedGameIds}
+                  onEdit={setEditorEditIds}
+                  onWriteGamelist={onEditorWriteGamelist}
+                  onScrapeMedia={onEditorScrapeMedia}
+                  onMoveRoms={scannedRows.length > 0 ? onMassMoveRoms : undefined}
+                  onAddLog={onAddLog}
+                  busy={activeRunning}
+                />
+              )}
+
               {/* VIRTUALIZED + BUFFERED VIEWS WITH «+» ADD-TO-BUILD BUTTON */}
               <VirtualizedLibraryViews
+                onEditGame={openEditorForOne}
                 games={groupedLibraryView ? groupedLibraryView.games : filteredGames}
                 viewMode={selectedConcept}
                 scrollContainerRef={mainScrollRef}
@@ -3920,6 +3969,15 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       {/* ==================================================================== */}
       {/* ADD GAME TO BUILD MODAL («+» в библиотеке / инспекторе)               */}
       {/* ==================================================================== */}
+      {editorEditGames.length > 0 && (
+        <GameEditModal
+          games={editorEditGames}
+          onClose={() => setEditorEditIds(null)}
+          onSaved={onEditorWriteGamelist}
+          onAddLog={onAddLog}
+        />
+      )}
+
       {collectionModalLeadId && groupedLibraryView?.membersByLead.get(collectionModalLeadId) && (
         <CollectionModal
           mode={groupedLibraryView.labelByLead.has(collectionModalLeadId) ? 'series' : 'collection'}
