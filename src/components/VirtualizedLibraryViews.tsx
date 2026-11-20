@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, CheckCircle2, Layers, Plus } from 'lucide-react';
+import { ArrowDown, ArrowUp, CheckCircle2, Layers, LibraryBig, Plus } from 'lucide-react';
 import type { EnrichedBuildGame } from '../utils/buildsAndConverterEngine';
 import { localizeGenre, useI18n } from '../i18n/translations';
 
@@ -25,6 +25,9 @@ interface VirtualizedLibraryViewsProps {
 export interface LibraryCollectionBadge {
   count: number;
   consoles: string[];
+  /** 'series': count — число игр линейки, label — название серии. / count is the number of games in the line. */
+  kind?: 'collection' | 'series';
+  label?: string;
 }
 
 // Tile grid: as many columns as fit (min 160px each); covers keep a 3:4 box,
@@ -56,6 +59,7 @@ interface MemoGridCardProps {
   collectionCount: number;
   collectionConsoles: string;
   collectionTitle: string;
+  collectionIsSeries: boolean;
   onOpenCollection?: (id: string) => void;
   isSelected: boolean;
   onSelect: (id: string) => void;
@@ -66,7 +70,7 @@ interface MemoGridCardProps {
 }
 
 const MemoGridCard = React.memo<MemoGridCardProps>(
-  ({ game, coverHeight, isSelected, onSelect, onAddToBuild, addBtnTitle, discLabel, collectionCount, collectionConsoles, collectionTitle, onOpenCollection }) => {
+  ({ game, coverHeight, isSelected, onSelect, onAddToBuild, addBtnTitle, discLabel, collectionCount, collectionConsoles, collectionTitle, collectionIsSeries, onOpenCollection }) => {
     const [imgFailed, setImgFailed] = useState(false);
 
     useEffect(() => {
@@ -141,7 +145,7 @@ const MemoGridCard = React.memo<MemoGridCardProps>(
               aria-label={collectionTitle}
               className="relative z-10 self-start h-7 px-2 rounded-md bg-slate-900/85 hover:bg-accent text-white text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition"
             >
-              <Layers className="w-3.5 h-3.5" />
+              {collectionIsSeries ? <LibraryBig className="w-3.5 h-3.5" /> : <Layers className="w-3.5 h-3.5" />}
               <span className="tabular-nums">{collectionCount}</span>
             </button>
           )}
@@ -180,6 +184,7 @@ const MemoGridCard = React.memo<MemoGridCardProps>(
     prev.collectionCount === next.collectionCount &&
     prev.collectionConsoles === next.collectionConsoles &&
     prev.collectionTitle === next.collectionTitle &&
+    prev.collectionIsSeries === next.collectionIsSeries &&
     prev.onOpenCollection === next.onOpenCollection &&
     prev.onSelect === next.onSelect &&
     prev.onAddToBuild === next.onAddToBuild
@@ -197,11 +202,12 @@ interface MemoCompactRowProps {
   collectionCount: number;
   collectionConsoles: string;
   collectionTitle: string;
+  collectionIsSeries: boolean;
   onOpenCollection?: (id: string) => void;
 }
 
 const MemoCompactRow = React.memo<MemoCompactRowProps>(
-  ({ game, isSelected, onSelect, onAddToBuild, addBtnTitle, discLabel, genreLabel, collectionCount, collectionConsoles, collectionTitle, onOpenCollection }) => (
+  ({ game, isSelected, onSelect, onAddToBuild, addBtnTitle, discLabel, genreLabel, collectionCount, collectionConsoles, collectionTitle, collectionIsSeries, onOpenCollection }) => (
     <tr
       onClick={() => onSelect(game.id)}
       style={{ height: `${COMPACT_ROW_HEIGHT}px` }}
@@ -223,7 +229,7 @@ const MemoCompactRow = React.memo<MemoCompactRowProps>(
             aria-label={collectionTitle}
             className="mr-1.5 h-5 px-1.5 rounded bg-slate-200 dark:bg-slate-700 hover:bg-accent hover:text-white text-slate-700 dark:text-slate-200 text-[10px] font-semibold inline-flex items-center gap-0.5 align-middle cursor-pointer"
           >
-            <Layers className="w-3 h-3" />
+            {collectionIsSeries ? <LibraryBig className="w-3 h-3" /> : <Layers className="w-3 h-3" />}
             <span className="tabular-nums">{collectionCount}</span>
           </button>
         )}
@@ -278,6 +284,7 @@ const MemoCompactRow = React.memo<MemoCompactRowProps>(
     prev.collectionCount === next.collectionCount &&
     prev.collectionConsoles === next.collectionConsoles &&
     prev.collectionTitle === next.collectionTitle &&
+    prev.collectionIsSeries === next.collectionIsSeries &&
     prev.onOpenCollection === next.onOpenCollection &&
     prev.addBtnTitle === next.addBtnTitle &&
     prev.game.id === next.game.id &&
@@ -395,11 +402,15 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
   const { t, tf, locale, lang } = useI18n();
   const badgeOf = (id: string) => {
     const b = collections?.get(id);
-    if (!b || b.count < 2) return { collectionCount: 1, collectionConsoles: '', collectionTitle: '' };
+    if (!b || b.count < 2) return { collectionCount: 1, collectionConsoles: '', collectionTitle: '', collectionIsSeries: false };
+    const isSeries = b.kind === 'series';
     return {
       collectionCount: b.count,
       collectionConsoles: b.consoles.join(' · '),
-      collectionTitle: tf('coll.openHint', { count: b.count, consoles: b.consoles.join(', ') }),
+      collectionTitle: isSeries
+        ? tf('series.openHint', { name: b.label || '', count: b.count, consoles: b.consoles.join(', ') })
+        : tf('coll.openHint', { count: b.count, consoles: b.consoles.join(', ') }),
+      collectionIsSeries: isSeries,
     };
   };
   const listRootRef = useRef<HTMLDivElement | null>(null);

@@ -16,6 +16,7 @@ import {
   FolderInput,
   FolderOpen,
   Layers,
+  LibraryBig,
   FolderSearch,
   Undo2,
   RefreshCw,
@@ -70,7 +71,7 @@ import {
 import { VirtualizedLibraryViews, type LibraryCollectionBadge } from './VirtualizedLibraryViews';
 import { CollectionModal } from './CollectionModal';
 import { GameRelationsPanel } from './GameRelationsPanel';
-import { buildCollections, indexCollections, seriesSiblings } from '../utils/gameCollections';
+import { buildCollections, buildSeries, indexCollections, seriesSiblings } from '../utils/gameCollections';
 import { inferPortMasterPcTestPlan } from '../utils/portMasterEngine';
 import {
   SUPPORTED_LANGUAGES,
@@ -861,13 +862,26 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   const [libraryModFilter, setLibraryModFilter] = useState<'all' | 'modded' | RomModGroup>('all');
   // Коллекции: в «Все» одна карточка на игру, версии с других консолей под кнопкой.
   // Collections: in "All" one card per game, versions from other consoles behind a button.
-  const [groupCollections, setGroupCollections] = useState<boolean>(() => {
+  // Серии: одна карточка на всю линейку (Final Fantasy I–XII, Tactics). Режимы взаимоисключающие.
+  // Series: one card per whole game line. The two modes are mutually exclusive.
+  const [libraryGrouping, setLibraryGrouping] = useState<'none' | 'collections' | 'series'>(() => {
     try {
-      return localStorage.getItem('aegis.lib.collections') !== '0';
+      const v = localStorage.getItem('aegis.lib.grouping');
+      if (v === 'none' || v === 'collections' || v === 'series') return v;
+      return localStorage.getItem('aegis.lib.collections') === '0' ? 'none' : 'collections';
     } catch {
-      return true;
+      return 'collections';
     }
   });
+  const toggleLibraryGrouping = (mode: 'collections' | 'series') => {
+    const next = libraryGrouping === mode ? 'none' : mode;
+    setLibraryGrouping(next);
+    try {
+      localStorage.setItem('aegis.lib.grouping', next);
+    } catch {
+      // ignore
+    }
+  };
   const [collectionModalLeadId, setCollectionModalLeadId] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -1474,21 +1488,40 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   // В редакторе (таблица файлов) нужны все файлы, поэтому там коллекции не сворачиваются.
   // The editor (file table) needs every file, so collections are not collapsed there.
   const collectionsActive =
-    groupCollections && activeSidebarFilterKey === 'ALL' && selectedConcept !== 'concept_c_workbench';
+    libraryGrouping !== 'none' && activeSidebarFilterKey === 'ALL' && selectedConcept !== 'concept_c_workbench';
 
   const groupedLibraryView = React.useMemo(() => {
     if (!collectionsActive) return null;
-    const cols = buildCollections(filteredGames);
     const badges = new Map<string, LibraryCollectionBadge>();
     const leadOf = new Map<string, string>();
     const membersByLead = new Map<string, typeof filteredGames>();
+    const labelByLead = new Map<string, string>();
+    if (libraryGrouping === 'series') {
+      const series = buildSeries(filteredGames);
+      const games: typeof filteredGames = [];
+      for (const s of series) {
+        const multi = s.games.length > 1;
+        if (multi) {
+          badges.set(s.lead.id, { count: s.games.length, consoles: s.consoles, kind: 'series', label: s.label });
+          labelByLead.set(s.lead.id, s.label);
+        } else if (s.members.length > 1) {
+          badges.set(s.lead.id, { count: s.members.length, consoles: s.consoles });
+        }
+        membersByLead.set(s.lead.id, s.members);
+        for (const m of s.members) leadOf.set(m.id, s.lead.id);
+        // На карточке серии — название серии. / A series card shows the series name.
+        games.push(multi ? { ...s.lead, title: s.label } : s.lead);
+      }
+      return { mode: 'series' as const, games, badges, leadOf, membersByLead, labelByLead };
+    }
+    const cols = buildCollections(filteredGames);
     for (const c of cols) {
       badges.set(c.lead.id, { count: c.members.length, consoles: c.consoles });
       membersByLead.set(c.lead.id, c.members);
       for (const m of c.members) leadOf.set(m.id, c.lead.id);
     }
-    return { games: cols.map((c) => c.lead), badges, leadOf, membersByLead };
-  }, [collectionsActive, filteredGames]);
+    return { mode: 'collections' as const, games: cols.map((c) => c.lead), badges, leadOf, membersByLead, labelByLead };
+  }, [collectionsActive, libraryGrouping, filteredGames]);
 
   // Индекс по всей библиотеке для правой панели (не зависит от фильтров).
   // Whole-library index for the right panel (does not depend on filters).
@@ -2011,7 +2044,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         ? `${enrichedGamesSource.length} ${t('lib.gamesSuffix')}`
                         : `${filteredGames.length} ${t('lib.gamesOf')} ${enrichedGamesSource.length} ${t('lib.gamesSuffix')}`}
                       {groupedLibraryView && groupedLibraryView.games.length < filteredGames.length
-                        ? ` · ${groupedLibraryView.games.length} ${t('coll.countSuffix')}`
+                        ? ` · ${groupedLibraryView.games.length} ${t(groupedLibraryView.mode === 'series' ? 'series.countSuffix' : 'coll.countSuffix')}`
                         : ''}
                     </span>
                   </h2>
@@ -2077,28 +2110,34 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     ))}
                   </select>
 
-                  {/* Collections toggle */}
+                  {/* Collections / Series toggles (mutually exclusive) */}
                   <button
                     type="button"
-                    onClick={() => {
-                      const next = !groupCollections;
-                      setGroupCollections(next);
-                      try {
-                        localStorage.setItem('aegis.lib.collections', next ? '1' : '0');
-                      } catch {
-                        // ignore
-                      }
-                    }}
-                    aria-pressed={groupCollections}
+                    onClick={() => toggleLibraryGrouping('collections')}
+                    aria-pressed={libraryGrouping === 'collections'}
                     title={t('coll.toggleHint')}
                     className={`h-8 px-2.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
-                      groupCollections
+                      libraryGrouping === 'collections'
                         ? 'bg-accent text-white border-accent'
                         : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
                     }`}
                   >
                     <Layers className="w-3.5 h-3.5" />
                     <span>{t('coll.toggle')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleLibraryGrouping('series')}
+                    aria-pressed={libraryGrouping === 'series'}
+                    title={t('series.toggleHint')}
+                    className={`h-8 px-2.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
+                      libraryGrouping === 'series'
+                        ? 'bg-accent text-white border-accent'
+                        : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    <LibraryBig className="w-3.5 h-3.5" />
+                    <span>{t('series.toggle')}</span>
                   </button>
 
                   {/* Sorting Dropdown */}
@@ -3863,8 +3902,11 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       {/* ==================================================================== */}
       {collectionModalLeadId && groupedLibraryView?.membersByLead.get(collectionModalLeadId) && (
         <CollectionModal
+          mode={groupedLibraryView.labelByLead.has(collectionModalLeadId) ? 'series' : 'collection'}
           title={
-            groupedLibraryView.membersByLead.get(collectionModalLeadId)!.find((m) => m.id === collectionModalLeadId)?.title || ''
+            groupedLibraryView.labelByLead.get(collectionModalLeadId) ||
+            groupedLibraryView.membersByLead.get(collectionModalLeadId)!.find((m) => m.id === collectionModalLeadId)?.title ||
+            ''
           }
           members={groupedLibraryView.membersByLead.get(collectionModalLeadId)!}
           selectedId={selectedGame?.id || ''}
