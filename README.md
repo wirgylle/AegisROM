@@ -11,7 +11,7 @@ Tidies up your collection, removes duplicates, downloads box art and builds a re
 
 [Download](https://github.com/wirgylle/AegisROM/releases) · [Features](#features) · [Installation](#installation) · [Quick start](#quick-start) · [FAQ](#faq) · [Roadmap](#roadmap)
 
-![Version](https://img.shields.io/badge/version-0.5.5_beta-orange)
+![Version](https://img.shields.io/badge/version-0.5.6_beta-orange)
 ![Platform](https://img.shields.io/badge/Windows_11-x64-blue)
 ![Languages](https://img.shields.io/badge/UI_languages-9-green)
 
@@ -30,16 +30,18 @@ The app scans your collection and identifies games by checksums and disc serial 
 ## Features
 
 ### 📚 Library
-- Three view modes: **Showcase** (box art gallery), **Compact** (dense list) and **Editor** ("before → after" comparison with checkboxes for bulk actions).
+- Three view modes: **Tiles** (box art gallery), **List** (dense list) and **Editor** ("before → after" comparison with checkboxes for bulk actions).
 - Grouping by console, generation (8-bit, 16-bit, 32/64-bit, 128-bit+), genre and year.
 - **Multi-disc games** (Final Fantasy VII, Metal Gear Solid, etc.) are shown as one game: discs go into a shared folder and an `.m3u` playlist is created.
 - Game card with box art and video preview.
 - Add a game to a build with a single `+` button.
 - Save and open the library database so you don't have to rescan your drives.
+- **Collections**: one game released on several consoles is shown as one group; the game card shows a description from Wikidata.
+- **Play** `beta`: the built-in emulator (EmulatorJS) runs a game right in the app window, no emulator install needed. Sega CD and PC Engine CD take their BIOS from the BIOS section.
 
-| Compact | Editor |
+| List | Editor |
 |---|---|
-| <img src="docs/screenshots/compact.png" alt="Compact mode" /> | <img src="docs/screenshots/editor.png" alt="Editor mode" /> |
+| <img src="docs/screenshots/compact.png" alt="List mode" /> | <img src="docs/screenshots/editor.png" alt="Editor mode" /> |
 
 > Features marked `beta` are already in the app but still in development: they may not always work, or may not work as expected. If something is wrong, please report it in [Issues](https://github.com/wirgylle/AegisROM/issues).
 
@@ -71,8 +73,11 @@ The app scans your collection and identifies games by checksums and disc serial 
 - Choose an emulator per platform: RetroArch cores, DuckStation, PCSX2, RPCS3, PPSSPP, mGBA, melonDS, Ryujinx, Xemu.
 - Auto-detection of emulators installed on the PC and launching a game right from its card `beta`.
 - Checking PortMaster ports on the PC before copying them to the console `beta`.
+- **BIOS**: a beginner guide to what each console needs, MD5 check against the libretro database and copying BIOS files into a build.
 
 <p align="center"><img src="docs/screenshots/environment.png" alt="Emulator environment" width="900" /></p>
+
+<p align="center"><img src="docs/screenshots/bios.png" alt="BIOS section" width="900" /></p>
 
 ### 🌍 9 UI languages
 Русский, English, Deutsch, Español, Français, Italiano, 日本語, Srpski (Latin), 简体中文. The language is detected automatically, with a switcher in the header.
@@ -142,8 +147,8 @@ Open an [Issue](https://github.com/wirgylle/AegisROM/issues) and describe what y
 
 | Version | What's coming |
 |---|---|
-| **0.5.5 – 0.5.7** | The patcher and hacks module are already in `dev`; next: compressed xdelta patches. BIOS verification by checksum and copying the required BIOS into a build. Play games right in the app window with the built-in emulator. |
-| **0.5.8** | First-run setup wizard: language, library and ROM folders, importing your own ROMs and renaming rules. While the library is built in the background, the app shows a tour of the main features. |
+| **0.5.6** (released) | Hacks and patches module with an IPS/UPS/BPS/xdelta patcher, BIOS section with MD5 check, playing games in the app window, first-run setup wizard and tour, library collections, settings stored on disk. |
+| **0.5.7 – 0.5.8** | Manual editing in Editor view (names, details, media paths), Series in the library (a whole game franchise), better online renaming, compressed xdelta patches. |
 | **before 0.6.0** | The app's own window instead of Edge or Chrome, with settings stored on disk. A macOS version: one `.dmg` for Intel and Apple Silicon, games launched through Mac emulators. PortMaster on Windows through a Linux environment (WSL). |
 | **0.6.0** | Save manager (`.srm`, `.state`, memory cards) with version history. Uploading builds to the console over Wi-Fi (SFTP / SMB / WebDAV) without removing the card. |
 | **0.7.0** | RetroAchievements: checking achievement support by ROM hash. PDF manuals, walkthrough maps and a soundtrack player in the game card. |
