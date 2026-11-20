@@ -2,9 +2,18 @@
 // Протокол / protocol (postMessage, same origin only):
 //   app -> player: { type: 'aegis-qt-load', file: File, core: 'fceumm', gameName, language, color, biosFile?: File, biosName? }
 //   player -> app: { type: 'aegis-qt', state: 'waiting' | 'ready' | 'started' | 'error', message? }
+// Сохранения на диске (если в aegis-qt-load пришло saves: { srm?: Blob }) / disk saves:
+//   player -> app: { type: 'aegis-qt-save', kind: 'srm' | 'state', data: Uint8Array }
+//   player -> app: { type: 'aegis-qt-need-state' }      нажата «Загрузить состояние» / load state pressed
+//   app -> player: { type: 'aegis-qt-state', data: Blob | null, message? }
+//   app -> player: { type: 'aegis-qt-toast', message }   подпись поверх игры / on-screen note
+//   app -> player: { type: 'aegis-qt-flush' }           перед закрытием окна / before the window closes
+//   player -> app: { type: 'aegis-qt', state: 'flushed' }
 (function () {
   'use strict';
   var started = false;
+  var diskSaves = false;
+  var initialSrm = null;
 
   function report(state, message) {
     try {
@@ -19,6 +28,18 @@
   window.addEventListener('message', function (ev) {
     if (ev.origin !== location.origin || ev.source !== window.parent) return;
     var msg = ev.data || {};
+    if (msg.type === 'aegis-qt-flush') {
+      flushSaves();
+      return;
+    }
+    if (msg.type === 'aegis-qt-state') {
+      applyState(msg.data, msg.message);
+      return;
+    }
+    if (msg.type === 'aegis-qt-toast') {
+      toast(msg.message);
+      return;
+    }
     if (msg.type !== 'aegis-qt-load' || started) return;
     if (!(msg.file instanceof Blob) || typeof msg.core !== 'string' || !/^[a-z0-9_]+$/.test(msg.core)) {
       report('error', 'bad request');
@@ -38,6 +59,13 @@
     window.EJS_disableDatabases = true;
     window.EJS_color = typeof msg.color === 'string' ? msg.color : '#06b6d4';
     window.EJS_backgroundColor = '#000000';
+    if (msg.saves && typeof msg.saves === 'object') {
+      diskSaves = true;
+      initialSrm = msg.saves.srm instanceof Blob ? msg.saves.srm : null;
+      // SRAM пишется на диск каждые 30 с (по умолчанию у EmulatorJS 5 минут) и при закрытии окна.
+      window.EJS_defaultOptions = { 'save-save-interval': '30' };
+      setupDiskSaves();
+    }
     if (typeof msg.language === 'string' && msg.language) {
       window.EJS_language = msg.language;
     } else {
@@ -64,6 +92,14 @@
     window.EJS_onGameStart = function () {
       var w = document.getElementById('wait');
       if (w) w.remove();
+      if (initialSrm) {
+        var srm = initialSrm;
+        initialSrm = null;
+        loadSrm(srm).then(function () {
+          report('started');
+        });
+        return;
+      }
       report('started');
     };
 
@@ -85,6 +121,108 @@
         clearInterval(poll);
       }
     }, 500);
+  }
+
+  function post(msg, transfer) {
+    try {
+      window.parent.postMessage(msg, location.origin, transfer || []);
+    } catch (e) {}
+  }
+
+  function gm() {
+    var emu = window.EJS_emulator;
+    return emu && emu.gameManager ? emu.gameManager : null;
+  }
+
+  function sendBytes(kind, bytes) {
+    if (!bytes || !bytes.length) return;
+    var copy = new Uint8Array(bytes); // копия: HEAP и FS эмулятора нельзя отдавать как transferable
+    post({ type: 'aegis-qt-save', kind: kind, data: copy }, [copy.buffer]);
+  }
+
+  // Подписки EmulatorJS: SRAM пишется по таймеру и при выходе (событие saveSaveFiles),
+  // кнопки «Сохранить состояние / Загрузить состояние / Сохранить файл» уводим на диск.
+  function setupDiskSaves() {
+    window.EJS_onSaveState = function (data) {
+      sendBytes('state', data && data.state);
+    };
+    window.EJS_onLoadState = function () {
+      post({ type: 'aegis-qt-need-state' });
+    };
+    window.EJS_onSaveSave = function (data) {
+      sendBytes('srm', data && data.save);
+    };
+    var hook = setInterval(function () {
+      var emu = window.EJS_emulator;
+      if (!emu || typeof emu.on !== 'function') return;
+      clearInterval(hook);
+      emu.on('saveSaveFiles', function (bytes) {
+        sendBytes('srm', bytes);
+      });
+    }, 50);
+  }
+
+  function loadSrm(blob) {
+    return blob.arrayBuffer().then(
+      function (buf) {
+        var g = gm();
+        if (!g) return;
+        try {
+          var path = g.getSaveFilePath();
+          var parts = path.split('/');
+          var cp = '';
+          for (var i = 0; i < parts.length - 1; i++) {
+            if (!parts[i]) continue;
+            cp += '/' + parts[i];
+            if (!g.FS.analyzePath(cp).exists) g.FS.mkdir(cp);
+          }
+          if (g.FS.analyzePath(path).exists) g.FS.unlink(path);
+          g.FS.writeFile(path, new Uint8Array(buf));
+          g.loadSaveFiles();
+          // Ядро уже прочитало пустую SRAM при загрузке игры: перезапускаем игру, чтобы она
+          // увидела сохранение с самого старта (сброс SRAM не трогает).
+          // The core already read an empty SRAM on load: reset so the game sees the save from boot.
+          g.restart();
+        } catch (e) {
+          report('error', 'save load failed: ' + String((e && e.message) || e));
+        }
+      },
+      function () {}
+    );
+  }
+
+  function toast(text) {
+    var emu = window.EJS_emulator;
+    if (typeof text === 'string' && text && emu && typeof emu.displayMessage === 'function') {
+      try {
+        emu.displayMessage(text);
+      } catch (e) {}
+    }
+  }
+
+  function applyState(blob, message) {
+    var g = gm();
+    if (!g || !(blob instanceof Blob)) {
+      toast(message);
+      return;
+    }
+    toast(message);
+    blob.arrayBuffer().then(function (buf) {
+      try {
+        g.loadState(new Uint8Array(buf));
+      } catch (e) {}
+    });
+  }
+
+  function flushSaves() {
+    var g = gm();
+    var emu = window.EJS_emulator;
+    if (diskSaves && g && emu && emu.started && !emu.failedToStart) {
+      try {
+        g.saveSaveFiles(); // вызывает событие saveSaveFiles -> aegis-qt-save
+      } catch (e) {}
+    }
+    report('flushed');
   }
 
   // EmulatorJS 4.2.3 падает на File в EJS_biosUrl (зовёт .split у объекта), а у blob-ссылки

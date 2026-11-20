@@ -145,10 +145,15 @@ Open an [Issue](https://github.com/wirgylle/AegisROM/issues) and describe what y
 | **0.5.5 – 0.5.7** | The patcher and hacks module are already in `dev`; next: compressed xdelta patches. BIOS verification by checksum and copying the required BIOS into a build. Play games right in the app window with the built-in emulator. |
 | **0.5.8** | First-run setup wizard: language, library and ROM folders, importing your own ROMs and renaming rules. While the library is built in the background, the app shows a tour of the main features. |
 | **before 0.6.0** | The app's own window instead of Edge or Chrome, with settings stored on disk. A macOS version: one `.dmg` for Intel and Apple Silicon, games launched through Mac emulators. PortMaster on Windows through a Linux environment (WSL). |
-| **0.6.0** | Save manager (`.srm`, `.state`, memory cards) with version history. Uploading builds to the console over Wi-Fi (SFTP / SMB / WebDAV) without removing the card. |
+| **0.6.0** | Save manager (`.srm`, `.state`, memory cards) with version history. First step is in `dev`: games from the built-in Play save as files next to the ROM. Uploading builds to the console over Wi-Fi (SFTP / SMB / WebDAV) without removing the card. |
 | **0.7.0** | RetroAchievements: checking achievement support by ROM hash. PDF manuals, walkthrough maps and a soundtrack player in the game card. |
 
 Details in [docs/ROADMAP.md](docs/ROADMAP.md) (in Russian). Plans may change.
+
+## Support the developer
+
+AegisROM is free. If it saves you time, you can buy the developer a coffee. The link will appear here and as a ☕ button in the app header in version 0.6.0.
+<!-- SUPPORT_URL: put the address here and in src/version.ts -->
 
 ## For developers
 

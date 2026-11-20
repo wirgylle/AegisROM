@@ -34,6 +34,7 @@ import {
   AlertTriangle,
   Check,
   Wand2,
+  Coffee,
 } from 'lucide-react';
 import { GameInspectorCoverVideo } from './GameInspectorCoverVideo';
 import { DatFilesPanel } from './DatFilesPanel';
@@ -43,6 +44,7 @@ import {
   DOWNLOAD_SETUP_URL,
   DOWNLOAD_ZIP_URL,
   SETUP_EXE_FILENAME,
+  SUPPORT_URL,
   ZIP_PKG_FILENAME,
 } from '../version';
 import { SmartBuildsAndConverterTab } from './SmartBuildsAndConverterTab';
@@ -1788,6 +1790,20 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
             </a>
           )}
 
+          {SUPPORT_URL && (
+            <a
+              href={SUPPORT_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={`${t('coffee.button')}. ${t('coffee.hint')}`}
+              aria-label={t('coffee.button')}
+              className="h-8 px-2.5 rounded-lg border border-amber-300/70 dark:border-amber-700/60 hover:bg-amber-50 dark:hover:bg-amber-950/40 text-amber-700 dark:text-amber-300 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition"
+            >
+              <Coffee className="w-4 h-4" />
+              <span className="hidden 2xl:inline">{t('coffee.button')}</span>
+            </a>
+          )}
+
           {onOpenSetupWizard && (
             <button
               type="button"
@@ -3474,22 +3490,26 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
               if (file && fileExt(file.name) === 'cue') {
                 file = pickCueDataTrack(src.cueText, src.companionFiles);
               }
+              // В десктопе ром лежит на диске: и файл, и сохранения берём по этому адресу.
+              const romRef = isNativeDesktopHost
+                ? {
+                    romFileName: qtFileName,
+                    relativePath: (qtDisc ? qtDisc.relativePath : selectedGame.relativePath) || '',
+                    consoleCode: selectedGame.consoleShort,
+                    libraryPath: effectiveLibraryPath || '',
+                    sdCardPath: selectedFolderName || '',
+                  }
+                : null;
               setQuickTestReq({
                 title: selectedGame.title,
                 consoleShort: selectedGame.consoleShort,
                 core: qtCore,
                 biosFile,
+                saveTarget: romRef,
                 source: file
                   ? { kind: 'file', file }
-                  : isNativeDesktopHost
-                  ? {
-                      kind: 'native',
-                      romFileName: qtFileName,
-                      relativePath: (qtDisc ? qtDisc.relativePath : selectedGame.relativePath) || '',
-                      consoleCode: selectedGame.consoleShort,
-                      libraryPath: effectiveLibraryPath || '',
-                      sdCardPath: selectedFolderName || '',
-                    }
+                  : romRef
+                  ? { kind: 'native', ...romRef }
                   : { kind: 'pick' },
               });
             };
