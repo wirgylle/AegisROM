@@ -11,8 +11,12 @@ name: Release (Windows 11 x64)
 #     Don't create the release by hand in the Releases UI: immutable releases are enabled,
 #     so assets can't be added after a release is published.
 #
-# RU: Каждый push в dev собирает тестовый exe: Actions → Artifacts, без публикации.
-# EN: Every push to dev builds a test exe: Actions → Artifacts, nothing is published.
+# RU: Каждый push в dev собирает тестовую сборку с версией 0.5.6-dev+<коммит> и публикует её
+#     как Pre-release с тегом dev-build-<номер> (последний релиз «Latest» остаётся стабильным).
+#     Хранятся 3 последние dev-сборки, старые удаляются. Копия есть и в Actions → Artifacts.
+# EN: Every push to dev builds a test build versioned 0.5.6-dev+<commit> and publishes it
+#     as a Pre-release tagged dev-build-<n> ("Latest" stays on the stable release).
+#     The 3 newest dev builds are kept, older ones are deleted. A copy is also in Actions → Artifacts.
 
 on:
   push:
@@ -29,6 +33,10 @@ on:
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-win11-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build-win11:
@@ -69,6 +77,17 @@ jobs:
             echo "Release commit must be on main"; exit 1
           fi
 
+      # RU: Для dev к версии добавляется короткий хеш коммита. EN: dev builds get the short commit hash.
+      - name: Resolve dev build version
+        id: devver
+        if: github.ref == 'refs/heads/dev' && steps.rel.outputs.tag == ''
+        run: |
+          PKG="$(node -p "require('./package.json').version")"
+          VER="${PKG}+${GITHUB_SHA::7}"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "tag=dev-build-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "AEGIS_BUILD_VERSION=$VER" >> "$GITHUB_ENV"
+
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
@@ -92,7 +111,7 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: AegisROM-Win11-x64-${{ github.ref_name }}-${{ github.sha }}
+          name: AegisROM-Win11-x64-${{ steps.devver.outputs.version || github.ref_name }}-${{ github.sha }}
           retention-days: 14
           path: |
             public/downloads/AegisROM-Setup-v*-Win11-x64.exe
@@ -138,3 +157,50 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.rel.outputs.tag }}
         run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+
+      # RU: Dev-сборка: черновик → файлы → публикация как Pre-release (неизменяемые релизы не дают
+      #     добавить файлы после публикации). Не помечается Latest, тег не попадает под v*.
+      # EN: Dev build: draft → assets → publish as Pre-release (immutable releases block adding
+      #     assets after publishing). Never marked Latest; the tag doesn't match v*.
+      - name: Create dev pre-release (draft with assets)
+        if: steps.devver.outputs.tag != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.devver.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: AegisROM ${{ steps.devver.outputs.version }} (dev)
+          draft: true
+          prerelease: true
+          make_latest: false
+          body: |
+            RU: Тестовая сборка из ветки `dev`, коммит ${{ github.sha }}. Не для обычного использования: может работать нестабильно. Версия в окне программы и в установщике: `${{ steps.devver.outputs.version }}`.
+            EN: Test build from the `dev` branch, commit ${{ github.sha }}. Not for everyday use: may be unstable. Version shown in the app window and installer: `${{ steps.devver.outputs.version }}`.
+          fail_on_unmatched_files: true
+          files: |
+            public/downloads/AegisROM-Setup-v*-Win11-x64.exe
+            public/downloads/AegisROM-Portable-Win11-x64.exe
+            public/downloads/aegis-scanner-win11-x64.exe
+            public/downloads/AegisROM-v*-Win11-x64.zip
+            public/downloads/version.json
+
+      - name: Publish dev pre-release
+        if: steps.devver.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.devver.outputs.tag }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false
+
+      # RU: Оставляем 3 последние dev-сборки. EN: Keep the 3 newest dev builds.
+      - name: Delete old dev pre-releases
+        if: steps.devver.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | startswith("dev-build-"))] | sort_by(.createdAt) | reverse | .[3:] | .[].tagName' |
+          while read -r old; do
+            [ -z "$old" ] && continue
+            echo "Deleting $old"
+            gh release delete "$old" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag \
+              || gh release delete "$old" --repo "$GITHUB_REPOSITORY" --yes || true
+          done

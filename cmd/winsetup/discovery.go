@@ -13,7 +13,9 @@ import (
 	"strings"
 )
 
-const AppVersion = "0.5.6-dev"
+// AppVersion: базовая версия из package.json; dev-сборки CI подменяют её через -ldflags -X (0.5.6-dev+коммит).
+// AppVersion: base version from package.json; CI dev builds override it via -ldflags -X (0.5.6-dev+commit).
+var AppVersion = "0.5.6-dev"
 
 type FoundInstallation struct {
 	Dir              string `json:"dir"`
