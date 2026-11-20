@@ -8,6 +8,7 @@ import (
 	"aegisgui/aegiscore"
 	"aegisgui/cmd/winsetup"
 	"archive/zip"
+	"bytes"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -319,7 +321,7 @@ func promptSelectExeOrFile(title, filter string) (string, error) {
 	return strings.TrimSpace(syscall.UTF16ToString(fileBuf)), nil
 }
 
-// Starts the hybrid React 19 + Tailwind CSS v0.5.4 Beta UI server and opens a standalone frameless desktop window.
+// Starts the hybrid React 19 + Tailwind CSS UI server and opens a standalone frameless desktop window.
 func runHybridModernDesktopApp() bool {
 	// Verify embedded index.html exists
 	indexBytes, err := embeddedWebDist.ReadFile("webdist/index.html")
@@ -364,7 +366,7 @@ func runHybridModernDesktopApp() bool {
 		w.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"nativeDesktop": true,
-			"version":       "0.5.4",
+			"version":       AEGIS_APP_VERSION,
 			"architecture":  "Hybrid Go + React 19 + Tailwind CSS v0.5 Beta WebView",
 			"appDir":        appDir,
 		})
@@ -376,6 +378,16 @@ func runHybridModernDesktopApp() bool {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write([]byte(`{"ok":true}`))
+	})
+
+	// Разовый перенос настроек из профиля Edge (см. native_window.go).
+	// One-time settings move out of the Edge profile (see native_window.go).
+	storageMigratedCh := make(chan struct{})
+	var storageMigratedOnce sync.Once
+	mux.HandleFunc("/api/native/storage-migrated", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+		storageMigratedOnce.Do(func() { close(storageMigratedCh) })
 	})
 
 	mux.HandleFunc("/api/native/shutdown", func(w http.ResponseWriter, r *http.Request) {
@@ -581,6 +593,9 @@ func runHybridModernDesktopApp() bool {
 		http.ServeFile(w, r, filePath)
 	})
 
+	// Быстрый тест: файл рома для встроенного WASM-эмулятора (aegisapi/quicktest.go).
+	aegisapi.RegisterQuickTestRoutes(mux, touch)
+
 	// 3b. Native Disc Converter Status & chdman.exe Execution (Multi-track BIN+CUE / ISO <-> CHD)
 	mux.HandleFunc("/api/native/converter/status", func(w http.ResponseWriter, r *http.Request) {
 		atomic.StoreInt64(&lastHeartbeatUnix, time.Now().Unix())
@@ -655,6 +670,14 @@ func runHybridModernDesktopApp() bool {
 		saveFormFile := func(src io.Reader, filename string) (string, error) {
 			safeBase := filepath.Base(strings.ReplaceAll(filename, `\`, `/`))
 			dstPath := filepath.Join(tmpDir, safeBase)
+			// Большие файлы из окна с файлами через Go приходят ссылкой на путь (aegisapi.VFSUploadMarker).
+			// Large files from the Go-files window arrive as a path reference (aegisapi.VFSUploadMarker).
+			head := make([]byte, 8193)
+			n, _ := io.ReadFull(src, head)
+			if handled, err := aegisapi.MaterializeVFSUpload(head[:n], dstPath); handled {
+				return dstPath, err
+			}
+			src = io.MultiReader(bytes.NewReader(head[:n]), src)
 			outF, err := os.Create(dstPath)
 			if err != nil {
 				return "", err
@@ -924,35 +947,7 @@ func runHybridModernDesktopApp() bool {
 		}
 
 		// Try to locate the real ROM file on local filesystem
-		cLower := strings.ToLower(req.ConsoleCode)
-		candidates := []string{}
-		if req.RelativePath != "" {
-			relOS := filepath.FromSlash(req.RelativePath)
-			if filepath.IsAbs(relOS) {
-				candidates = append(candidates, relOS)
-			}
-			if req.LibraryPath != "" {
-				candidates = append(candidates, filepath.Join(filepath.FromSlash(req.LibraryPath), relOS))
-			}
-			if req.SdCardPath != "" {
-				candidates = append(candidates, filepath.Join(filepath.FromSlash(req.SdCardPath), relOS))
-			}
-		}
-		if req.RomFileName != "" {
-			if filepath.IsAbs(req.RomFileName) {
-				candidates = append(candidates, req.RomFileName)
-			}
-			for _, baseDir := range []string{req.LibraryPath, req.SdCardPath} {
-				if baseDir == "" {
-					continue
-				}
-				bOS := filepath.FromSlash(baseDir)
-				candidates = append(candidates,
-					filepath.Join(bOS, req.RomFileName),
-					filepath.Join(bOS, cLower, req.RomFileName),
-				)
-			}
-		}
+		candidates := aegisapi.RomPathCandidates(req.ConsoleCode, req.RomFileName, req.RelativePath, req.LibraryPath, req.SdCardPath)
 		resolvedRom := firstExistingFile(candidates)
 		if resolvedRom == "" {
 			// Prompt user once to pick the ROM file on disk if it wasn't resolved automatically
@@ -1021,8 +1016,13 @@ func runHybridModernDesktopApp() bool {
 
 	// 4–5. Библиотека, сборки, PortMaster и скрапер: общие для всех оболочек (aegisapi).
 	aegisapi.RegisterLibraryRoutes(mux, appDir, touch)
+	aegisapi.RegisterStorageRoutes(mux, appDir, touch)
+	aegisapi.RegisterVFSRoutes(mux, appDir, touch, aegisapi.VFSOptions{
+		PickFolder:   func(title string) (string, error) { return promptSelectFolderDialog(title, "") },
+		PreferNative: useNativeWindow(appDir),
+	})
 
-	// 6. Serve Embedded React 19 + Tailwind CSS v0.5.4 Beta SPA directly from memory with explicit anti-cache MIME headers
+	// 6. Serve Embedded React 19 + Tailwind CSS SPA directly from memory with explicit anti-cache MIME headers
 	mux.Handle("/", aegisapi.SPAHandler(webAssets, indexBytes, touch))
 
 	// Bind local port (try 38470 first, or any free port if busy)
@@ -1033,7 +1033,7 @@ func runHybridModernDesktopApp() bool {
 			return false
 		}
 	}
-	appURL := fmt.Sprintf("http://%s/?v=0.5.4", ln.Addr().String())
+	appURL := fmt.Sprintf("http://%s/?v=%s", ln.Addr().String(), AEGIS_APP_VERSION)
 
 	_, listenPort, err := net.SplitHostPort(ln.Addr().String())
 	if err != nil {
@@ -1062,6 +1062,18 @@ func runHybridModernDesktopApp() bool {
 			}
 		}
 		time.Sleep(25 * time.Millisecond)
+	}
+
+	// Нативное окно Wails, если включено; при ошибке ниже откроется Edge.
+	// Native Wails window when enabled; on error Edge opens below.
+	if useNativeWindow(appDir) {
+		if needsLegacyStorageMigration(appDir) {
+			migrateLegacyBrowserStorage(appDir, appURL, storageMigratedCh)
+		}
+		if err := runNativeWindow(mux, appDir); err == nil {
+			_ = srv.Close()
+			return true
+		}
 	}
 
 	// Open standalone frameless desktop application window (--app=...)

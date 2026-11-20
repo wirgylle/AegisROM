@@ -33,7 +33,7 @@ func RegisterLibraryRoutes(mux *http.ServeMux, appDir string, touch func()) {
 			_, _ = w.Write(raw)
 			return
 		}
-		_, _ = w.Write([]byte(`{"version":"0.5.4","masterLibraryPath":"D:/AegisROM_MasterLibrary","sdCardMountPath":"E:/EASYROMS","bufferZonePath":"D:/AegisROM_MasterLibrary/_Combain_Inbox","preferredRegionOrder":["Russia","USA","Europe","Japan"],"emulatorCustomPaths":{},"starredEmulatorsByConsole":{"nes":"retroarch_fceumm","snes":"retroarch_snes9x","genesis":"retroarch_genesis_plus_gx","gba":"mgba_standalone","psx":"duckstation","ps2":"pcsx2","ps3":"rpcs3","switch":"ryujinx","xbox":"xemu"},"records":[]}`))
+		_, _ = w.Write([]byte(`{"version":"0.5.6-dev","masterLibraryPath":"D:/AegisROM_MasterLibrary","sdCardMountPath":"E:/EASYROMS","bufferZonePath":"D:/AegisROM_MasterLibrary/_Combain_Inbox","preferredRegionOrder":["Russia","USA","Europe","Japan"],"emulatorCustomPaths":{},"starredEmulatorsByConsole":{"nes":"retroarch_fceumm","snes":"retroarch_snes9x","genesis":"retroarch_genesis_plus_gx","gba":"mgba_standalone","psx":"duckstation","ps2":"pcsx2","ps3":"rpcs3","switch":"ryujinx","xbox":"xemu"},"records":[]}`))
 	})
 
 	mux.HandleFunc("/api/db/sync", func(w http.ResponseWriter, r *http.Request) {
@@ -321,25 +321,23 @@ func RegisterLibraryRoutes(mux *http.ServeMux, appDir string, touch func()) {
 			}
 			// match объясняет результат; matchedName — прежняя логика для URL обложек (индекс кэширован).
 			match := aegiscore.MatchLibretroTitle(item.LibretroSystem, item.CleanTitle, item.ComparisonKey, prefRegion)
-			matchedName := aegiscore.FindBestLibretroMatch(item.LibretroSystem, item.CleanTitle, item.ComparisonKey, prefRegion)
-			if matchedName == "" {
-				matchedName = fmt.Sprintf("%s (USA)", item.CleanTitle)
+			// Ссылки на обложки даём только для найденного названия. Раньше при промахе
+			// строилась догадка «<название> (USA).png»: такой файл почти всегда 404, а клиент
+			// затирал этой ссылкой рабочую обложку.
+			// Cover URLs only for a matched title. A miss used to produce a guessed
+			// "<title> (USA).png" that is almost always a 404 and replaced a working cover.
+			boxArtURL, snapURL, marqueeURL := aegiscore.LibretroThumbnailURLs(item.LibretroSystem, match.FileName)
+			matchedName := match.FileName
+			canonicalTitle := item.CleanTitle
+			if matchedName != "" {
+				if t := aegiscore.ExtractCleanTitle(matchedName); t != "" {
+					canonicalTitle = t
+				}
 			}
-			canonicalTitle := aegiscore.ExtractCleanTitle(matchedName)
-			if canonicalTitle == "" {
-				canonicalTitle = item.CleanTitle
-			}
-
-			sysEsc := url.PathEscape(item.LibretroSystem)
-			fileEsc := url.PathEscape(matchedName + ".png")
-
-			boxArtURL := fmt.Sprintf("https://thumbnails.libretro.com/%s/Named_Boxarts/%s", sysEsc, fileEsc)
-			snapURL := fmt.Sprintf("https://thumbnails.libretro.com/%s/Named_Snaps/%s", sysEsc, fileEsc)
-			marqueeURL := fmt.Sprintf("https://thumbnails.libretro.com/%s/Named_Titles/%s", sysEsc, fileEsc)
 
 			videoURL := ""
-			if item.ArchiveVideoID != "" {
-				matchedVid := aegiscore.FindBestArchiveVideoMatch(item.ArchiveVideoID, item.CleanTitle, item.ComparisonKey)
+			if item.ArchiveVideoID != "" && matchedName != "" {
+				matchedVid := aegiscore.FindBestArchiveVideoMatch(item.ArchiveVideoID, canonicalTitle, item.ComparisonKey)
 				if matchedVid != "" {
 					videoURL = fmt.Sprintf("https://archive.org/download/%s/%s", item.ArchiveVideoID, url.PathEscape(matchedVid))
 				}
@@ -419,6 +417,8 @@ func MimeTypeForExt(ext string) string {
 		return "image/svg+xml"
 	case ".ico":
 		return "image/x-icon"
+	case ".wasm":
+		return "application/wasm"
 	case ".woff2":
 		return "font/woff2"
 	case ".woff":

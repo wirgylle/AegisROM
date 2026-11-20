@@ -1,5 +1,6 @@
 import { UnifiedGameRow } from '../components/FigmaConceptStudio';
 import { tStatic, tfStatic } from '../i18n/translations';
+import { detectRomMod } from './romHacks';
 
 export type AgeRatingTag = '6+' | '10+' | '14+' | '18+';
 export type DifficultyTag = 'easy_relax' | 'medium' | 'hardcore';
@@ -17,7 +18,7 @@ export interface EnrichedBuildGame extends UnifiedGameRow {
 
 export interface ThematicBuildPreset {
   id: string;
-  category: 'age' | 'mood_audience' | 'genre' | 'bitness';
+  category: 'age' | 'mood_audience' | 'genre' | 'bitness' | 'status';
   categoryLabel: string;
   badgeText: string;
   badgeColor: string;
@@ -832,6 +833,12 @@ export function enrichGameForBuild(g: UnifiedGameRow): EnrichedBuildGame {
   const cached = enrichedGameWeakCache.get(g);
   if (cached) return cached;
 
+  // Статус хака: у строк из старых баз его нет — определяем по имени файла.
+  // Hack status: rows from older databases lack it, so derive it from the file name.
+  const modInfo = g.modKind ? null : detectRomMod(g.oldFile || '', g.relativePath || '');
+  const modKind = g.modKind || modInfo?.kind;
+  const modLang = g.modLang || modInfo?.language;
+
   const title = g.title || '';
   const genre = g.genre || '';
   const lowerFile = (g.oldFile || g.cleanFile || '').toLowerCase();
@@ -913,6 +920,8 @@ export function enrichGameForBuild(g: UnifiedGameRow): EnrichedBuildGame {
 
   const enriched: EnrichedBuildGame = {
     ...g,
+    modKind,
+    modLang,
     ageRating,
     difficulty,
     difficultyLabel,
@@ -1094,6 +1103,41 @@ export const THEMATIC_BUILD_PRESETS: ThematicBuildPreset[] = [
     subtitle: 'Tekken 3, Crash 3, Spyro, Gran Turismo 2, Resident Evil 2, Silent Hill, Castlevania SotN, Metroid Fusion',
     recommendedTargetId: 'r36s_arkos',
     filterFn: (g) => g.bitnessGroup === '32/64-bit',
+  },
+
+  // --- ПО СТАТУСУ (ПЕРЕВОДЫ, ХАКИ, ОРИГИНАЛЫ) / BY STATUS (TRANSLATIONS, HACKS, ORIGINALS) ---
+  {
+    id: 'preset_mod_rus',
+    category: 'status',
+    categoryLabel: 'По статусу',
+    badgeText: 'Русификаторы',
+    badgeColor: 'bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300',
+    title: 'Только русификаторы',
+    subtitle: 'Фанатские переводы на русский: теги [T+Rus], (Rus Translation) или патч из patch/',
+    recommendedTargetId: 'r36s_arkos',
+    filterFn: (g) => g.modKind === 'translation' && (g.modLang || '').toLowerCase() === 'rus',
+  },
+  {
+    id: 'preset_mod_hacks',
+    category: 'status',
+    categoryLabel: 'По статусу',
+    badgeText: 'Ромхаки',
+    badgeColor: 'bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-950 dark:text-fuchsia-300',
+    title: 'Только ромхаки',
+    subtitle: 'Хаки с новыми уровнями, графикой и механикой: теги [h], (Hack)',
+    recommendedTargetId: 'r36s_arkos',
+    filterFn: (g) => g.modKind === 'hack',
+  },
+  {
+    id: 'preset_mod_originals',
+    category: 'status',
+    categoryLabel: 'По статусу',
+    badgeText: 'Без хаков',
+    badgeColor: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
+    title: 'Только оригиналы, без хаков и патчей',
+    subtitle: 'Чистые дампы: без переводов, хаков, трейнеров и фиксов',
+    recommendedTargetId: 'r36s_arkos',
+    filterFn: (g) => !g.modKind || g.modKind === 'original',
   },
 ];
 

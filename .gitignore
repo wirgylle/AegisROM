@@ -18,6 +18,10 @@ public/downloads/*
 *.exe
 *.zip
 
+# Quick test: EmulatorJS + WASM cores, downloaded by scripts/fetch-emulatorjs.mjs
+public/emulatorjs/
+.cache/
+
 # Local runtime data of `npm run dev:api` (library DB, builds, caches, API token)
 .aegis-data/
 

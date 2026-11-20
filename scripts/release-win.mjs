@@ -13,15 +13,21 @@ import { execSync, execFileSync } from 'child_process';
 
 const ROOT = process.cwd();
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf-8'));
-const VERSION = String(pkg.version || '0.5.4').trim();
+const BASE_VERSION = String(pkg.version || '0.0.0').trim();
+// RU: CI для dev передаёт AEGIS_BUILD_VERSION вида 0.5.6-dev+abc1234 — она видна в окне, установщике и version.json.
+// EN: CI on dev passes AEGIS_BUILD_VERSION like 0.5.6-dev+abc1234; it shows in the window, installer and version.json.
+const VERSION = String(process.env.AEGIS_BUILD_VERSION || BASE_VERSION).trim();
+// '+' в именах файлов на GitHub неудобен / '+' is awkward in GitHub asset names.
+const FILE_VERSION = VERSION.replace(/\+/g, '.');
+const GO_VERSION_FLAG = `-X aegisgui/cmd/winsetup.AppVersion=${VERSION}`;
 
 const DOWNLOADS_DIR = path.join(ROOT, 'public', 'downloads');
 const DIST_DIR = path.join(ROOT, 'dist');
 const WEBDIST_DIR = path.join(ROOT, 'cmd', 'aegis-gui', 'webdist');
 const SETUP_PAYLOAD_DIR = path.join(ROOT, 'cmd', 'aegis-setup', 'payload');
 
-const SETUP_NAME = `AegisROM-Setup-v${VERSION}-Win11-x64.exe`;
-const ZIP_NAME = `AegisROM-v${VERSION}-Win11-x64.zip`;
+const SETUP_NAME = `AegisROM-Setup-v${FILE_VERSION}-Win11-x64.exe`;
+const ZIP_NAME = `AegisROM-v${FILE_VERSION}-Win11-x64.zip`;
 const PORTABLE_NAME = 'AegisROM-Portable-Win11-x64.exe';
 const CLI_NAME = 'aegis-scanner-win11-x64.exe';
 
@@ -62,8 +68,9 @@ function main() {
   const goBin = findGoBinary();
   console.log(`Using Go binary: ${goBin}`);
 
-  // 1. Build fresh Vite frontend
-  run('npx vite build');
+  // 1. Build fresh Vite frontend (EmulatorJS cores for Quick test go into public/emulatorjs first)
+  run('node scripts/fetch-emulatorjs.mjs');
+  run('npx vite build', { VITE_APP_VERSION: VERSION });
   if (!fs.existsSync(path.join(DIST_DIR, 'index.html'))) {
     throw new Error('Vite build did not produce dist/index.html');
   }
@@ -125,7 +132,7 @@ function main() {
   const exeOut = path.join(DOWNLOADS_DIR, 'AegisROM.exe');
   const portableOut = path.join(DOWNLOADS_DIR, PORTABLE_NAME);
   run(
-    `"${goBin}" build -trimpath -ldflags="-H=windowsgui -s -w" -o "${exeOut}" ./cmd/aegis-gui`,
+    `"${goBin}" build -trimpath -ldflags="-H=windowsgui -s -w ${GO_VERSION_FLAG}" -o "${exeOut}" ./cmd/aegis-gui`,
     winEnv
   );
   fs.copyFileSync(exeOut, portableOut);
@@ -142,7 +149,7 @@ function main() {
   // 8. Compile standalone Setup Wizard EXE
   const setupOut = path.join(DOWNLOADS_DIR, SETUP_NAME);
   run(
-    `"${goBin}" build -trimpath -ldflags="-H=windowsgui -s -w" -o "${setupOut}" ./cmd/aegis-setup`,
+    `"${goBin}" build -trimpath -ldflags="-H=windowsgui -s -w ${GO_VERSION_FLAG}" -o "${setupOut}" ./cmd/aegis-setup`,
     winEnv
   );
 

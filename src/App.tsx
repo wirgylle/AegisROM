@@ -37,7 +37,29 @@ import {
   Table as TableIcon,
 } from 'lucide-react';
 import { computeCRC32Hex } from './utils/crc32';
-import { lookupTitlesByHash, type DatMatch } from './utils/datHashLookup';
+import {
+  fetchDatStatus,
+  fetchLibretroDats,
+  lookupTitlesByHash,
+  systemsWithoutDat,
+  type DatMatch,
+} from './utils/datHashLookup';
+import {
+  isReadableTitle,
+  isScrapeMatched,
+  mergeScrapedUrls,
+  slotsToDownload,
+  type MediaSlot,
+} from './utils/scrapePlan';
+import {
+  findGamelistEntry,
+  indexGamelistEntries,
+  normalizeGamelistPath,
+  parseGamelistEntries,
+  relativeFileExists,
+  unescapeXml,
+  type GamelistEntry,
+} from './utils/gamelistXml';
 import {
   ConsoleSteamTabs,
   type PersistentDbState,
@@ -68,7 +90,20 @@ import {
   normalizeDiskOutputExt,
   normalizeRegionTag,
   saveFilenameConstructorConfig,
+  FILENAME_CONSTRUCTOR_PRESETS,
 } from './utils/filenameConstructor';
+import {
+  SetupWizard,
+  SetupRunPanel,
+  SETUP_DONE_STORAGE_KEY,
+  INSTALL_MODE_STORAGE_KEY,
+  type SetupFolderKind,
+  type SetupWizardResult,
+  type SetupPickResult,
+  type SetupRunState,
+  type SetupStage,
+  type TourTarget,
+} from './components/SetupWizard';
 import {
   buildDiscTargetFilename,
   buildMultiDiscFolderName,
@@ -89,8 +124,23 @@ import {
   auditRomMediaOnDisk,
   isFetchedMediaPayloadValid,
   type FolderMediaSignatureStats,
+  type RomMediaAuditResult,
 } from './utils/mediaPlaceholderDetector';
 import { useI18n, tStatic, tfStatic, getActiveLocale } from './i18n/translations';
+import {
+  HACKROMS_DIR,
+  describeRomMod,
+  detectRomMod,
+  isInPatchFolder,
+  isModded,
+  linkPatchesToRom,
+  modTag,
+  refineModWithDat,
+  type PatchFileRef,
+  type RomModInfo,
+} from './utils/romHacks';
+import { isPatchFileName, readPatchInfo } from './utils/romPatcher';
+import { HackMoveModal, type HackMoveCandidate } from './components/HackMoveModal';
 
 interface ConsoleMeta {
   code: string;
@@ -566,6 +616,9 @@ interface ScannedRomFile {
   titleSource?: TitleSource;
   // Почему настоящее название не найдено (пусто, если найдено).
   titleNote?: string;
+  // Хак, перевод или пропатченный ром (см. utils/romHacks.ts).
+  // Hack, translation or patched ROM (see utils/romHacks.ts).
+  mod?: RomModInfo;
 }
 
 interface PhantomFolderCandidate {
@@ -593,8 +646,10 @@ const REGION_REGEX =
 const RUS_TAG_REGEX =
   /(\[rus\]|\(rus\)|\(ru\)|\[r-rus\]|\[russian\]|\(russian\)|_rus\b|\.rus\b|\brus\b|рус)/i;
 const REVISION_REGEX = /\((Rev\s*[0-9A-Z]+|v[0-9]+\.[0-9]+|Alt\s*[0-9]*)\)/i;
+// [h] (хак) и [t] (трейнер) — не мусор: их распознаёт utils/romHacks.ts.
+// [h] (hack) and [t] (trainer) are not junk: utils/romHacks.ts handles them.
 const JUNK_REGEX =
-  /\[(b[0-9]*|h[0-9]*|t[0-9]*|p[0-9]*|o[0-9]*)\]|\((Pirate|Bootleg|Corrupt|Bad)\)/i;
+  /\[(b[0-9]*|p[0-9]*|o[0-9]*)\]|\((Pirate|Bootleg|Corrupt|Bad)\)/i;
 const LEADING_NUM_REGEX = /^[\s\[\(#]*(\d{1,10})[\s\])\._-]+/;
 const PURE_NUMBERED_ROM_REGEX =
   /^(?:rom[_\-\s]*|game[_\-\s]*|track[_\-\s]*|file[_\-\s]*|psx[_\-\s]*|ps1[_\-\s]*|no[_\-\s]*|#)?0*(\d{1,10})(?:[_\-\s]*(?:disc|cd|d|part|track)?[_\-\s]*\d*)?$/i;
@@ -1415,6 +1470,9 @@ function scoreRomCandidate(r: ScannedRomFile, priority: string[]): number {
   if (r.revision) score += 15;
   if (r.isFromTopFolder) score += 10;
   if (r.extension !== '.zip') score += 5;
+  // Из двух одинаковых копий хака оставляем ту, что уже в hackroms/.
+  // Of two identical copies of a hack, keep the one already in hackroms/.
+  if (r.mod?.inHackFolder) score += 20;
   return score;
 }
 
@@ -1455,9 +1513,20 @@ function deduplicateAcrossSubfolders(
     }
   }
 
+  // Хаки, переводы и пропатченные ромы — не дубли оригинала: в сравнение по названию не идут.
+  // Точные копии (тот же CRC) отсеяны выше. Тем, что лежат не в hackroms/, предлагаем перенос.
+  // Hacks, translations and patched ROMs are not duplicates of the original: they skip title matching.
+  // Exact copies (same CRC) were removed above. Those outside hackroms/ get a move suggestion.
+  for (const item of cloned) {
+    if (item.status !== 'verified' || !isModded(item.mod)) continue;
+    item.reason = item.mod!.inHackFolder
+      ? tStatic('app.scan.hackKeptReason')
+      : tfStatic('app.scan.hackMoveReason', { dir: HACKROMS_DIR });
+  }
+
   const groups = new Map<string, ScannedRomFile[]>();
   for (const item of cloned) {
-    if (item.status !== 'verified') continue;
+    if (item.status !== 'verified' || isModded(item.mod)) continue;
     const discSuffix = item.discNumber ? `::disc_${item.discNumber}` : '';
     const gKey = `${item.consoleCode}::title::${item.comparisonKey}${discSuffix}`;
     const list = groups.get(gKey) || [];
@@ -1499,7 +1568,7 @@ function deduplicateAcrossSubfolders(
 
   const winnersByConsole = new Map<string, ScannedRomFile[]>();
   for (const item of cloned) {
-    if (item.status !== 'verified') continue;
+    if (item.status !== 'verified' || isModded(item.mod)) continue;
     const arr = winnersByConsole.get(item.consoleCode) || [];
     arr.push(item);
     winnersByConsole.set(item.consoleCode, arr);
@@ -1629,6 +1698,7 @@ function collapseMultiDiscScannedRoms(
         bitness: meta.generationShort,
         consoleCode: first.consoleCode,
         revision: first.revision,
+        modTag: modTag(first.mod),
       },
       cfg
     );
@@ -1729,6 +1799,9 @@ export function App() {
   const [combineAddToLibrary, setCombineAddToLibrary] = useState<boolean>(true);
 
   const stopRequestedRef = useRef<boolean>(false);
+  // Системы, для которых в libretro-database нет DAT (не спрашиваем повторно в этой сессии).
+  // Systems without a DAT in libretro-database (not asked again this session).
+  const libretroDatUnsupportedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     romsRef.current = roms;
@@ -1826,9 +1899,18 @@ export function App() {
     records: [],
   });
 
+  // Always-current DB state for long async chains (setup wizard: scan -> transfer -> save),
+  // where closures would otherwise see the state from the render they started in.
+  const dbStateRef = useRef<PersistentDbState>(dbState);
+  useEffect(() => {
+    dbStateRef.current = dbState;
+  }, [dbState]);
+
   const [downloadStatus, setDownloadStatus] = useState<string>('');
 
   const [undoStack, setUndoStack] = useState<UndoAction[]>([]);
+  // Хаки, которые 1G1R предлагает перенести в hackroms/. / Hacks that 1G1R offers to move into hackroms/.
+  const [hackMoveCandidates, setHackMoveCandidates] = useState<HackMoveCandidate[]>([]);
   const [logs, setLogs] = useState<string[]>(() => [
     tStatic('app.init.log1'),
     tStatic('app.init.log2'),
@@ -2178,6 +2260,7 @@ export function App() {
   }, []);
 
   const handleUpdateDbState = async (next: PersistentDbState) => {
+    dbStateRef.current = next;
     setDbState(next);
     if ((next.records?.length || 0) <= 400) {
       try {
@@ -2242,6 +2325,7 @@ export function App() {
     folderTitle: string,
     replaceAll = false
   ) => {
+    const dbState = dbStateRef.current;
     const winners = deduplicated.filter((r) => r.status === 'verified');
     if (winners.length === 0 && !replaceAll) return;
 
@@ -2599,6 +2683,38 @@ export function App() {
     return entries.filter((e) => !claimedTrackRelPaths.has(e.relPath));
   };
 
+  // Патчи из patch/: BPS и UPS хранят CRC32 исходника и результата, по ним связываем ромы и патчи.
+  // Patches from patch/: BPS and UPS store source and target CRC32, used to link ROMs and patches.
+  const linkScannedPatches = async (
+    inspected: ScannedRomFile[],
+    patchFiles: Array<{ file: File; relPath: string }>
+  ) => {
+    if (patchFiles.length === 0) return;
+    const patchRefs: PatchFileRef[] = [];
+    for (const p of patchFiles) {
+      try {
+        if (p.file.size > 64 * 1024 * 1024) continue;
+        const info = readPatchInfo(new Uint8Array(await p.file.arrayBuffer()));
+        if (!info) continue;
+        patchRefs.push({
+          name: p.file.name,
+          relativePath: p.relPath,
+          sourceCrc32: info.sourceCrc32,
+          targetCrc32: info.targetCrc32,
+        });
+      } catch {}
+    }
+    for (let k = 0; k < inspected.length; k++) {
+      const it = inspected[k];
+      if (!it.mod) continue;
+      inspected[k] = {
+        ...it,
+        mod: linkPatchesToRom(it.mod, [it.crc32, it.headerlessCrc32], patchRefs),
+      };
+    }
+    addLog(tf('app.scan.patchesFound', { count: patchRefs.length }));
+  };
+
   const inspectFileObject = async (
     file: File,
     relativePath: string,
@@ -2726,6 +2842,7 @@ export function App() {
       (cleanTitle.match(/[a-zA-Zа-яА-ЯёЁ]/g) || []).length >= 2;
 
     const { releaseYear } = inferGenreAndYear(cleanTitle, consoleCode);
+    const mod = detectRomMod(file.name, relativePath);
     let canonicalName = file.name;
     if (hasValidAlphabeticTitle) {
       canonicalName = formatRomFilenameByConfig(
@@ -2738,6 +2855,7 @@ export function App() {
           consoleCode,
           extension: canonExt,
           revision,
+          modTag: modTag(mod),
         },
         filenameConfigRef.current
       );
@@ -2816,6 +2934,7 @@ export function App() {
       parentHandle,
       titleSource,
       titleNote,
+      mod,
     };
   };
 
@@ -3483,6 +3602,8 @@ export function App() {
     }> = [];
     const localImageFilesMap = new Map<string, File>();
     const localVideoFilesMap = new Map<string, File>();
+    // Файлы патчей из папок patch/. / Patch files from patch/ folders.
+    const discoveredPatches: Array<{ file: File; relPath: string }> = [];
 
     const rootFolderTitle = rootHandle.name.toLowerCase();
     const prefixStart = CONSOLE_CATALOG[rootFolderTitle] ? rootHandle.name : '';
@@ -3546,7 +3667,11 @@ export function App() {
           const ext = dot !== -1 ? entry.name.slice(dot).toLowerCase() : '';
           const relCandidate = prefix ? `${prefix}/${entry.name}` : entry.name;
           const isPortScript = ext === '.sh' && relCandidate.toLowerCase().includes('port');
-          if (EXT_TO_DEFAULT_CONSOLE[ext] || isPortScript) {
+          if (isPatchFileName(entry.name) && isInPatchFolder(relCandidate)) {
+            try {
+              discoveredPatches.push({ file: await entry.getFile(), relPath: relCandidate });
+            } catch {}
+          } else if (EXT_TO_DEFAULT_CONSOLE[ext] || isPortScript) {
             const file = await entry.getFile();
             discovered.push({
               file,
@@ -3619,6 +3744,8 @@ export function App() {
           setProgressPct(Math.round(((i + 1) / pairedDiscovered.length) * 100));
         }
       }
+
+      await linkScannedPatches(inspected, discoveredPatches);
 
       const deduplicatedIncoming = deduplicateAcrossSubfolders(
         inspected,
@@ -3757,12 +3884,17 @@ export function App() {
     }
 
     const rawDiscovered: DiscoveredScanEntry[] = [];
+    const fallbackPatches: Array<{ file: File; relPath: string }> = [];
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
       const dot = f.name.lastIndexOf('.');
       const ext = dot !== -1 ? f.name.slice(dot).toLowerCase() : '';
       const rel = (f as any).webkitRelativePath || f.name;
       const isPortScript = ext === '.sh' && rel.toLowerCase().includes('port');
+      if (isPatchFileName(f.name) && isInPatchFolder(rel)) {
+        fallbackPatches.push({ file: f, relPath: rel });
+        continue;
+      }
       if (!EXT_TO_DEFAULT_CONSOLE[ext] && !isPortScript) continue;
       const lowerRel = rel.toLowerCase();
       if (
@@ -3813,6 +3945,8 @@ export function App() {
         setProgressPct(Math.round(((i + 1) / Math.max(1, pairedDiscovered.length)) * 100));
       }
     }
+
+    await linkScannedPatches(inspected, fallbackPatches);
 
     const deduplicatedIncoming = deduplicateAcrossSubfolders(
       inspected,
@@ -3964,6 +4098,7 @@ export function App() {
             region: r.region,
             isRussian: r.isRussian,
             year: metaForRom.releaseYear,
+            modTag: modTag(r.mod),
           },
           filenameConfig
         );
@@ -4948,6 +5083,7 @@ export function App() {
         consoleCode: r.consoleCode,
         extension: outExt,
         revision: r.revision,
+        modTag: modTag(r.mod),
       },
       cfg
     );
@@ -4969,6 +5105,7 @@ export function App() {
           bitness: meta.generationShort,
           consoleCode: r.consoleCode,
           revision: r.revision,
+          modTag: modTag(r.mod),
         },
         cfg
       );
@@ -5627,8 +5764,16 @@ export function App() {
           const i = verifiedIndices[v].idx;
           const r = updatedRoms[i];
 
-          const { dirHandle: targetDirHandle, subPath: targetSubPath } =
-            await getCachedConsoleDir(r);
+          const consoleTarget = await getCachedConsoleDir(r);
+          let targetDirHandle = consoleTarget.dirHandle;
+          let targetSubPath = consoleTarget.subPath;
+          // Хаки и переводы раскладываются в <консоль>/hackroms/. / Hacks and translations go to <console>/hackroms/.
+          const toHackDir = isModded(r.mod) && !r.isMultiDisc;
+          if (toHackDir) {
+            targetDirHandle = await targetDirHandle.getDirectoryHandle(HACKROMS_DIR, { create: true });
+            targetSubPath = `${targetSubPath}/${HACKROMS_DIR}`;
+          }
+          const movedMod = toHackDir && r.mod ? { ...r.mod, inHackFolder: true } : r.mod;
 
           // Multi-disc game -> place all discs inside dedicated subfolder + create .m3u playlist
           if (r.isMultiDisc && Array.isArray(r.discs) && r.discs.length > 1) {
@@ -5683,6 +5828,7 @@ export function App() {
               relativePath: `${targetSubPath}/${safeNewName}`,
               parentHandle: targetDirHandle,
               targetDirHandle,
+              mod: movedMod,
             };
             continue;
           }
@@ -5710,6 +5856,7 @@ export function App() {
             relativePath: `${targetSubPath}/${safeNewName}`,
             parentHandle: targetDirHandle,
             targetDirHandle,
+            mod: movedMod,
           };
         }
 
@@ -5903,6 +6050,37 @@ export function App() {
       });
       setCurrentActionText(doneMsg);
       addLog(doneMsg);
+
+      // Хаки и переводы не удаляем как дубли, а предлагаем перенести в hackroms/.
+      // Hacks and translations are not removed as duplicates; we offer to move them into hackroms/.
+      if (!stopRequestedRef.current) {
+        const hackCandidates = remaining.filter(
+          (r) =>
+            r.status === 'verified' &&
+            isModded(r.mod) &&
+            !r.mod!.inHackFolder &&
+            !r.isMultiDisc &&
+            r.parentHandle &&
+            r.fileObj
+        );
+        if (hackCandidates.length > 0) {
+          addLog(tf('app.g1r.hacksFound', { count: hackCandidates.length, dir: HACKROMS_DIR }));
+          setHackMoveCandidates(
+            hackCandidates.map((r) => {
+              const dir = r.relativePath.includes('/')
+                ? r.relativePath.slice(0, r.relativePath.lastIndexOf('/'))
+                : '';
+              return {
+                id: r.id,
+                fileName: r.fileName,
+                relativePath: r.relativePath,
+                targetPath: `${dir ? `${dir}/` : ''}${HACKROMS_DIR}/`,
+                description: describeRomMod(r.mod, tf),
+              };
+            })
+          );
+        }
+      }
     } catch (err) {
       addLog(tf('app.g1r.errLog', { err: String(err) }));
     } finally {
@@ -5911,9 +6089,154 @@ export function App() {
     }
   };
 
+  // Перенос выбранных хаков в hackroms/ рядом с ромом (в папке консоли).
+  // Moves the chosen hacks into hackroms/ next to the ROM (inside the console folder).
+  const handleMoveHacksToHackroms = async (ids: string[]) => {
+    if (isAnyProcessRunning || ids.length === 0) return;
+    const idSet = new Set(ids);
+    setIsOrganizing(true);
+    setProgressPct(0);
+    let moved = 0;
+    let failed = 0;
+    const newUndoBatch: UndoAction[] = [];
+    const touchedDirs = new Set<any>();
+    const updated = [...romsRef.current];
+    try {
+      const targets = updated
+        .map((r, idx) => ({ r, idx }))
+        .filter((x) => idSet.has(x.r.id) && x.r.parentHandle && x.r.fileObj);
+      for (let k = 0; k < targets.length; k++) {
+        if (stopRequestedRef.current) break;
+        const { r, idx } = targets[k];
+        setCurrentActionText(
+          tf('app.g1r.progress', { i: k + 1, total: targets.length, file: r.fileName })
+        );
+        setProgressPct(Math.round(((k + 1) / Math.max(1, targets.length)) * 95));
+        try {
+          const hackDir = await r.parentHandle.getDirectoryHandle(HACKROMS_DIR, { create: true });
+          await writeRomWithCompanionsToDir(r, hackDir, r.fileName, true);
+          const stem = r.fileName.replace(/\.[^/.]+$/, '');
+          await renameMediaAndSavesForRom(r.parentHandle, hackDir, stem, stem);
+          newUndoBatch.push({
+            fromDirHandle: hackDir,
+            fromName: r.fileName,
+            toDirHandle: r.parentHandle,
+            toName: r.fileName,
+            fileData: new ArrayBuffer(0),
+          });
+          touchedDirs.add(r.parentHandle);
+          const dir = r.relativePath.includes('/')
+            ? r.relativePath.slice(0, r.relativePath.lastIndexOf('/'))
+            : '';
+          const sub = `${dir ? `${dir}/` : ''}${HACKROMS_DIR}`;
+          let fileObj = r.fileObj;
+          try {
+            fileObj = await (await hackDir.getFileHandle(r.fileName)).getFile();
+          } catch {}
+          updated[idx] = {
+            ...r,
+            parentHandle: hackDir,
+            targetDirHandle: hackDir,
+            fileObj,
+            sourceSubfolder: sub,
+            relativePath: `${sub}/${r.fileName}`,
+            reason: t('app.scan.hackKeptReason'),
+            mod: r.mod ? { ...r.mod, inHackFolder: true } : r.mod,
+          };
+          moved++;
+          addLog(tf('app.sort.movedDupLog', { path: r.relativePath, target: sub }));
+        } catch (err) {
+          failed++;
+          addLog(tf('app.g1r.errItemLog', { path: r.relativePath || r.fileName, err: String(err) }));
+        }
+      }
+
+      // gamelist.xml в исходных папках больше не должен ссылаться на перенесённые файлы.
+      // gamelist.xml in the source folders must no longer list the moved files.
+      for (const h of touchedDirs) {
+        const left = updated.filter(
+          (x) => x.status === 'verified' && (x.targetDirHandle || x.parentHandle) === h
+        );
+        await writeGamelistXmlToHandle(h, left);
+      }
+
+      romsRef.current = updated;
+      setRoms(updated);
+      setLastScanMode('replace');
+      setScanRevision((n) => n + 1);
+      if (newUndoBatch.length > 0) setUndoStack(newUndoBatch);
+      if (rootDirHandle) syncScannedRomsIntoDb(updated, rootDirHandle.name, true);
+      const msg = tf('app.g1r.hacksMoved', { moved, failed, dir: HACKROMS_DIR });
+      setCurrentActionText(msg);
+      addLog(msg);
+    } finally {
+      setHackMoveCandidates([]);
+      setIsOrganizing(false);
+      setProgressPct(100);
+    }
+  };
+
   // =========================================================================
   // BUFFER AUTO-PROCESSOR (АВТО-РАЗБОР БУФЕРНОЙ ПАПКИ + КОНСТРУКТОР ИМЁН)
   // =========================================================================
+  // Inspect + 1G1R-dedupe raw buffer entries (shared by the Combain tool and the setup wizard).
+  const inspectBufferEntries = async (entries: DiscoveredScanEntry[]): Promise<ScannedRomFile[]> => {
+    const paired = await pairDiscCueAndTrackFiles(entries);
+    const inspected: ScannedRomFile[] = [];
+    for (const e of paired) {
+      if (stopRequestedRef.current) break;
+      const item = await inspectFileObject(
+        e.file,
+        e.relPath,
+        e.parentHandle,
+        e.gamelistMap,
+        e.companionFiles,
+        e.cueText,
+        e.pairedFormatExt
+      );
+      if (item) inspected.push(item);
+    }
+    return collapseMultiDiscScannedRoms(
+      deduplicateAcrossSubfolders(inspected, getPriorityArray(priorityPreset)),
+      filenameConfigRef.current
+    );
+  };
+
+  // Walk a buffer folder handle and collect ROM entries (skips quarantine and media folders).
+  const walkBufferDirHandle = async (handle: any): Promise<DiscoveredScanEntry[]> => {
+    const entries: DiscoveredScanEntry[] = [];
+    const walkBuf = async (dh: any, prefix: string) => {
+      let glMap: Map<string, string> | undefined;
+      try {
+        const glH = await dh.getFileHandle('gamelist.xml');
+        glMap = parseGamelistXmlString(await (await glH.getFile()).text());
+      } catch {}
+      for await (const entry of dh.values()) {
+        if (stopRequestedRef.current) return;
+        if (entry.name.startsWith('.')) continue;
+        if (entry.kind === 'directory') {
+          const low = entry.name.toLowerCase();
+          if (['_duplicates_1g1r', '_baddumps_junk', 'images', 'videos', 'marquees'].includes(low)) continue;
+          await walkBuf(entry, prefix ? `${prefix}/${entry.name}` : entry.name);
+        } else if (entry.kind === 'file') {
+          const dot = entry.name.lastIndexOf('.');
+          const ext = dot !== -1 ? entry.name.slice(dot).toLowerCase() : '';
+          if (EXT_TO_DEFAULT_CONSOLE[ext]) {
+            const file = await entry.getFile();
+            entries.push({
+              file,
+              relPath: prefix ? `${prefix}/${entry.name}` : entry.name,
+              parentHandle: dh,
+              gamelistMap: glMap,
+            });
+          }
+        }
+      }
+    };
+    await walkBuf(handle, '');
+    return entries;
+  };
+
   const handleSelectBufferFolder = async () => {
     if (isAnyProcessRunning) return;
     const win = window as any;
@@ -5923,24 +6246,8 @@ export function App() {
       folderTitle: string,
       dirHandle: any
     ) => {
-      const paired = await pairDiscCueAndTrackFiles(entries);
-      const inspected: ScannedRomFile[] = [];
-      for (const e of paired) {
-        const item = await inspectFileObject(
-          e.file,
-          e.relPath,
-          e.parentHandle,
-          e.gamelistMap,
-          e.companionFiles,
-          e.cueText,
-          e.pairedFormatExt
-        );
-        if (item) inspected.push(item);
-      }
-      const deduped = collapseMultiDiscScannedRoms(
-        deduplicateAcrossSubfolders(inspected, getPriorityArray(priorityPreset)),
-        filenameConfigRef.current
-      );
+      if (!dirHandle) stopRequestedRef.current = false;
+      const deduped = await inspectBufferEntries(entries);
       setBufferDirHandle(dirHandle);
       setBufferFolderName(folderTitle);
       setBufferScannedRoms(deduped);
@@ -5958,35 +6265,8 @@ export function App() {
         const handle = await win.showDirectoryPicker({ mode: 'readwrite' });
         await saveDirectoryHandle('buffer_source', handle, handle.name);
         setPendingRestoreHandles((prev) => prev.filter((h) => h.key !== 'buffer_source'));
-        const entries: DiscoveredScanEntry[] = [];
-        const walkBuf = async (dh: any, prefix: string) => {
-          let glMap: Map<string, string> | undefined;
-          try {
-            const glH = await dh.getFileHandle('gamelist.xml');
-            glMap = parseGamelistXmlString(await (await glH.getFile()).text());
-          } catch {}
-          for await (const entry of dh.values()) {
-            if (entry.name.startsWith('.')) continue;
-            if (entry.kind === 'directory') {
-              const low = entry.name.toLowerCase();
-              if (['_duplicates_1g1r', '_baddumps_junk', 'images', 'videos', 'marquees'].includes(low)) continue;
-              await walkBuf(entry, prefix ? `${prefix}/${entry.name}` : entry.name);
-            } else if (entry.kind === 'file') {
-              const dot = entry.name.lastIndexOf('.');
-              const ext = dot !== -1 ? entry.name.slice(dot).toLowerCase() : '';
-              if (EXT_TO_DEFAULT_CONSOLE[ext]) {
-                const file = await entry.getFile();
-                entries.push({
-                  file,
-                  relPath: prefix ? `${prefix}/${entry.name}` : entry.name,
-                  parentHandle: dh,
-                  gamelistMap: glMap,
-                });
-              }
-            }
-          }
-        };
-        await walkBuf(handle, '');
+        stopRequestedRef.current = false;
+        const entries = await walkBufferDirHandle(handle);
         await processDiscoveredBuffer(entries, handle.name, handle);
         return;
       } catch (err: any) {
@@ -6187,17 +6467,45 @@ export function App() {
     addLog(tf('app.buf.cmdDownloadedLog', { count: sourceList.length }));
   };
 
-  const handleRunBufferAutoProcess = async () => {
-    if (isAnyProcessRunning) return;
-    const sourceList = bufferScannedRoms.length > 0 ? bufferScannedRoms : romsRef.current;
+  /**
+   * Combain: copy/move buffer ROMs into the library, sorted by console and renamed.
+   * `override` lets the setup wizard run it in one async chain with explicit inputs
+   * instead of state that has not re-rendered yet.
+   */
+  const combineMoveModeState = combineMoveMode;
+  const combineDedup1G1RState = combineDedup1G1R;
+  const combineSortFoldersState = combineSortFolders;
+  const combineAddToLibraryState = combineAddToLibrary;
+  const filenameConfigState = filenameConfig;
+  const handleRunBufferAutoProcess = async (override?: {
+    sourceList: ScannedRomFile[];
+    targetHandle: any;
+    moveMode: 'move' | 'copy';
+    filenameConfig?: FilenameConstructorConfig;
+    sourceName?: string;
+  }): Promise<{ moved: number; dups: number } | void> => {
+    if (isAnyProcessRunning && !override) return;
+    const sourceList =
+      override?.sourceList ??
+      (bufferScannedRoms.length > 0 ? bufferScannedRoms : romsRef.current);
+    const combineMoveMode = override?.moveMode ?? combineMoveModeState;
+    const combineDedup1G1R = override ? true : combineDedup1G1RState;
+    const combineSortFolders = override ? true : combineSortFoldersState;
+    const combineAddToLibrary = override ? true : combineAddToLibraryState;
+    const filenameConfig = override?.filenameConfig ?? filenameConfigState;
 
     if (sourceList.length === 0) {
+      if (override) return;
       await handleSelectBufferFolder();
       return;
     }
 
     const activeTargetHandle =
-      combineTargetDirHandle || sortTargetDirHandle || libraryDirHandle || rootDirHandle;
+      override?.targetHandle ||
+      combineTargetDirHandle ||
+      sortTargetDirHandle ||
+      libraryDirHandle ||
+      rootDirHandle;
 
     if (!activeTargetHandle) {
       handleDownloadBufferCmdScript();
@@ -6208,7 +6516,9 @@ export function App() {
     setIsProcessingBuffer(true);
     setProgressPct(5);
     const startBufMsg = tf('app.buf.startMsg', {
-      src: bufferFolderName || selectedFolderName || t('app.bufferFolderDefault'),
+      src: override
+        ? override.sourceName || t('app.bufferFolderDefault')
+        : bufferFolderName || selectedFolderName || t('app.bufferFolderDefault'),
       count: sourceList.length,
       dst: activeTargetHandle.name,
     });
@@ -6364,7 +6674,7 @@ export function App() {
         syncScannedRomsIntoDb(merged, activeTargetHandle.name, false);
       }
 
-      if (combineMoveMode === 'move' && bufferScannedRoms.length > 0) {
+      if (!override && combineMoveMode === 'move' && bufferScannedRoms.length > 0) {
         setBufferScannedRoms([]);
       }
 
@@ -6384,6 +6694,338 @@ export function App() {
     } finally {
       setIsProcessingBuffer(false);
       setProgressPct(100);
+    }
+    return { moved: movedOrCopied, dups: quarantinedDups };
+  };
+
+  // ==========================================================================
+  // Мастер первоначальной настройки / first-run setup wizard (roadmap 0.5.8)
+  // ==========================================================================
+  const [setupWizardOpen, setSetupWizardOpen] = useState(false);
+  const [setupWizardKey, setSetupWizardKey] = useState(0);
+  const setupHandlesRef = useRef<Record<SetupFolderKind, any>>({
+    library: null,
+    storage: null,
+    own: null,
+  });
+  const [setupFolders, setSetupFolders] = useState<Record<SetupFolderKind, string | null>>({
+    library: null,
+    storage: null,
+    own: null,
+  });
+  const [setupOwnConflict, setSetupOwnConflict] = useState(false);
+  const [setupRun, setSetupRun] = useState<SetupRunState | null>(null);
+  const [setupTourOpen, setSetupTourOpen] = useState(false);
+  const [navigateRequest, setNavigateRequest] = useState<{
+    target: TourTarget;
+    nonce: number;
+  } | null>(null);
+  const setupRunningRef = useRef(false);
+  const setupFsSupported =
+    typeof window !== 'undefined' && typeof (window as any).showDirectoryPicker === 'function';
+
+  const markSetupDone = () => {
+    try {
+      localStorage.setItem(SETUP_DONE_STORAGE_KEY, new Date().toISOString());
+    } catch {}
+  };
+
+  // First launch: open the wizard unless this install already has a library
+  // (saved folder handles or cached DB records from an earlier version).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (localStorage.getItem(SETUP_DONE_STORAGE_KEY)) return;
+      } catch {
+        return;
+      }
+      let existing = false;
+      try {
+        const raw = localStorage.getItem('aegisrom_v0_5_db');
+        if (raw && (JSON.parse(raw)?.records?.length || 0) > 0) existing = true;
+      } catch {}
+      if (!existing) {
+        try {
+          existing = (await listAllSavedDirectoryHandles()).length > 0;
+        } catch {}
+      }
+      if (cancelled) return;
+      if (existing) markSetupDone();
+      else setSetupWizardOpen(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleOpenSetupWizard = () => {
+    if (setupRunningRef.current) return;
+    const storage = sortTargetDirHandle || combineTargetDirHandle || null;
+    setupHandlesRef.current = { library: libraryDirHandle || null, storage, own: null };
+    setSetupFolders({
+      library: libraryDirHandle?.name || null,
+      storage: storage?.name || null,
+      own: null,
+    });
+    setSetupOwnConflict(false);
+    setSetupWizardKey((k) => k + 1);
+    setSetupWizardOpen(true);
+  };
+
+  // True when the two folders are the same or one lies inside the other.
+  const areDirHandlesOverlapping = async (a: any, b: any): Promise<boolean> => {
+    if (!a || !b) return false;
+    try {
+      if (typeof a.isSameEntry === 'function' && (await a.isSameEntry(b))) return true;
+    } catch {}
+    try {
+      if (typeof a.resolve === 'function' && (await a.resolve(b)) !== null) return true;
+      if (typeof b.resolve === 'function' && (await b.resolve(a)) !== null) return true;
+    } catch {}
+    return false;
+  };
+
+  const handleSetupPickFolder = async (kind: SetupFolderKind): Promise<SetupPickResult> => {
+    const win = window as any;
+    if (typeof win.showDirectoryPicker !== 'function') return { ok: false };
+    try {
+      const handle = await win.showDirectoryPicker({ mode: 'readwrite', id: `aegis-setup-${kind}` });
+      setupHandlesRef.current = { ...setupHandlesRef.current, [kind]: handle };
+      setSetupFolders((prev) => ({ ...prev, [kind]: handle.name }));
+      const { storage, own } = setupHandlesRef.current;
+      setSetupOwnConflict(await areDirHandlesOverlapping(storage, own));
+      return { ok: true };
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return { ok: false };
+      return { ok: false, error: String(err?.message || err) };
+    }
+  };
+
+  const handleSetupClearFolder = (kind: SetupFolderKind) => {
+    setupHandlesRef.current = { ...setupHandlesRef.current, [kind]: null };
+    setSetupFolders((prev) => ({ ...prev, [kind]: null }));
+    if (kind === 'own' || kind === 'storage') setSetupOwnConflict(false);
+  };
+
+  const handleSetupLater = () => {
+    markSetupDone();
+    setSetupWizardOpen(false);
+  };
+
+  const updateSetupStage = (id: SetupStage['id'], patch: Partial<SetupStage>) => {
+    setSetupRun((prev) =>
+      prev
+        ? { ...prev, stages: prev.stages.map((st) => (st.id === id ? { ...st, ...patch } : st)) }
+        : prev
+    );
+  };
+
+  const handleSetupStop = () => {
+    handleEmergencyStop();
+    setSetupRun((prev) =>
+      prev
+        ? {
+            ...prev,
+            stopped: true,
+            stages: prev.stages.map((st) =>
+              st.status === 'pending' || st.status === 'running'
+                ? { ...st, status: 'skipped' as const }
+                : st
+            ),
+          }
+        : prev
+    );
+  };
+
+  const handleTourNavigate = (target: TourTarget) => {
+    setNavigateRequest({ target, nonce: Date.now() });
+  };
+
+  /**
+   * Builds the library step by step with the existing tools:
+   * library file -> scan ROM storage -> scan own ROMs -> copy/move + sort + rename -> save.
+   * Runs in the background while the tour is shown.
+   */
+  const runInitialSetupPipeline = async (result: SetupWizardResult) => {
+    if (setupRunningRef.current) return;
+    const { library, storage } = setupHandlesRef.current;
+    const own = setupOwnConflict ? null : setupHandlesRef.current.own;
+    if (!library || !storage) return;
+    setupRunningRef.current = true;
+    setSetupWizardOpen(false);
+    markSetupDone();
+    try {
+      localStorage.setItem(INSTALL_MODE_STORAGE_KEY, result.installMode);
+    } catch {}
+
+    setSetupRun({
+      stages: [
+        { id: 'library', status: 'pending' },
+        { id: 'scanStorage', status: 'pending' },
+        { id: 'scanOwn', status: own ? 'pending' : 'skipped' },
+        { id: 'transfer', status: own ? 'pending' : 'skipped' },
+        { id: 'save', status: 'pending' },
+      ],
+      transferMode: result.ownMode,
+      finished: false,
+      stopped: false,
+    });
+    setSetupTourOpen(true);
+    setNavigateRequest({ target: { tab: 'library' }, nonce: Date.now() });
+    addLog(t('setup.log.start'));
+    stopRequestedRef.current = false;
+    const stopped = () => stopRequestedRef.current;
+    const errText = (e: any) => String(e?.message || e);
+    const verifiedCount = () => romsRef.current.filter((r) => r.status === 'verified').length;
+
+    let cfg = filenameConfigRef.current;
+    if (result.renamePresetId) {
+      const preset = FILENAME_CONSTRUCTOR_PRESETS.find((p) => p.id === result.renamePresetId);
+      if (preset) {
+        handleChangeFilenameConfig(preset.config);
+        cfg = preset.config;
+      }
+    }
+
+    try {
+      // 1. Library file
+      updateSetupStage('library', { status: 'running' });
+      try {
+        await saveDirectoryHandle('library_root', library, library.name);
+        setPendingRestoreHandles((prev) => prev.filter((h) => h.key !== 'library_root'));
+        setLibraryDirHandle(library);
+        setMediaAccessVersion((v) => v + 1);
+        await handleUpdateDbState({
+          ...dbStateRef.current,
+          masterLibraryPath: library.name,
+          sdCardMountPath: storage.name,
+          lastSyncedAt: new Date().toISOString(),
+        });
+        const dbFh = await library.getFileHandle('aegisrom_db.json', { create: true });
+        if ((await dbFh.getFile()).size === 0) {
+          const w = await dbFh.createWritable();
+          await w.write(JSON.stringify(dbStateRef.current, null, 2));
+          await w.close();
+        }
+        updateSetupStage('library', { status: 'done', detail: library.name });
+      } catch (e) {
+        updateSetupStage('library', { status: 'error', detail: errText(e) });
+      }
+      if (stopped()) return;
+
+      // 2. Scan the ROM storage (ROMs already there become the library)
+      updateSetupStage('scanStorage', { status: 'running', detail: storage.name });
+      for (const key of ['scan_root', 'sort_target', 'combine_target']) {
+        await saveDirectoryHandle(key, storage, storage.name);
+      }
+      setPendingRestoreHandles((prev) =>
+        prev.filter((h) => !['scan_root', 'sort_target', 'combine_target'].includes(h.key))
+      );
+      setRootDirHandle(storage);
+      setSelectedFolderName(storage.name);
+      setSortTargetDirHandle(storage);
+      setSortTargetFolderName(storage.name);
+      setCombineTargetDirHandle(storage);
+      setCombineTargetFolderName(storage.name);
+      scanModeRef.current = 'replace';
+      await scanDirectoryHandleRecursively(storage, 'replace');
+      if (stopped()) return;
+      updateSetupStage('scanStorage', {
+        status: 'done',
+        detail: tf('setup.stage.found', { count: verifiedCount() }),
+      });
+
+      // 3-4. Own ROMs: scan, then copy/move into the storage sorted by console and renamed
+      if (own) {
+        updateSetupStage('scanOwn', { status: 'running', detail: own.name });
+        let found: ScannedRomFile[] = [];
+        let scanOwnFailed = false;
+        try {
+          await saveDirectoryHandle('buffer_source', own, own.name);
+          setPendingRestoreHandles((prev) => prev.filter((h) => h.key !== 'buffer_source'));
+          setBufferDirHandle(own);
+          setBufferFolderName(own.name);
+          setIsScanning(true);
+          setCurrentActionText(tf('app.scan.scanning', { name: own.name }));
+          found = await inspectBufferEntries(await walkBufferDirHandle(own));
+        } catch (e) {
+          scanOwnFailed = true;
+          updateSetupStage('scanOwn', { status: 'error', detail: errText(e) });
+        } finally {
+          setIsScanning(false);
+        }
+        if (stopped()) return;
+        if (!scanOwnFailed) {
+          updateSetupStage('scanOwn', {
+            status: 'done',
+            detail: tf('setup.stage.found', { count: found.length }),
+          });
+        }
+
+        if (found.length > 0) {
+          updateSetupStage('transfer', { status: 'running' });
+          try {
+            const res = await handleRunBufferAutoProcess({
+              sourceList: found,
+              targetHandle: storage,
+              moveMode: result.ownMode,
+              filenameConfig: cfg,
+              sourceName: own.name,
+            });
+            if (stopped()) return;
+            updateSetupStage('transfer', {
+              status: 'done',
+              detail: res ? tf('setup.stage.placed', { count: res.moved, dups: res.dups }) : '',
+            });
+          } catch (e) {
+            updateSetupStage('transfer', { status: 'error', detail: errText(e) });
+          }
+        } else {
+          updateSetupStage('transfer', { status: 'skipped' });
+        }
+      }
+      if (stopped()) return;
+
+      // 5. Save the library file next to the chosen folder
+      updateSetupStage('save', { status: 'running' });
+      try {
+        const dbFh = await library.getFileHandle('aegisrom_db.json', { create: true });
+        const w = await dbFh.createWritable();
+        await w.write(
+          JSON.stringify(
+            { ...dbStateRef.current, exportedAt: new Date().toISOString() },
+            null,
+            2
+          )
+        );
+        await w.close();
+        updateSetupStage('save', { status: 'done', detail: 'aegisrom_db.json' });
+      } catch (e) {
+        updateSetupStage('save', { status: 'error', detail: errText(e) });
+      }
+
+      const count = verifiedCount();
+      setSetupRun((prev) => (prev ? { ...prev, finished: true, gamesCount: count } : prev));
+      addLog(tf('setup.log.done', { count }));
+    } finally {
+      setupRunningRef.current = false;
+      if (stopRequestedRef.current) {
+        addLog(t('setup.log.stopped'));
+        setSetupRun((prev) =>
+          prev
+            ? {
+                ...prev,
+                stopped: true,
+                stages: prev.stages.map((st) =>
+                  st.status === 'pending' || st.status === 'running'
+                    ? { ...st, status: 'skipped' as const }
+                    : st
+                ),
+              }
+            : prev
+        );
+      }
     }
   };
 
@@ -6529,6 +7171,24 @@ export function App() {
       const statsCache = new Map<string, FolderMediaSignatureStats>();
       const romsNeedingScrape: ScannedRomFile[] = [];
       const placeholderReasonsById = new Map<string, string>();
+      // Аудит по ромам: какие слоты уже рабочие и не должны перекачиваться.
+      // Per-ROM audit: which slots already work and must not be re-downloaded.
+      const auditsById = new Map<string, RomMediaAuditResult>();
+      // gamelist.xml каждой папки: обложки там могут называться не по имени рома.
+      // Each folder's gamelist.xml: covers there may be named differently from the ROM.
+      const gamelistIdxCache = new Map<any, Map<string, GamelistEntry>>();
+      const gamelistIndexFor = async (dirHandle: any) => {
+        let idx = gamelistIdxCache.get(dirHandle);
+        if (!idx) {
+          idx = new Map();
+          try {
+            const fh = await dirHandle.getFileHandle('gamelist.xml');
+            idx = indexGamelistEntries(parseGamelistEntries(await (await fh.getFile()).text()));
+          } catch {}
+          gamelistIdxCache.set(dirHandle, idx);
+        }
+        return idx;
+      };
       let skippedRealMediaCount = 0;
       let placeholderDetectedCount = 0;
       let missingMediaCount = 0;
@@ -6551,6 +7211,29 @@ export function App() {
             scrapeShortVideos,
             statsCache
           );
+          // Медиа, на которое ссылается gamelist.xml, тоже считается рабочим.
+          // Media referenced by gamelist.xml also counts as working.
+          const glEntry = findGamelistEntry(
+            await gamelistIndexFor(consoleDirHandle),
+            w.isMultiDisc && w.m3uFileName ? w.m3uFileName : w.fileName
+          );
+          if (glEntry) {
+            const imgRef = glEntry.fields.image || glEntry.fields.thumbnail;
+            if (audit.image.status !== 'valid' && imgRef && (await relativeFileExists(consoleDirHandle, imgRef))) {
+              audit.image = { status: 'valid', reason: 'gamelist.xml', fileName: unescapeXml(imgRef) };
+            }
+            const mqRef = glEntry.fields.marquee;
+            if (audit.marquee.status !== 'valid' && mqRef && (await relativeFileExists(consoleDirHandle, mqRef))) {
+              audit.marquee = { status: 'valid', reason: 'gamelist.xml', fileName: unescapeXml(mqRef) };
+            }
+            const vRef = glEntry.fields.video;
+            if (audit.video.status !== 'valid' && vRef && (await relativeFileExists(consoleDirHandle, vRef))) {
+              audit.video = { status: 'valid', reason: 'gamelist.xml', fileName: unescapeXml(vRef) };
+            }
+            audit.isFullyValid =
+              audit.image.status === 'valid' && (!scrapeShortVideos || audit.video.status === 'valid');
+          }
+          auditsById.set(w.id, audit);
           if (audit.isFullyValid) {
             skippedRealMediaCount++;
             continue;
@@ -6629,6 +7312,7 @@ export function App() {
 
       const nextRoms = [...targetList];
       let downloadedMediaCount = 0;
+      let unmatchedCount = 0;
 
       for (let i = 0; i < nextRoms.length; i++) {
         if (stopRequestedRef.current) break;
@@ -6643,14 +7327,57 @@ export function App() {
           })
         );
 
-        const titleMatched = m.matched !== false && Boolean(m.matchedCanonicalTitle);
+        const titleMatched = isScrapeMatched(m);
         const officialTitle = titleMatched ? m.matchedCanonicalTitle : r.cleanTitle;
         const newCanonicalName = computeCanonicalNameForRom({ ...r, cleanTitle: officialTitle });
-
-        const hasVid = Boolean(m.videoUrl);
         const auditReason = placeholderReasonsById.get(r.id);
+
+        // Качаем только слоты без рабочего файла и только для найденного названия.
+        // Файл пишется лишь после проверки скачанного (saveRemoteMediaToHandle), так что
+        // рабочее медиа не затирается, если замена не скачалась.
+        // Download only slots without a working file, and only for a matched title.
+        // A file is written only after the download is verified, so working media is never
+        // overwritten by a failed replacement.
+        const consoleDirHandle = r.targetDirHandle || r.parentHandle;
+        const activeRoot = rootDirHandle || sdTargetDirHandle || libraryDirHandle;
+        const hasDisk = Boolean(activeRoot && consoleDirHandle);
+        const saved: Partial<Record<MediaSlot, boolean>> | null = hasDisk ? {} : null;
+        if (hasDisk && titleMatched && saved) {
+          const slots = slotsToDownload(auditsById.get(r.id) || null, scrapeShortVideos);
+          const romBaseNoExt = (
+            r.isMultiDisc && r.multiDiscFolderName
+              ? r.multiDiscFolderName
+              : r.fileName.replace(/\.[^/.]+$/, '')
+          ).trim();
+          const dirFor = async (name: string) => {
+            try {
+              return await consoleDirHandle.getDirectoryHandle(name, { create: true });
+            } catch {
+              return null;
+            }
+          };
+          const jobs: Array<[MediaSlot, string | undefined, string, string, 'image' | 'video']> = [
+            ['image', m.boxArtUrl, 'images', `${romBaseNoExt}-image.png`, 'image'],
+            ['thumb', m.snapUrl, 'images', `${romBaseNoExt}-thumb.png`, 'image'],
+            ['marquee', m.marqueeUrl, 'marquees', `${romBaseNoExt}-marquee.png`, 'image'],
+            ['video', m.videoUrl, 'videos', `${romBaseNoExt}-video.mp4`, 'video'],
+          ];
+          for (const [slot, url, folder, fileName, kind] of jobs) {
+            if (!url || !slots.has(slot)) continue;
+            const dh = await dirFor(folder);
+            if (!dh) continue;
+            saved[slot] = await saveRemoteMediaToHandle(url, dh, fileName, kind);
+          }
+        }
+
+        const savedSlots = saved ? (Object.keys(saved) as MediaSlot[]).filter((k) => saved[k]) : [];
+        const gotSomething = saved ? savedSlots.length > 0 : titleMatched;
+        if (!titleMatched) unmatchedCount++;
+        if (gotSomething) downloadedMediaCount++;
+
         nextRoms[i] = {
           ...r,
+          ...mergeScrapedUrls(r, m, saved),
           cleanTitle: officialTitle,
           canonicalName: newCanonicalName,
           titleSource: titleMatched
@@ -6659,67 +7386,18 @@ export function App() {
               : 'libretro-exact'
             : r.titleSource,
           titleNote: titleMatched ? '' : m.reason || r.titleNote,
-          scrapedBoxArtUrl: m.boxArtUrl,
-          scrapedSnapUrl: m.snapUrl,
-          scrapedMarqueeUrl: m.marqueeUrl,
-          scrapedVideoUrl: m.videoUrl,
-          mediaStatus: auditReason
+          mediaStatus: !titleMatched
+            ? tf('app.scrape.notMatchedStatus', { reason: m.reason || t('title.note.onlineNoMatch') })
+            : saved && !gotSomething
+            ? t('app.scrape.nothingSavedStatus')
+            : auditReason
             ? tf('app.scrape.reDownloadedStatus', { reason: auditReason })
-            : hasVid
+            : saved
+            ? tf('app.scrape.savedStatus', { slots: savedSlots.join(', ') })
+            : m.videoUrl
             ? '✔ images/ + marquees/ + videos/'
             : '✔ images/ + marquees/',
         };
-        downloadedMediaCount++;
-
-        const consoleDirHandle = r.targetDirHandle || r.parentHandle;
-        const activeRoot = rootDirHandle || sdTargetDirHandle || libraryDirHandle;
-        if (activeRoot && consoleDirHandle) {
-          try {
-            const imagesHandle = await consoleDirHandle.getDirectoryHandle('images', {
-              create: true,
-            });
-            const marqueesHandle = await consoleDirHandle.getDirectoryHandle('marquees', {
-              create: true,
-            });
-            const videosHandle = await consoleDirHandle.getDirectoryHandle('videos', {
-              create: true,
-            });
-
-            const romBaseNoExt = (
-              r.isMultiDisc && r.multiDiscFolderName
-                ? r.multiDiscFolderName
-                : r.fileName.replace(/\.[^/.]+$/, '')
-            ).trim();
-
-            await saveRemoteMediaToHandle(
-              m.boxArtUrl,
-              imagesHandle,
-              `${romBaseNoExt}-image.png`,
-              'image'
-            );
-            await saveRemoteMediaToHandle(
-              m.snapUrl,
-              imagesHandle,
-              `${romBaseNoExt}-thumb.png`,
-              'image'
-            );
-            await saveRemoteMediaToHandle(
-              m.marqueeUrl,
-              marqueesHandle,
-              `${romBaseNoExt}-marquee.png`,
-              'image'
-            );
-
-            if (scrapeShortVideos && m.videoUrl) {
-              await saveRemoteMediaToHandle(
-                m.videoUrl,
-                videosHandle,
-                `${romBaseNoExt}-video.mp4`,
-                'video'
-              );
-            }
-          } catch {}
-        }
 
         setProgressPct(30 + Math.round(((downloadedMediaCount) / Math.max(1, romsNeedingScrape.length)) * 65));
       }
@@ -6750,6 +7428,9 @@ export function App() {
           downloaded: downloadedMediaCount,
         })
       );
+      if (unmatchedCount > 0) {
+        addLog(tf('app.scrape.unmatchedSummary', { count: unmatchedCount }));
+      }
 
       if (exportBatAfter) {
         generateWindowsCatalogBatScript(nextRoms);
@@ -6789,6 +7470,17 @@ export function App() {
   // =========================================================================
   // ONLINE RENAME WITH CONSTRUCTOR + SD TARGET PICKER + MASS OPERATIONS
   // =========================================================================
+  // Системы Libretro всех ромов библиотеки и текущего скана — для кнопки «Скачать DAT».
+  // Libretro systems of all library and scanned ROMs — for the "Download DATs" button.
+  const datSystems = useMemo(() => {
+    const codes = new Set<string>();
+    for (const r of roms) codes.add(r.consoleCode);
+    for (const rec of dbState.records || []) if (rec?.consoleCode) codes.add(rec.consoleCode);
+    return Array.from(
+      new Set(Array.from(codes).map((c) => CONSOLE_CATALOG[c]?.libretroSystem).filter(Boolean) as string[])
+    );
+  }, [roms, dbState.records]);
+
   const handleOnlineRenameRoms = async () => {
     const activeList = romsRef.current;
     if (activeList.length === 0 || isAnyProcessRunning) return;
@@ -6817,6 +7509,45 @@ export function App() {
       // 1. Hash match against No-Intro / Redump DATs — the primary title source.
       let datHits = 0;
       const datMisses = new Map<string, string>();
+      // Уточнённый статус хака по хешу. / Hack status refined by hash.
+      const datMods = new Map<string, RomModInfo>();
+      // 0. Для консолей без DAT — скачать DAT No-Intro / Redump из libretro-database.
+      // Без DAT ромы с номерами и «кракозябрами» вместо имён не опознать: искать по имени нечего.
+      // 0. Consoles without a DAT get No-Intro / Redump DATs from libretro-database.
+      // Without a DAT, numbered and garbled names cannot be identified: there is no name to search.
+      const neededSystems = Array.from(
+        new Set(
+          targets
+            .map((r) => (CONSOLE_CATALOG[r.consoleCode] || CONSOLE_CATALOG.nes).libretroSystem)
+            .filter((sys) => sys && !libretroDatUnsupportedRef.current.has(sys))
+        )
+      );
+      try {
+        const missing = systemsWithoutDat(await fetchDatStatus(), neededSystems);
+        if (missing.length > 0) {
+          const fetchingMsg = tf('app.rename.datFetching', { systems: missing.join(', ') });
+          setCurrentActionText(fetchingMsg);
+          addLog(fetchingMsg);
+          const res = await fetchLibretroDats(missing);
+          const failedNames: string[] = [];
+          for (const f of res.failed) {
+            // Без набора — системы нет в libretro-database, больше не спрашиваем.
+            // No set means the system is not in libretro-database; do not ask again.
+            if (!f.set) libretroDatUnsupportedRef.current.add(f.system);
+            else failedNames.push(`${f.system} (${f.reason || '?'})`);
+          }
+          addLog(
+            tf('app.rename.datFetched', {
+              count: res.fetched.length,
+              games: res.fetched.reduce((n, f) => n + (f.games || 0), 0),
+              failed: failedNames.join(', ') || '—',
+            })
+          );
+        }
+      } catch (err) {
+        addLog(tf('app.rename.datFetchErr', { err: String(err) }));
+      }
+
       setCurrentActionText(t('app.rename.datStart'));
       const datResults = await lookupTitlesByHash(
         targets.map((r) => ({
@@ -6844,6 +7575,15 @@ export function App() {
       } else {
         for (const r of targets) {
           const m = datResults.get(r.id);
+          if (m && r.mod) {
+            // Хеш не врёт: совпал с чистым оригиналом — не хак; не нашёлся — ром изменён.
+            // The hash is the truth: a clean original match means not a hack; no match means modified.
+            // «Не найдено» засчитываем, только если DAT для системы был и хеш в нём не нашёлся.
+            // Count a miss only when a DAT for the system was loaded and the hash was not in it.
+            const realMiss = !m.matched && /hash not found/i.test(m.reason || '');
+            const refined = refineModWithDat(r.mod, m.matched || realMiss ? m : null);
+            if (refined !== r.mod) datMods.set(r.id, refined);
+          }
           if (m?.matched && m.name) {
             const d = titleFromDatMatch(m, r.isRussian);
             if ((d.title.match(/[a-zA-Zа-яА-ЯёЁ0-9]/g) || []).length < 1) continue;
@@ -6864,7 +7604,20 @@ export function App() {
 
       // 2. Остальное — поиск по названию в индексе Libretro, пачками по 120.
       // 2. The rest — title search in the Libretro index, in chunks of 120.
-      const onlineTargets = targets.filter((r) => !resolvedTitles.has(r.id));
+      // Нечитаемое название (номер, «кракозябры») по имени не ищем: нечёткий поиск по мусору
+      // даёт чужую игру. Такие ромы опознаются только по хешу (DAT).
+      // Unreadable titles (numbers, mojibake) are not searched by name: a fuzzy search on junk
+      // returns a wrong game. Such ROMs can only be identified by hash (DAT).
+      const searchTitleById = new Map<string, string>();
+      for (const r of targets) {
+        if (resolvedTitles.has(r.id)) continue;
+        const q = [r.extractedInternalTitle, r.cleanTitle].find(
+          (x) => x && isReadableTitle(extractCleanTitle(x))
+        );
+        if (q) searchTitleById.set(r.id, q);
+        else unresolvedReasons.set(r.id, t('title.note.unreadableTitle'));
+      }
+      const onlineTargets = targets.filter((r) => searchTitleById.has(r.id));
       for (let start = 0; start < onlineTargets.length; start += 120) {
         if (stopRequestedRef.current) break;
         const slice = onlineTargets.slice(start, start + 120);
@@ -6875,10 +7628,11 @@ export function App() {
             body: JSON.stringify({
               items: slice.map((w) => {
                 const meta = CONSOLE_CATALOG[w.consoleCode] || CONSOLE_CATALOG.nes;
+                const q = searchTitleById.get(w.id) || w.cleanTitle;
                 return {
                   id: w.id,
-                  cleanTitle: w.extractedInternalTitle || w.cleanTitle,
-                  comparisonKey: w.comparisonKey,
+                  cleanTitle: q,
+                  comparisonKey: q === w.cleanTitle ? w.comparisonKey : buildComparisonKey(extractCleanTitle(q)),
                   region: w.region,
                   libretroSystem: meta.libretroSystem,
                   archiveVideoId: meta.archiveVideoId,
@@ -6938,6 +7692,7 @@ export function App() {
         const newCandidate = updateRomWithFilenameConfig(
           {
             ...r,
+            mod: datMods.get(r.id) || r.mod,
             cleanTitle: bestTitle,
             region: resolved?.region || r.region,
             revision: resolved?.region ? resolved.revision || '' : r.revision,
@@ -7341,11 +8096,20 @@ export function App() {
     try {
       // 1. Preserve backup of original factory gamelist.xml before modifying it
       let backupMap = new Map<string, string>();
+      // Записи текущего gamelist.xml: из них берём медиа, описание и прочие поля, которые
+      // сами не нашли, и переносим записи ромов, которых нет в списке, но файл есть.
+      // Current gamelist.xml entries: media, description and other fields we did not find
+      // ourselves come from here, and entries for ROMs outside the list (file still present) are kept.
+      let prevEntries: GamelistEntry[] = [];
+      let prevIdx = new Map<string, GamelistEntry>();
+      let factoryIdx = new Map<string, GamelistEntry>();
       try {
         const origHandle = await consoleDirHandle.getFileHandle('gamelist.xml');
         const origFile = await origHandle.getFile();
         const origText = await origFile.text();
         backupMap = parseGamelistXmlString(origText);
+        prevEntries = parseGamelistEntries(origText);
+        prevIdx = indexGamelistEntries(prevEntries);
         try {
           await consoleDirHandle.getFileHandle('gamelist_factory_backup.xml');
         } catch {
@@ -7368,8 +8132,10 @@ export function App() {
         for (const [k, v] of bMap.entries()) {
           if (!backupMap.has(k)) backupMap.set(k, v);
         }
+        factoryIdx = indexGamelistEntries(parseGamelistEntries(bText));
       } catch {}
 
+      const writtenPaths = new Set<string>();
       const lines: string[] = ['<?xml version="1.0" encoding="utf-8"?>', '<gameList>'];
       for (const r of consoleRoms) {
         const baseNoExt = r.fileName.replace(/\.[^/.]+$/, '');
@@ -7389,7 +8155,7 @@ export function App() {
             : cleanTitle;
         const meta = CONSOLE_CATALOG[r.consoleCode] || CONSOLE_CATALOG.nes;
 
-        const { imgRel, thumbRel, marqueeRel, videoRel } = await resolveExistingMediaInDirHandle(
+        let { imgRel, thumbRel, marqueeRel, videoRel } = await resolveExistingMediaInDirHandle(
           consoleDirHandle,
           r.isMultiDisc && r.multiDiscFolderName ? r.multiDiscFolderName : baseNoExt,
           cleanTitle
@@ -7400,6 +8166,22 @@ export function App() {
           isMulti && r.multiDiscFolderName && r.m3uFileName
             ? `./${r.multiDiscFolderName}/${r.m3uFileName}`
             : `./${r.fileName}`;
+        writtenPaths.add(normalizeGamelistPath(xmlPath));
+
+        // Медиа и поля из прежней записи, если сами не нашли. Ссылку берём, только если файл на месте.
+        // Media and fields from the previous entry when not found ourselves; a link only if the file exists.
+        const prevKey = isMulti && r.m3uFileName ? r.m3uFileName : r.fileName;
+        const prev = findGamelistEntry(prevIdx, prevKey) || findGamelistEntry(factoryIdx, prevKey);
+        const keepRef = async (cur: string, tag: string) => {
+          const ref = prev?.fields[tag];
+          if (cur || !ref) return cur;
+          return (await relativeFileExists(consoleDirHandle, ref)) ? unescapeXml(ref) : cur;
+        };
+        imgRel = await keepRef(imgRel, 'image');
+        thumbRel = await keepRef(thumbRel, 'thumbnail');
+        marqueeRel = await keepRef(marqueeRel, 'marquee');
+        videoRel = await keepRef(videoRel, 'video');
+        if (!imgRel && thumbRel) imgRel = thumbRel;
 
         lines.push('  <game>');
         lines.push(`    <path>${escapeXml(xmlPath)}</path>`);
@@ -7417,13 +8199,19 @@ export function App() {
           (isMulti
             ? tfStatic('app.consoleDiscsPart', { count: r.discs!.length })
             : tfStatic('app.consoleCrcPart', { crc: r.headerlessCrc32 }));
-        lines.push(`    <desc>${escapeXml(descLine)}</desc>`);
+        // Поля прежней записи уже экранированы — пишем как есть. / Previous fields are already escaped.
+        const pf = prev?.fields || {};
+        lines.push(`    <desc>${pf.desc || escapeXml(descLine)}</desc>`);
         if (imgRel) lines.push(`    <image>${escapeXml(imgRel)}</image>`);
         if (thumbRel) lines.push(`    <thumbnail>${escapeXml(thumbRel)}</thumbnail>`);
         if (marqueeRel) lines.push(`    <marquee>${escapeXml(marqueeRel)}</marquee>`);
         if (videoRel) lines.push(`    <video>${escapeXml(videoRel)}</video>`);
-        lines.push('    <rating>0.9</rating>');
-        lines.push(`    <genre>${escapeXml(localizedConsole)}</genre>`);
+        lines.push(`    <rating>${pf.rating || '0.9'}</rating>`);
+        if (pf.releasedate) lines.push(`    <releasedate>${pf.releasedate}</releasedate>`);
+        if (pf.developer) lines.push(`    <developer>${pf.developer}</developer>`);
+        if (pf.publisher) lines.push(`    <publisher>${pf.publisher}</publisher>`);
+        lines.push(`    <genre>${pf.genre || escapeXml(localizedConsole)}</genre>`);
+        if (pf.players) lines.push(`    <players>${pf.players}</players>`);
         lines.push(`    <region>${escapeXml(r.region)}</region>`);
         lines.push('  </game>');
 
@@ -7432,6 +8220,7 @@ export function App() {
           for (let di = 0; di < r.discs!.length; di++) {
             const d = r.discs![di];
             lines.push('  <game>');
+            writtenPaths.add(normalizeGamelistPath(`./${r.multiDiscFolderName}/${d.fileName}`));
             lines.push(
               `    <path>${escapeXml(`./${r.multiDiscFolderName}/${d.fileName}`)}</path>`
             );
@@ -7442,6 +8231,14 @@ export function App() {
             lines.push('  </game>');
           }
         }
+      }
+      // Записи ромов вне списка (хаки, другие статусы, подпапки) не выкидываем, если файл на месте.
+      // Entries for ROMs outside the list (hacks, other statuses, subfolders) stay if the file exists.
+      for (const e of prevEntries) {
+        const key = normalizeGamelistPath(e.path);
+        if (!key || writtenPaths.has(key)) continue;
+        writtenPaths.add(key);
+        if (await relativeFileExists(consoleDirHandle, e.path)) lines.push(`  ${e.raw}`);
       }
       lines.push('</gameList>');
 
@@ -7732,6 +8529,10 @@ export function App() {
       discs: mappedDiscs,
       titleSource: r.titleSource,
       titleNote: r.titleNote,
+      modKind: r.mod?.kind,
+      modTag: modTag(r.mod) || undefined,
+      modLang: r.mod?.language,
+      modNote: describeRomMod(r.mod, tf) || undefined,
     };
   };
 
@@ -7762,6 +8563,8 @@ export function App() {
       />
 
       <FigmaConceptStudio
+        navigateRequest={navigateRequest}
+        onOpenSetupWizard={handleOpenSetupWizard}
         selectedConcept={selectedFigmaConcept}
         onSelectConcept={(cid) => {
           setSelectedFigmaConcept(cid);
@@ -7814,6 +8617,7 @@ export function App() {
         onChangeAutoGroupMultiDisc={setAutoGroupMultiDisc}
         onScrapeMedia={() => handleScrapeR36SMedia(roms)}
         onOnlineRename={() => handleOnlineRenameRoms()}
+        datSystems={datSystems}
         onScanPhantomFolders={handleScanPhantomFolders}
         onRepairSdCard={(fw) => handleRepairR36SSDCard(fw as any)}
         sdTargetFolderName={sdTargetFolderName}
@@ -7871,6 +8675,13 @@ export function App() {
             starredEmulatorsByConsole: starredMap,
           }));
         }}
+      />
+
+      <HackMoveModal
+        candidates={hackMoveCandidates}
+        busy={isOrganizing}
+        onConfirm={(ids) => void handleMoveHacksToHackroms(ids)}
+        onClose={() => setHackMoveCandidates([])}
       />
 
       {/* Interactive XML & Deep Header Mapping Modal */}
@@ -8004,6 +8815,27 @@ export function App() {
           </div>
         </div>
       )}
+
+      <SetupWizard
+        key={setupWizardKey}
+        open={setupWizardOpen}
+        fsSupported={setupFsSupported}
+        folders={setupFolders}
+        ownSameAsStorage={setupOwnConflict}
+        onPickFolder={handleSetupPickFolder}
+        onClearFolder={handleSetupClearFolder}
+        onLater={handleSetupLater}
+        onStart={runInitialSetupPipeline}
+      />
+
+      <SetupRunPanel
+        run={setupRun}
+        tourOpen={setupTourOpen}
+        onCloseTour={() => setSetupTourOpen(false)}
+        onDismissRun={() => setSetupRun(null)}
+        onStop={handleSetupStop}
+        onNavigate={handleTourNavigate}
+      />
 
       {/* R36S (ArkOS / DarkOS) Media Preview Modal */}
       {previewRom && (

@@ -4,6 +4,9 @@
  * when opening saved `.aegisdb.json` database files without re-scanning folders!
  */
 
+import { MULTI_DBS_DISK_KEY, writeDiskValue } from './nativeStorage';
+import { reviveNativeHandle } from './nativeFs';
+
 const IDB_NAME = 'AegisROM_FS_Handles_v5';
 const IDB_STORE = 'directory_handles';
 
@@ -70,7 +73,10 @@ export async function loadDirectoryHandleRecord(
       const tx = db.transaction(IDB_STORE, 'readonly');
       const store = tx.objectStore(IDB_STORE);
       const req = store.get(key);
-      req.onsuccess = () => resolve((req.result as StoredDirHandleRecord) || null);
+      req.onsuccess = () => {
+        const r = (req.result as StoredDirHandleRecord) || null;
+        resolve(r ? { ...r, handle: reviveNativeHandle(r.handle) } : null);
+      };
       req.onerror = () => resolve(null);
     });
     db.close();
@@ -87,7 +93,12 @@ export async function listAllSavedDirectoryHandles(): Promise<StoredDirHandleRec
       const tx = db.transaction(IDB_STORE, 'readonly');
       const store = tx.objectStore(IDB_STORE);
       const req = store.getAll();
-      req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : []);
+      req.onsuccess = () =>
+        resolve(
+          Array.isArray(req.result)
+            ? req.result.map((r: StoredDirHandleRecord) => ({ ...r, handle: reviveNativeHandle(r.handle) }))
+            : []
+        );
       req.onerror = () => resolve([]);
     });
     db.close();
@@ -263,6 +274,9 @@ export async function saveMultiDbsToIndexedDB(dbs: any[]): Promise<void> {
           }))
         : [],
     }));
+    // Копия на диск для нативного окна (stringify откладывается до записи).
+    // Disk copy for the native window (stringify is deferred to the write).
+    writeDiskValue(MULTI_DBS_DISK_KEY, () => JSON.stringify(sanitized));
     const db = await openLargeDbCache();
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(DB_CACHE_STORE, 'readwrite');

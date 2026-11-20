@@ -8,6 +8,9 @@ import { ZH } from './locales/zh';
 import { SR } from './locales/sr';
 import { FR } from './locales/fr';
 import { IT } from './locales/it';
+import { SETUP_STRINGS } from './locales/setup';
+import { BIOS_STRINGS } from './biosStrings';
+import { COLLECTION_STRINGS } from './collectionStrings';
 
 export type SupportedLanguage =
   | 'en'
@@ -72,16 +75,20 @@ export function detectSystemLanguage(): SupportedLanguage {
   return 'en';
 }
 
+// Отдельные файлы строк (мастер настройки, BIOS) подмешиваются сюда.
+// Separate string files (setup wizard, BIOS) are merged here.
+const EN_ALL = { ...EN, ...SETUP_STRINGS.en, ...BIOS_STRINGS.en, ...COLLECTION_STRINGS.en };
+
 const DICTS: Record<SupportedLanguage, TranslationDict> = {
-  ru: RU,
-  en: EN,
-  de: DE,
-  es: ES,
-  ja: JA,
-  zh: ZH,
-  sr: SR,
-  fr: FR,
-  it: IT,
+  ru: { ...RU, ...SETUP_STRINGS.ru, ...BIOS_STRINGS.ru, ...COLLECTION_STRINGS.ru },
+  en: EN_ALL,
+  de: { ...DE, ...SETUP_STRINGS.de, ...BIOS_STRINGS.de },
+  es: { ...ES, ...SETUP_STRINGS.es, ...BIOS_STRINGS.es },
+  ja: { ...JA, ...SETUP_STRINGS.ja, ...BIOS_STRINGS.ja },
+  zh: { ...ZH, ...SETUP_STRINGS.zh, ...BIOS_STRINGS.zh },
+  sr: { ...SR, ...SETUP_STRINGS.sr, ...BIOS_STRINGS.sr },
+  fr: { ...FR, ...SETUP_STRINGS.fr, ...BIOS_STRINGS.fr },
+  it: { ...IT, ...SETUP_STRINGS.it, ...BIOS_STRINGS.it },
 };
 
 let activeLangRuntime: SupportedLanguage = detectSystemLanguage();
@@ -96,7 +103,7 @@ export function getActiveLocale(): string {
 
 export function tStatic(key: string, fallback?: string): string {
   const dict = DICTS[activeLangRuntime] as Record<string, string>;
-  return dict?.[key] ?? (EN as Record<string, string>)[key] ?? fallback ?? key;
+  return dict?.[key] ?? (EN_ALL as Record<string, string>)[key] ?? fallback ?? key;
 }
 
 export function tfStatic(
@@ -105,7 +112,7 @@ export function tfStatic(
   fallback?: string
 ): string {
   const dict = DICTS[activeLangRuntime] as Record<string, string>;
-  let txt = dict?.[key] ?? (EN as Record<string, string>)[key] ?? fallback ?? key;
+  let txt = dict?.[key] ?? (EN_ALL as Record<string, string>)[key] ?? fallback ?? key;
   if (vars) {
     for (const [k, v] of Object.entries(vars)) {
       txt = txt.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
@@ -130,9 +137,9 @@ const I18nContext = createContext<I18nContextValue>({
   lang: 'en',
   locale: 'en-US',
   setLang: () => {},
-  t: (key, fallback) => (EN as Record<string, string>)[key] || fallback || key,
+  t: (key, fallback) => (EN_ALL as Record<string, string>)[key] || fallback || key,
   tf: (key, vars, fallback) => {
-    let txt = (EN as Record<string, string>)[key] || fallback || key;
+    let txt = (EN_ALL as Record<string, string>)[key] || fallback || key;
     if (vars) {
       for (const [k, v] of Object.entries(vars)) {
         txt = txt.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
@@ -167,7 +174,7 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const t = useCallback(
     (key: string, fallback?: string): string => {
       const dict = DICTS[lang] as Record<string, string>;
-      return dict?.[key] ?? (EN as Record<string, string>)[key] ?? fallback ?? key;
+      return dict?.[key] ?? (EN_ALL as Record<string, string>)[key] ?? fallback ?? key;
     },
     [lang]
   );
@@ -179,7 +186,7 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
       fallback?: string
     ): string => {
       const dict = DICTS[lang] as Record<string, string>;
-      let txt = dict?.[key] ?? (EN as Record<string, string>)[key] ?? fallback ?? key;
+      let txt = dict?.[key] ?? (EN_ALL as Record<string, string>)[key] ?? fallback ?? key;
       if (vars) {
         for (const [k, v] of Object.entries(vars)) {
           txt = txt.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
@@ -259,5 +266,6 @@ export function localizePresetCategory(
   if (c.includes('аудитор') || c.includes('aud')) return t('preset.cat.audience');
   if (c.includes('жанр') || c.includes('genre')) return t('preset.cat.genre');
   if (c.includes('поколен') || c.includes('gen')) return t('preset.cat.generation');
+  if (c.includes('статус') || c.includes('status')) return t('preset.cat.status');
   return category;
 }

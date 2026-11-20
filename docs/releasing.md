@@ -9,11 +9,20 @@
 
 - `package.json` → `"version"`
 - `src/version.ts`
-- `cmd/winsetup/discovery.go` → константа `AppVersion`
+- `cmd/winsetup/discovery.go` → переменная `AppVersion` (в dev-сборках CI подменяет её через `-ldflags -X`)
 
 ## Тестовая сборка из dev
 
-Каждый push в `dev` (то есть каждый смерженный PR) запускает workflow **Release (Windows 11 x64)** без публикации. Готовые `Setup.exe`, `Portable.exe` и `.zip` лежат в Actions → нужный запуск → блок **Artifacts** (нужно войти в GitHub, хранятся 14 дней). Вручную: Actions → Release (Windows 11 x64) → Run workflow → ветка `dev`.
+Каждый push в `dev` (то есть каждый смерженный PR) запускает workflow **Release (Windows 11 x64)**. Он собирает `Setup.exe`, `Portable.exe`, сканер и `.zip` с версией вида `0.5.6-dev+abc1234` (версия из `package.json` + короткий хеш коммита) и публикует их как **Pre-release** с тегом `dev-build-<номер запуска>`.
+
+- Где скачать: https://github.com/wirgylle/AegisROM/releases — самый верхний релиз с меткой **Pre-release** и именем `AegisROM 0.5.6-dev+… (dev)`.
+- Как отличить от стабильной: в заголовке окна, в установщике и в `version.json` стоит `0.5.6-dev+<коммит>`, в именах файлов `v0.5.6-dev.<коммит>`. Стабильный релиз помечен **Latest** и называется `v0.5.5`; `releases/latest` всегда ведёт на стабильный.
+- Хранятся 3 последние dev-сборки, старые удаляются автоматически. Копия каждой сборки также лежит в Actions → запуск → **Artifacts** (14 дней).
+- Вручную: Actions → Release (Windows 11 x64) → Run workflow → ветка `dev`.
+
+### Dev builds (EN)
+
+Every push to `dev` builds the assets with a version like `0.5.6-dev+abc1234` (package.json version + short commit hash) and publishes them as a **Pre-release** tagged `dev-build-<run number>`. Download: the top **Pre-release** on https://github.com/wirgylle/AegisROM/releases. The app window, installer and `version.json` show `0.5.6-dev+<commit>`; stable releases stay **Latest**. Only the 3 newest dev builds are kept.
 
 ## Как выпустить релиз
 

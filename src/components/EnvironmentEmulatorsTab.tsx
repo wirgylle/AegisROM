@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Package,
   ArrowRight,
+  Cpu,
 } from 'lucide-react';
 import {
   EMULATOR_CATALOG,
@@ -19,6 +20,7 @@ import {
   type EmulatorOption,
 } from '../data/consoleSteamCatalog';
 import { PortMasterTab } from './PortMasterTab';
+import { BiosCenterPanel } from './BiosCenterPanel';
 import type { PortMasterGame, PortMasterSourceConfig } from '../types/aegis';
 import { useI18n } from '../i18n/translations';
 
@@ -97,6 +99,8 @@ interface EnvironmentEmulatorsTabProps {
   portMasterSourceConfigs?: Record<string, PortMasterSourceConfig>;
   onUpdatePortMasterSourceConfig?: (slug: string, cfg: PortMasterSourceConfig) => void;
   onPortMasterCatalogLoaded?: (games: PortMasterGame[]) => void;
+  /** Какую подвкладку открыть при показе (например, «BIOS» из быстрого теста). */
+  initialSubTab?: 'emulators' | 'bios' | 'portmaster';
 }
 
 export const EnvironmentEmulatorsTab: React.FC<EnvironmentEmulatorsTabProps> = ({
@@ -114,9 +118,10 @@ export const EnvironmentEmulatorsTab: React.FC<EnvironmentEmulatorsTabProps> = (
   portMasterSourceConfigs = {},
   onUpdatePortMasterSourceConfig,
   onPortMasterCatalogLoaded,
+  initialSubTab = 'emulators',
 }) => {
   const { t, tf } = useI18n();
-  const [envSubTab, setEnvSubTab] = useState<'emulators' | 'portmaster'>('emulators');
+  const [envSubTab, setEnvSubTab] = useState<'emulators' | 'bios' | 'portmaster'>(initialSubTab);
   const [detectedPaths, setDetectedPaths] = useState<Record<string, string>>({});
   const [installedCores, setInstalledCores] = useState<string[]>([]);
   const [scanChecked, setScanChecked] = useState<boolean>(false);
@@ -310,6 +315,19 @@ export const EnvironmentEmulatorsTab: React.FC<EnvironmentEmulatorsTabProps> = (
             </button>
             <button
               type="button"
+              onClick={() => setEnvSubTab('bios')}
+              data-tool="env.bios"
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition ${
+                envSubTab === 'bios'
+                  ? 'bg-blue-600 text-white shadow-2xs'
+                  : 'text-slate-700 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-700'
+              }`}
+            >
+              <Cpu className="w-3.5 h-3.5" />
+              <span>{t('bios.tab')}</span>
+            </button>
+            <button
+              type="button"
               onClick={() => setEnvSubTab('portmaster')}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition ${
                 envSubTab === 'portmaster'
@@ -346,7 +364,9 @@ export const EnvironmentEmulatorsTab: React.FC<EnvironmentEmulatorsTabProps> = (
         </div>
       </div>
 
-      {envSubTab === 'portmaster' ? (
+      {envSubTab === 'bios' ? (
+        <BiosCenterPanel onAddLog={onAddLog} />
+      ) : envSubTab === 'portmaster' ? (
         <PortMasterTab
           portMasterBuildSlugs={portMasterBuildSlugs}
           onToggleBuildPort={(port) => onToggleBuildPort?.(port)}

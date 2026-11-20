@@ -5,6 +5,7 @@ import {
   Share2,
   Gamepad2,
   Play,
+  ExternalLink,
   FileCode2,
   Search,
   HardDrive,
@@ -32,9 +33,11 @@ import {
   Scissors,
   AlertTriangle,
   Check,
+  Wand2,
 } from 'lucide-react';
 import { GameInspectorCoverVideo } from './GameInspectorCoverVideo';
 import { DatFilesPanel } from './DatFilesPanel';
+import { PatcherPanel } from './PatcherPanel';
 import {
   APP_FULL_TITLE,
   DOWNLOAD_SETUP_URL,
@@ -55,12 +58,19 @@ import { downloadXmlTemplateFile } from './XmlMappingModal';
 import { SyncDiffModal } from './SyncDiffModal';
 import { FilenameConstructorCard } from './FilenameConstructorCard';
 import { DEFAULT_FILENAME_CONFIG } from '../utils/filenameConstructor';
+import { modGroup, type RomModGroup, type RomModKind } from '../utils/romHacks';
+
+// Порядок при сортировке по статусу. / Order when sorting by status.
+const MOD_SORT_RANK: Record<RomModGroup, number> = { original: 1, translation: 2, hack: 3, patched: 4 };
 import {
   isDeadOrLocalBlobUrl,
   saveMultiDbsToIndexedDB,
   loadMultiDbsFromIndexedDB,
 } from '../utils/persistentHandles';
-import { VirtualizedLibraryViews } from './VirtualizedLibraryViews';
+import { VirtualizedLibraryViews, type LibraryCollectionBadge } from './VirtualizedLibraryViews';
+import { CollectionModal } from './CollectionModal';
+import { GameRelationsPanel } from './GameRelationsPanel';
+import { buildCollections, indexCollections, seriesSiblings } from '../utils/gameCollections';
 import { inferPortMasterPcTestPlan } from '../utils/portMasterEngine';
 import {
   SUPPORTED_LANGUAGES,
@@ -93,6 +103,9 @@ import {
   collapseMultiDiscUnifiedRows,
 } from '../utils/multiDiscEngine';
 import { WorkbenchContextPanel, type HoveredTool } from './WorkbenchContextPanel';
+import { QuickTestModal, type QuickTestRequest } from './QuickTestModal';
+import { resolveQuickTestCore, pickCueDataTrack, pickBiosForRegion, fileExt } from '../utils/quickTest';
+import { getVerifiedBiosFiles } from '../utils/biosScan';
 
 export interface MultiDiscEntry {
   id: string;
@@ -152,6 +165,12 @@ export interface UnifiedGameRow {
   titleSource?: string;
   // Почему настоящее название не найдено (пусто, если найдено).
   titleNote?: string;
+  // Хак / перевод / патч: вид, тег, язык перевода и описание отличий (utils/romHacks.ts).
+  // Hack / translation / patch: kind, tag, translation language and what differs (utils/romHacks.ts).
+  modKind?: string;
+  modTag?: string;
+  modLang?: string;
+  modNote?: string;
   title: string;
   oldFile: string;
   cleanFile: string;
@@ -186,6 +205,13 @@ export interface UnifiedGameRow {
 }
 
 interface FigmaConceptStudioProps {
+  /** Tour / setup wizard: switch to a section (and Tools sub-tab) when nonce changes. */
+  navigateRequest?: {
+    target: { tab: 'library' | 'tools' | 'builds' | 'env'; toolsMode?: 'library' | 'sd_folder' | 'combine' };
+    nonce: number;
+  } | null;
+  /** Opens the first-run setup wizard again (top bar wand button). */
+  onOpenSetupWizard?: () => void;
   selectedConcept: FigmaConceptId;
   onSelectConcept: (id: FigmaConceptId) => void;
   isDarkMode: boolean;
@@ -229,6 +255,8 @@ interface FigmaConceptStudioProps {
   onChangeAutoGroupMultiDisc?: (val: boolean) => void;
   onScrapeMedia?: () => void;
   onOnlineRename?: () => void;
+  // Системы Libretro из библиотеки (для автозагрузки DAT). / Libretro systems in the library (DAT auto-download).
+  datSystems?: string[];
   onScanPhantomFolders?: () => void;
   onRepairSdCard?: (firmwareId?: string) => void;
   sdTargetFolderName?: string;
@@ -562,6 +590,8 @@ function buildSampleDefaultGames(): UnifiedGameRow[] {
 }
 
 export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
+  navigateRequest,
+  onOpenSetupWizard,
   selectedConcept,
   onSelectConcept,
   isDarkMode,
@@ -595,6 +625,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   onChangeAutoGroupMultiDisc,
   onScrapeMedia,
   onOnlineRename,
+  datSystems,
   onScanPhantomFolders,
   onRepairSdCard,
   sdTargetFolderName = '',
@@ -652,9 +683,20 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   );
   const [previewTab, setPreviewTab] = useState<'library' | 'tools' | 'builds' | 'env'>('library');
   const [toolsMode, setToolsMode] = useState<'library' | 'sd_folder' | 'combine'>('library');
+  useEffect(() => {
+    if (!navigateRequest) return;
+    setPreviewTab(navigateRequest.target.tab);
+    if (navigateRequest.target.toolsMode) setToolsMode(navigateRequest.target.toolsMode);
+  }, [navigateRequest?.nonce]);
   const [renameOnSortRules, setRenameOnSortRules] = useState<boolean>(true);
   const [librarySyncModalOpen, setLibrarySyncModalOpen] = useState<boolean>(false);
   const [selectedDiscIndex, setSelectedDiscIndex] = useState<number | null>(null);
+  const [quickTestReq, setQuickTestReq] = useState<QuickTestRequest | null>(null);
+  const [envInitialSubTab, setEnvInitialSubTab] = useState<'emulators' | 'bios'>('emulators');
+  // Подвкладка «BIOS» открывается один раз по ссылке из быстрого теста, дальше снова «Эмуляторы».
+  useEffect(() => {
+    if (previewTab !== 'env') setEnvInitialSubTab('emulators');
+  }, [previewTab]);
 
   // Shared Saved Builds state across Library (+ button Modal) and Builds tab
   const [savedBuilds, setSavedBuilds] = useState<SavedBuildRecord[]>(() => loadSavedBuildsLocal());
@@ -813,8 +855,20 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
 
   // Library Main Sorting Mode: 'title' | 'console' | 'bitness' | 'genre' | 'age' | 'size'
   const [librarySortBy, setLibrarySortBy] = useState<
-    'title' | 'console' | 'bitness' | 'genre' | 'age' | 'size'
+    'title' | 'console' | 'bitness' | 'genre' | 'age' | 'size' | 'status'
   >('title');
+  // Фильтр по статусу: оригиналы, переводы, хаки, прочие патчи. / Status filter: originals, translations, hacks, other patches.
+  const [libraryModFilter, setLibraryModFilter] = useState<'all' | 'modded' | RomModGroup>('all');
+  // Коллекции: в «Все» одна карточка на игру, версии с других консолей под кнопкой.
+  // Collections: in "All" one card per game, versions from other consoles behind a button.
+  const [groupCollections, setGroupCollections] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('aegis.lib.collections') !== '0';
+    } catch {
+      return true;
+    }
+  });
+  const [collectionModalLeadId, setCollectionModalLeadId] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedGameId, setSelectedGameId] = useState<string>('g1');
@@ -1353,6 +1407,10 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
           continue;
         }
       }
+      if (libraryModFilter !== 'all') {
+        const grp = modGroup((g.modKind as RomModKind) || 'original');
+        if (libraryModFilter === 'modded' ? grp === 'original' : grp !== libraryModFilter) continue;
+      }
       if (hasQuery) {
         const hit =
           g.title.toLowerCase().includes(q) ||
@@ -1400,11 +1458,49 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       if (librarySortBy === 'size') {
         return b.sizeMB - a.sizeMB;
       }
+      if (librarySortBy === 'status') {
+        return (
+          (MOD_SORT_RANK[modGroup((a.modKind as RomModKind) || 'original')] || 9) -
+            (MOD_SORT_RANK[modGroup((b.modKind as RomModKind) || 'original')] || 9) ||
+          activeCollator.compare(a.title, b.title)
+        );
+      }
       return 0;
     });
 
     return filtered;
-  }, [enrichedGamesSource, activeSidebarFilterKey, sidebarGroupBy, deferredSearchQuery, librarySortBy, t, activeCollator]);
+  }, [enrichedGamesSource, activeSidebarFilterKey, sidebarGroupBy, deferredSearchQuery, librarySortBy, libraryModFilter, t, activeCollator]);
+
+  // В редакторе (таблица файлов) нужны все файлы, поэтому там коллекции не сворачиваются.
+  // The editor (file table) needs every file, so collections are not collapsed there.
+  const collectionsActive =
+    groupCollections && activeSidebarFilterKey === 'ALL' && selectedConcept !== 'concept_c_workbench';
+
+  const groupedLibraryView = React.useMemo(() => {
+    if (!collectionsActive) return null;
+    const cols = buildCollections(filteredGames);
+    const badges = new Map<string, LibraryCollectionBadge>();
+    const leadOf = new Map<string, string>();
+    const membersByLead = new Map<string, typeof filteredGames>();
+    for (const c of cols) {
+      badges.set(c.lead.id, { count: c.members.length, consoles: c.consoles });
+      membersByLead.set(c.lead.id, c.members);
+      for (const m of c.members) leadOf.set(m.id, c.lead.id);
+    }
+    return { games: cols.map((c) => c.lead), badges, leadOf, membersByLead };
+  }, [collectionsActive, filteredGames]);
+
+  // Индекс по всей библиотеке для правой панели (не зависит от фильтров).
+  // Whole-library index for the right panel (does not depend on filters).
+  const libraryCollectionIndex = React.useMemo(
+    () => indexCollections(enrichedGamesSource),
+    [enrichedGamesSource]
+  );
+  const libraryLeadByKey = React.useMemo(() => {
+    const m = new Map<string, string>();
+    for (const [k, c] of libraryCollectionIndex.byKey) m.set(k, c.lead.id);
+    return m;
+  }, [libraryCollectionIndex]);
 
   const selectedGame = React.useMemo(
     () =>
@@ -1692,6 +1788,18 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
             </a>
           )}
 
+          {onOpenSetupWizard && (
+            <button
+              type="button"
+              onClick={onOpenSetupWizard}
+              title={t('header.setupWizard')}
+              aria-label={t('header.setupWizard')}
+              className="w-8 h-8 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center cursor-pointer transition"
+            >
+              <Wand2 className="w-4 h-4" />
+            </button>
+          )}
+
           {/* System Language Switcher directly next to Theme Toggle */}
           <div className="h-8 flex items-center gap-1 border border-slate-200 dark:border-slate-700 rounded-lg px-2 text-xs">
             <Globe className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
@@ -1902,6 +2010,9 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       {filteredGames.length === enrichedGamesSource.length
                         ? `${enrichedGamesSource.length} ${t('lib.gamesSuffix')}`
                         : `${filteredGames.length} ${t('lib.gamesOf')} ${enrichedGamesSource.length} ${t('lib.gamesSuffix')}`}
+                      {groupedLibraryView && groupedLibraryView.games.length < filteredGames.length
+                        ? ` · ${groupedLibraryView.games.length} ${t('coll.countSuffix')}`
+                        : ''}
                     </span>
                   </h2>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 break-all">
@@ -1966,6 +2077,30 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     ))}
                   </select>
 
+                  {/* Collections toggle */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !groupCollections;
+                      setGroupCollections(next);
+                      try {
+                        localStorage.setItem('aegis.lib.collections', next ? '1' : '0');
+                      } catch {
+                        // ignore
+                      }
+                    }}
+                    aria-pressed={groupCollections}
+                    title={t('coll.toggleHint')}
+                    className={`h-8 px-2.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
+                      groupCollections
+                        ? 'bg-accent text-white border-accent'
+                        : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    <span>{t('coll.toggle')}</span>
+                  </button>
+
                   {/* Sorting Dropdown */}
                   <div className="flex items-center gap-1.5 text-xs">
                     <span className="text-slate-500 dark:text-slate-400 font-semibold">{t('lib.sort')}</span>
@@ -1980,6 +2115,24 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       <option value="genre">{t('lib.sort.genre')}</option>
                       <option value="age">{t('lib.sort.age')}</option>
                       <option value="size">{t('lib.sort.size')}</option>
+                      <option value="status">{t('lib.sort.status')}</option>
+                    </select>
+                  </div>
+
+                  {/* Status Filter (hacks / translations / patches) */}
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <span className="text-slate-500 dark:text-slate-400 font-semibold">{t('lib.modFilter')}</span>
+                    <select
+                      value={libraryModFilter}
+                      onChange={(e) => setLibraryModFilter(e.target.value as any)}
+                      className="h-8 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 text-xs font-semibold text-slate-800 dark:text-slate-100"
+                    >
+                      <option value="all">{t('lib.modFilter.all')}</option>
+                      <option value="original">{t('lib.modFilter.original')}</option>
+                      <option value="modded">{t('lib.modFilter.modded')}</option>
+                      <option value="translation">{t('lib.modFilter.translation')}</option>
+                      <option value="hack">{t('lib.modFilter.hack')}</option>
+                      <option value="patched">{t('lib.modFilter.patched')}</option>
                     </select>
                   </div>
 
@@ -2114,10 +2267,14 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
 
               {/* VIRTUALIZED + BUFFERED VIEWS WITH «+» ADD-TO-BUILD BUTTON */}
               <VirtualizedLibraryViews
-                games={filteredGames}
+                games={groupedLibraryView ? groupedLibraryView.games : filteredGames}
                 viewMode={selectedConcept}
                 scrollContainerRef={mainScrollRef}
-                selectedGameId={selectedGame?.id || ''}
+                selectedGameId={
+                  (selectedGame && groupedLibraryView?.leadOf.get(selectedGame.id)) || selectedGame?.id || ''
+                }
+                collections={groupedLibraryView?.badges}
+                onOpenCollection={setCollectionModalLeadId}
                 checkedGameIds={checkedGameIds}
                 onSelectGame={handleSelectGame}
                 onToggleCheck={toggleCheckGame}
@@ -2284,7 +2441,9 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     </button>
                   </div>
 
-                  <DatFilesPanel disabled={activeRunning} />
+                  <DatFilesPanel disabled={activeRunning} systems={datSystems} />
+
+                  <PatcherPanel disabled={activeRunning} />
 
                   {/* Core Library Action Grid: 1G1R, Online Rename, XML Rename, Phantom Cleanup, Multi-Disc .M3U */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
@@ -3136,6 +3295,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
               libraryPortSlugs={libraryPortSlugs}
               onAddPortToLibrary={handleAddPortMasterToLibrary}
               libraryPath={effectiveLibraryPath}
+              initialSubTab={envInitialSubTab}
             />
           )}
         </main>
@@ -3289,6 +3449,51 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
               );
             };
 
+            // «Запуск»: встроенное WASM-ядро прямо в окне приложения (основной способ).
+            const qtDisc =
+              activeDiscObj || (hasMultiDisc && selectedGame.discs ? selectedGame.discs[0] : null);
+            const qtFileName = qtDisc
+              ? qtDisc.cleanFile || qtDisc.oldFile
+              : selectedGame.oldFile || selectedGame.cleanFile;
+            const qtCore = resolveQuickTestCore(selectedGame.consoleShort, qtFileName);
+            const handleQuickTest = async () => {
+              if (!qtCore) return;
+              // BIOS из раздела «BIOS»: только проверенные по MD5. Запрос доступа к папке
+              // допустим только по клику, поэтому берём их здесь, а не в окне теста.
+              let biosFile: File | null = null;
+              if (qtCore.biosKey) {
+                try {
+                  const list = await getVerifiedBiosFiles(qtCore.biosKey, true);
+                  biosFile = pickBiosForRegion(list, selectedGame.region)?.file || null;
+                } catch {
+                  biosFile = null;
+                }
+              }
+              const src = qtDisc || selectedGame;
+              let file: File | undefined | null = src.fileObj;
+              if (file && fileExt(file.name) === 'cue') {
+                file = pickCueDataTrack(src.cueText, src.companionFiles);
+              }
+              setQuickTestReq({
+                title: selectedGame.title,
+                consoleShort: selectedGame.consoleShort,
+                core: qtCore,
+                biosFile,
+                source: file
+                  ? { kind: 'file', file }
+                  : isNativeDesktopHost
+                  ? {
+                      kind: 'native',
+                      romFileName: qtFileName,
+                      relativePath: (qtDisc ? qtDisc.relativePath : selectedGame.relativePath) || '',
+                      consoleCode: selectedGame.consoleShort,
+                      libraryPath: effectiveLibraryPath || '',
+                      sdCardPath: selectedFolderName || '',
+                    }
+                  : { kind: 'pick' },
+              });
+            };
+
             return (
               <>
                 <div className="space-y-4">
@@ -3354,6 +3559,24 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         </span>
                       </div>
                     )}
+                    {selectedGame.modKind && selectedGame.modKind !== 'original' && (
+                      <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800 gap-2">
+                        <span className="text-slate-500 dark:text-slate-400 shrink-0">{t('insp.modStatus')}</span>
+                        <span className="text-violet-600 dark:text-violet-400 text-right" title={selectedGame.modNote}>
+                          <span className="font-bold">
+                            {t(`hack.kind.${selectedGame.modKind}`, selectedGame.modKind)}
+                            {selectedGame.modTag ? ` [${selectedGame.modTag}]` : ''}
+                          </span>
+                          {selectedGame.modNote && <span className="block">{selectedGame.modNote}</span>}
+                        </span>
+                      </div>
+                    )}
+                    {(!selectedGame.modKind || selectedGame.modKind === 'original') && selectedGame.modNote && (
+                      <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800 gap-2">
+                        <span className="text-slate-500 dark:text-slate-400 shrink-0">{t('insp.modStatus')}</span>
+                        <span className="text-emerald-600 dark:text-emerald-400 text-right">{selectedGame.modNote}</span>
+                      </div>
+                    )}
                     {selectedGame.titleNote && (
                       <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800 gap-2">
                         <span className="text-slate-500 dark:text-slate-400 shrink-0">{t('insp.titleNote')}</span>
@@ -3375,6 +3598,17 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       </span>
                     </div>
                   </div>
+
+                  {/* Versions, series and description */}
+                  <GameRelationsPanel
+                    game={selectedGame}
+                    versions={
+                      libraryCollectionIndex.byKey.get(libraryCollectionIndex.keyOfId.get(selectedGame.id) || '')?.members || [selectedGame]
+                    }
+                    series={seriesSiblings(libraryCollectionIndex, selectedGame.id)}
+                    libraryLeadByKey={libraryLeadByKey}
+                    onSelect={handleSelectGame}
+                  />
 
                   {/* Multi-Disc Folder & Disc List Switcher */}
                   {hasMultiDisc && selectedGame.discs && (
@@ -3492,18 +3726,25 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                 </div>
 
                 <div className="flex flex-wrap items-stretch gap-2">
+                  {/* «Запуск» — встроенное WASM-ядро, основной способ. Внешний эмулятор — запасной, ниже. */}
+                  {/* Play uses the built-in WASM core (primary); the external emulator is a secondary option below. */}
                   <button
-                    onClick={handleLaunchGame}
+                    type="button"
+                    onClick={qtCore ? handleQuickTest : handleLaunchGame}
                     title={
-                      isNativeDesktopHost
-                        ? `${t('insp.launchNative')} «${selectedGame.title}» (${activeEmuName})`
-                        : `${t('insp.launchCmd')}: ${selectedGame.title}`
+                      qtCore
+                        ? tf('qt.buttonHint', { core: qtCore.label })
+                        : `${tf('qt.unsupported', { console: selectedGame.consoleShort })} (${activeEmuName})`
                     }
                     className="flex-1 min-w-[12rem] h-10 px-4 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm font-semibold flex items-center justify-center gap-2 cursor-pointer transition"
                   >
                     <Play className="w-4 h-4 fill-white shrink-0" />
                     <span className="truncate">
-                      {isNativeDesktopHost ? t('insp.launchNative') : t('insp.launchCmd')}
+                      {qtCore
+                        ? t('qt.button')
+                        : isNativeDesktopHost
+                        ? t('insp.launchNative')
+                        : t('insp.launchCmd')}
                     </span>
                   </button>
 
@@ -3519,6 +3760,26 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <Plus className="w-4 h-4" />
                     <span>{t('lib.addToBuild')}</span>
                   </button>
+
+                  {qtCore && (
+                    <button
+                      type="button"
+                      onClick={handleLaunchGame}
+                      title={
+                        isNativeDesktopHost
+                          ? `${t('insp.launchExternalHint')}: ${resolvedEmu.exePath}`
+                          : `${t('insp.launchCmd')}: ${selectedGame.title}`
+                      }
+                      className="basis-full inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:underline cursor-pointer max-w-full"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">
+                        {isNativeDesktopHost
+                          ? tf('insp.launchExternal', { emu: activeEmuName })
+                          : t('insp.launchCmd')}
+                      </span>
+                    </button>
+                  )}
                 </div>
               </>
             );
@@ -3600,6 +3861,34 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       {/* ==================================================================== */}
       {/* ADD GAME TO BUILD MODAL («+» в библиотеке / инспекторе)               */}
       {/* ==================================================================== */}
+      {collectionModalLeadId && groupedLibraryView?.membersByLead.get(collectionModalLeadId) && (
+        <CollectionModal
+          title={
+            groupedLibraryView.membersByLead.get(collectionModalLeadId)!.find((m) => m.id === collectionModalLeadId)?.title || ''
+          }
+          members={groupedLibraryView.membersByLead.get(collectionModalLeadId)!}
+          selectedId={selectedGame?.id || ''}
+          onPick={(id) => {
+            handleSelectGame(id);
+            setCollectionModalLeadId(null);
+          }}
+          onClose={() => setCollectionModalLeadId(null)}
+        />
+      )}
+
+      {quickTestReq && (
+        <QuickTestModal
+          request={quickTestReq}
+          onClose={() => setQuickTestReq(null)}
+          onAddLog={onAddLog}
+          onOpenBios={() => {
+            setQuickTestReq(null);
+            setEnvInitialSubTab('bios');
+            setPreviewTab('env');
+          }}
+        />
+      )}
+
       {addToBuildGame && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-2xl max-w-lg w-full p-5 space-y-4 shadow-2xl">

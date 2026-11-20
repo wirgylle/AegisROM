@@ -225,6 +225,20 @@ func matchInEntries(entries []libretroEntry, cleanTitle, compKey, preferredRegio
 	}
 }
 
+// LibretroThumbnailURLs строит ссылки на обложку, скриншот и титульный экран для имени из
+// индекса Libretro. Пустое имя (не найдено) — пустые ссылки.
+// LibretroThumbnailURLs builds box art / snap / title URLs; an empty name gives empty URLs.
+func LibretroThumbnailURLs(libretroSystem, fileName string) (boxArt, snap, title string) {
+	if strings.TrimSpace(libretroSystem) == "" || strings.TrimSpace(fileName) == "" {
+		return "", "", ""
+	}
+	sysEsc := url.PathEscape(libretroSystem)
+	fileEsc := url.PathEscape(fileName + ".png")
+	return fmt.Sprintf("%s/%s/Named_Boxarts/%s", libretroThumbnailsBase, sysEsc, fileEsc),
+		fmt.Sprintf("%s/%s/Named_Snaps/%s", libretroThumbnailsBase, sysEsc, fileEsc),
+		fmt.Sprintf("%s/%s/Named_Titles/%s", libretroThumbnailsBase, sysEsc, fileEsc)
+}
+
 // FindBestLibretroMatch возвращает имя из индекса Libretro или "" (не найдено).
 // Если индекс недоступен или пуст, возвращает "<cleanTitle> (<регион>)", как раньше.
 func FindBestLibretroMatch(libretroSystem, cleanTitle, compKey, preferredRegion string) string {

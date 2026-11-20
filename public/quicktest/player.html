@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      Быстрый тест: EmulatorJS в изолированной странице. CSP не пускает плеер в сеть:
+      ядра и скрипты только с этого же адреса, ром приходит из окна приложения как File.
+      Quick test: EmulatorJS in an isolated page. CSP keeps it offline: cores and scripts
+      come from this origin only, the ROM arrives from the app window as a File.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' blob: 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' blob: data:; img-src 'self' blob: data:; media-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>AegisROM Quick Test</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+      #game { width: 100%; height: 100%; }
+      #wait { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+              color: #94a3b8; font: 13px system-ui, sans-serif; }
+    </style>
+  </head>
+  <body>
+    <div id="wait">…</div>
+    <div id="game"></div>
+    <script src="./player.js"></script>
+  </body>
+</html>

@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   Sparkles,
+  Eye,
   Filter,
   Plus,
   Trash2,
@@ -23,7 +24,11 @@ import {
   Package,
   History,
   GitCompare,
+  Wrench,
 } from 'lucide-react';
+import { BuildBiosStrip } from './BuildBiosStrip';
+import { BuildContentsModal } from './BuildContentsModal';
+import { copyBiosIntoBuild, loadBuildCopyBiosPref, saveBuildCopyBiosPref } from '../utils/biosScan';
 import { UnifiedGameRow } from './FigmaConceptStudio';
 import {
   BUILTIN_EXTENDED_GAMES,
@@ -164,6 +169,9 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
     savedBuildsProp && savedBuildsProp.length > 0 ? savedBuildsProp : loadSavedBuildsLocal()
   );
   const [syncModalBuild, setSyncModalBuild] = useState<SavedBuildRecord | null>(null);
+  // Сборка, открытая в окне «Посмотреть сборку». / Build shown in the "View build" window.
+  const [viewBuildId, setViewBuildId] = useState<string | null>(null);
+  const viewBuild = viewBuildId ? savedBuilds.find((b) => b.id === viewBuildId) || null : null;
 
   const setSavedBuilds = (next: SavedBuildRecord[]) => {
     setSavedBuildsState(next);
@@ -195,7 +203,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
   }, [portMasterCatalog, portMasterBuildSlugs]);
 
   const [presetCategoryFilter, setPresetCategoryFilter] = useState<
-    'all' | 'age' | 'mood_audience' | 'genre' | 'bitness'
+    'all' | 'age' | 'mood_audience' | 'genre' | 'bitness' | 'status'
   >('all');
 
   // Merge user's scanned ROMs with built-in catalog so all thematic categories (6+, 10+, 14+, 18+, girls, 8/16/32-bit) are rich and populated
@@ -601,6 +609,8 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
   };
 
   // Compute full conversion plan for every game in the queue
+  const [copyBiosToBuild, setCopyBiosToBuild] = useState<boolean>(() => loadBuildCopyBiosPref());
+
   const conversionPlanRows = useMemo(() => {
     return queuedGames.map((g) => {
       const cShort = g.consoleShort.toUpperCase();
@@ -769,6 +779,30 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
     const saved = await syncSavedBuildsWithServer(nextList);
     setSavedBuilds(saved);
     onAddLog?.(t('builds.saved.deletedLog'));
+  };
+
+  // Удаление игры или порта из сохранённой сборки (файлы на флешке не трогаем).
+  // Remove a game or port from a saved build (files on the drive stay untouched).
+  const updateSavedBuild = async (build: SavedBuildRecord, patch: Partial<SavedBuildRecord>) => {
+    const updated: SavedBuildRecord = { ...build, ...patch, updatedAt: new Date().toISOString() };
+    const nextList = savedBuilds.map((b) => (b.id === build.id ? updated : b));
+    setSavedBuilds(nextList);
+    const saved = await syncSavedBuildsWithServer(nextList);
+    setSavedBuilds(saved);
+  };
+
+  const handleRemoveBuildItem = async (build: SavedBuildRecord, index: number) => {
+    const item = build.items[index];
+    if (!item) return;
+    await updateSavedBuild(build, { items: build.items.filter((_, i) => i !== index) });
+    onAddLog?.(tf('builds.view.removedLog', { title: item.title, name: build.name }));
+  };
+
+  const handleRemoveBuildPort = async (build: SavedBuildRecord, slug: string) => {
+    await updateSavedBuild(build, {
+      portMasterSlugs: (build.portMasterSlugs || []).filter((s) => s !== slug),
+    });
+    onAddLog?.(tf('builds.view.removedLog', { title: slug, name: build.name }));
   };
 
   // Sync a saved build with updated ROMs from current Library and write updated files to the build directory by targetPath
@@ -1565,7 +1599,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
 
         const pmReadmeLines: string[] = [
           '==================================================================',
-          `AegisROM v0.5.4 (Beta) — PortMaster (${selectedProfile.shortName})`,
+          `AegisROM v0.5.6-dev (Beta) — PortMaster (${selectedProfile.shortName})`,
           '==================================================================',
           consoleLaunchNote,
           '',
@@ -1689,6 +1723,26 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
       }));
       await persistCurrentBuildRecord(targetRootHandle.name, savedItems);
 
+      // BIOS: копируем проверенные файлы для консолей сборки / copy verified BIOS for the build's consoles
+      let biosCopiedCount = 0;
+      if (copyBiosToBuild && conversionPlanRows.length > 0) {
+        try {
+          const bios = await copyBiosIntoBuild(
+            targetRootHandle,
+            selectedProfile.id,
+            conversionPlanRows.map((r) => r.game.consoleShort)
+          );
+          biosCopiedCount = bios.copied;
+          if (bios.copied > 0) {
+            onAddLog?.(tf('bios.build.copiedLog', { count: bios.copied, dir: bios.dir || '' }));
+          } else if (bios.skipped && bios.skipped !== 'noFolder') {
+            onAddLog?.(tf('bios.build.skippedLog', { reason: t(`bios.build.${bios.skipped}`) }));
+          }
+        } catch (err) {
+          onAddLog?.(tf('bios.build.skippedLog', { reason: String(err) }));
+        }
+      }
+
       // Write build manifest into root of chosen export folder
       const manifestJson = JSON.stringify(
         {
@@ -1699,6 +1753,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
           realConvertedCount,
           realCopiedCount,
           portMasterDeployedCount,
+          biosCopiedCount,
           skippedChdCount,
           errorCount,
           items: exportedManifestItems,
@@ -1748,7 +1803,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
       '@echo off',
       'chcp 65001 >nul',
       'echo ============================================================================',
-      'echo  AegisROM v0.5.4 (Beta) - Real Build Converter & Folder Hierarchy Export',
+      'echo  AegisROM v0.5.6-dev (Beta) - Real Build Converter & Folder Hierarchy Export',
       `echo  Build: ${customBuildName} (${conversionPlanRows.length})`,
       `echo  Target: ${selectedProfile.name}`,
       'echo  NOTE: Never performs fake extension renaming!',
@@ -2070,6 +2125,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
               },
               { id: 'genre', label: t('builds.cat.genre'), icon: Flame },
               { id: 'bitness', label: t('builds.cat.bitness'), icon: Gamepad2 },
+              { id: 'status', label: t('builds.cat.status'), icon: Wrench },
             ].map((cat) => {
               const Icon = cat.icon;
               const active = presetCategoryFilter === cat.id;
@@ -2661,6 +2717,16 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
               )}
             </div>
 
+            <BuildBiosStrip
+              profileId={selectedProfile.id}
+              consoleShorts={conversionPlanRows.map((r) => r.game.consoleShort)}
+              enabled={copyBiosToBuild}
+              onToggle={(on) => {
+                setCopyBiosToBuild(on);
+                saveBuildCopyBiosPref(on);
+              }}
+            />
+
             {/* Summary & Launch Buttons */}
             <div className="pt-2 border-t border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-2 text-xs">
               <div className="font-mono text-slate-700 dark:text-slate-300">
@@ -2996,6 +3062,15 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
                       <div className="flex flex-wrap items-center gap-1.5 shrink-0">
                         <button
                           type="button"
+                          onClick={() => setViewBuildId(build.id)}
+                          className="px-3 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 font-bold flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>{t('builds.view.openBtn')}</span>
+                        </button>
+
+                        <button
+                          type="button"
                           onClick={() => handleLoadSavedBuild(build)}
                           className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold cursor-pointer"
                         >
@@ -3053,6 +3128,15 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
           )}
         </div>
       )}
+
+      <BuildContentsModal
+        build={viewBuild}
+        libraryGames={allEnrichedGames}
+        portMasterCatalog={portMasterCatalog}
+        onRemoveItem={handleRemoveBuildItem}
+        onRemovePort={handleRemoveBuildPort}
+        onClose={() => setViewBuildId(null)}
+      />
 
       {/* Build Sync Discrepancy Modal */}
       <SyncDiffModal

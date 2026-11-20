@@ -28,6 +28,9 @@ jobs:
       - name: Type-check
         run: npm run lint
 
+      - name: Unit tests
+        run: npm test
+
       - name: Build
         run: npm run build
 
@@ -41,7 +44,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version-file: go.mod
 
       # aegis-setup embeds the compressed app; in CI a placeholder is enough to compile.
       - name: Placeholder for Setup payload
