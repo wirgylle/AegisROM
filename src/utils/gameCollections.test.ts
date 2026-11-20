@@ -2,7 +2,7 @@
 // Collections, series and Wikidata parsing tests: `npm test`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCollections, collectionKeyOf, indexCollections, normalizeGameTitle, seriesKeyOf, seriesSiblings } from './gameCollections.ts';
+import { buildCollections, buildSeries, collectionKeyOf, indexCollections, normalizeGameTitle, seriesKeyOf, seriesSiblings } from './gameCollections.ts';
 import { claimYear, lookupGameInfo, pickBestEntity, scoreCandidate } from './gameInfo.ts';
 
 const g = (id: string, title: string, consoleShort: string, extra: Record<string, string> = {}) => ({ id, title, consoleShort, ...extra });
@@ -122,4 +122,49 @@ test('lookupGameInfo: полный проход на заглушке', async ()
   assert.deepEqual(info.series, [{ id: 'Q100', label: 'Sonic the Hedgehog' }]);
   assert.deepEqual(info.seriesGames.map((x) => x.id), ['Q11', 'Q12']);
   assert.ok(urls.every((x) => x.includes('wikipedia.org') || x.includes('origin=*')));
+});
+
+test('buildSeries: Final Fantasy — вся линейка, Aladdin отдельно', () => {
+  const list = [
+    g('1', 'Final Fantasy VII', 'PS1'),
+    g('2', 'Final Fantasy VIII', 'PS1'),
+    g('3', 'Final Fantasy', 'NES'),
+    g('4', 'Final Fantasy Tactics', 'PS1'),
+    g('5', 'Final Fantasy VII', 'PC'),
+    g('6', 'Aladdin', 'SNES'),
+    g('7', 'Final Fantasy IX', 'PS1'),
+    g('8', 'Final Fantasy X', 'PS2'),
+    g('9', 'Final Fantasy XII', 'PS2'),
+  ];
+  const series = buildSeries(list);
+  assert.equal(series.length, 2);
+  const ff = series[0];
+  assert.equal(ff.key, 'final fantasy');
+  assert.equal(ff.label, 'Final Fantasy');
+  assert.equal(ff.lead.id, '3', 'лицо серии — игра с названием ровно как серия');
+  assert.equal(ff.games.length, 7, 'VII на PS1 и PC — одна игра (коллекция)');
+  assert.equal(ff.members.length, 8);
+  assert.deepEqual(ff.consoles, ['PS1', 'PC', 'NES', 'PS2']);
+  assert.equal(series[1].games.length, 1);
+  assert.equal(series[1].label, 'Aladdin');
+});
+
+test('buildSeries: Zelda с артиклем, Sonic, одиночная игра', () => {
+  const series = buildSeries([
+    g('z1', 'The Legend of Zelda: A Link to the Past', 'SNES'),
+    g('z2', 'Legend of Zelda, The - Ocarina of Time', 'N64'),
+    g('s1', 'Sonic the Hedgehog 2', 'GENESIS'),
+    g('s2', 'Sonic the Hedgehog', 'GENESIS'),
+    g('m', 'Mega Man X', 'SNES'),
+  ]);
+  assert.deepEqual(series.map((s) => s.games.length), [2, 2, 1]);
+  assert.equal(series[0].label, 'The Legend of Zelda');
+  assert.equal(series[1].label, 'Sonic the Hedgehog');
+  assert.equal(series[1].lead.id, 's2');
+  assert.equal(series[2].label, 'Mega Man X');
+});
+
+test('seriesKeyOf: XI–XVI считаются номером', () => {
+  assert.equal(seriesKeyOf('Final Fantasy XII'), 'final fantasy');
+  assert.equal(seriesKeyOf('Final Fantasy XIII-2'), 'final fantasy');
 });

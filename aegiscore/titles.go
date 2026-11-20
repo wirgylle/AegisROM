@@ -768,22 +768,27 @@ func stripLeadingIndexExcept007(s string) string {
 	return s
 }
 
+var romanKeyNumbers = map[string]string{
+	"ii": "2", "iii": "3", "iv": "4", "vi": "6", "vii": "7", "viii": "8", "ix": "9",
+	"xi": "11", "xii": "12", "xiii": "13", "xiv": "14", "xv": "15", "xvi": "16",
+	"xvii": "17", "xviii": "18", "xix": "19", "xx": "20",
+}
+
 func BuildComparisonKey(cleanTitle string) string {
 	s := strings.ToLower(cleanTitle)
 	s = stripLeadingIndexExcept007(s)
 
-	romanPairs := []struct{ rom, dig string }{
-		{" viii ", " 8 "}, {" vii ", " 7 "}, {" vi ", " 6 "},
-		{" iv ", " 4 "}, {" iii ", " 3 "}, {" ii ", " 2 "},
-	}
-	s = " " + s + " "
-	for _, rp := range romanPairs {
-		s = strings.ReplaceAll(s, rp.rom, rp.dig)
-	}
-
 	words := strings.FieldsFunc(s, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 	})
+	// Римские номера II–XX → цифры по словам, так что «VIII:» и «IX» тоже совпадают.
+	// Одиночные I, V, X не трогаем (Mega Man X). Та же замена в src/utils/titleAliases.ts.
+	// Roman part numbers II–XX → digits per word; lone I, V, X are left alone.
+	for i, w := range words {
+		if d, ok := romanKeyNumbers[w]; ok {
+			words[i] = d
+		}
+	}
 
 	noiseWords := map[string]bool{
 		"the": true, "and": true, "version": true, "edition": true,
