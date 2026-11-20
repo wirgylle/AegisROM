@@ -8,6 +8,7 @@ import (
 	"aegisgui/aegiscore"
 	"aegisgui/cmd/winsetup"
 	"archive/zip"
+	"bytes"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -669,6 +670,14 @@ func runHybridModernDesktopApp() bool {
 		saveFormFile := func(src io.Reader, filename string) (string, error) {
 			safeBase := filepath.Base(strings.ReplaceAll(filename, `\`, `/`))
 			dstPath := filepath.Join(tmpDir, safeBase)
+			// Большие файлы из окна с файлами через Go приходят ссылкой на путь (aegisapi.VFSUploadMarker).
+			// Large files from the Go-files window arrive as a path reference (aegisapi.VFSUploadMarker).
+			head := make([]byte, 8193)
+			n, _ := io.ReadFull(src, head)
+			if handled, err := aegisapi.MaterializeVFSUpload(head[:n], dstPath); handled {
+				return dstPath, err
+			}
+			src = io.MultiReader(bytes.NewReader(head[:n]), src)
 			outF, err := os.Create(dstPath)
 			if err != nil {
 				return "", err
@@ -1008,6 +1017,10 @@ func runHybridModernDesktopApp() bool {
 	// 4–5. Библиотека, сборки, PortMaster и скрапер: общие для всех оболочек (aegisapi).
 	aegisapi.RegisterLibraryRoutes(mux, appDir, touch)
 	aegisapi.RegisterStorageRoutes(mux, appDir, touch)
+	aegisapi.RegisterVFSRoutes(mux, appDir, touch, aegisapi.VFSOptions{
+		PickFolder:   func(title string) (string, error) { return promptSelectFolderDialog(title, "") },
+		PreferNative: useNativeWindow(appDir),
+	})
 
 	// 6. Serve Embedded React 19 + Tailwind CSS SPA directly from memory with explicit anti-cache MIME headers
 	mux.Handle("/", aegisapi.SPAHandler(webAssets, indexBytes, touch))

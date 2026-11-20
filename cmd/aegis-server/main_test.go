@@ -94,7 +94,7 @@ func TestServerSPA(t *testing.T) {
 }
 
 func TestRunRejectsNonLoopback(t *testing.T) {
-	if err := run("0.0.0.0:0", t.TempDir(), t.TempDir()); err == nil {
+	if err := run("0.0.0.0:0", t.TempDir(), t.TempDir(), ""); err == nil {
 		t.Fatal("ожидалась ошибка для не-loopback адреса")
 	}
 }
