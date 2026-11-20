@@ -273,6 +273,8 @@ export const RU: TranslationDict = {
   'qt.logStart': 'Быстрый тест: «{title}» в {core} ({file})',
   'qt.logError': 'Быстрый тест «{title}»: {err}',
   'qt.footer': 'Встроенный EmulatorJS (WASM) работает без интернета. Управление и настройки на панели внизу плеера. Это быстрая проверка: для полноценной игры используйте эмулятор из раздела «Среда».',
+  'qt.needBios': 'Для {console} нужен BIOS, а проверенный BIOS не найден. Добавьте его в «Среда → BIOS»: там видно, какой файл нужен и где его взять.',
+  'qt.openBios': 'Открыть раздел BIOS',
   'insp.launchLog': 'Запуск «{title}» ({rom}) в «{emu}»...',
   'insp.launchOk': 'Запущено (PID {pid}): {title} → {emu}',
   'insp.launchOkLog': 'Эмулятор запущен (PID {pid}): {cmd}',

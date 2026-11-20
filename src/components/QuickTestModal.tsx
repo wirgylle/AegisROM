@@ -26,21 +26,26 @@ export interface QuickTestRequest {
   consoleShort: string;
   core: QuickTestCore;
   source: QuickTestSource;
+  /** Проверенный BIOS из раздела «BIOS» (имя файла как в папке system RetroArch). */
+  biosFile?: File | null;
 }
 
 interface QuickTestModalProps {
   request: QuickTestRequest;
   onClose: () => void;
   onAddLog?: (msg: string) => void;
+  /** Открыть «Среда → BIOS», если для консоли нужен BIOS, а его нет. */
+  onOpenBios?: () => void;
 }
 
-type Phase = 'loading' | 'pick' | 'starting' | 'running' | 'error';
+type Phase = 'loading' | 'pick' | 'starting' | 'running' | 'error' | 'needBios';
 
 const PLAYER_URL = '/quicktest/player.html';
 
-export const QuickTestModal: React.FC<QuickTestModalProps> = ({ request, onClose, onAddLog }) => {
+export const QuickTestModal: React.FC<QuickTestModalProps> = ({ request, onClose, onAddLog, onOpenBios }) => {
   const { t, tf, lang } = useI18n();
-  const [phase, setPhase] = useState<Phase>('loading');
+  const missingBios = Boolean(request.core.biosRequired && !request.biosFile);
+  const [phase, setPhase] = useState<Phase>(missingBios ? 'needBios' : 'loading');
   const [error, setError] = useState<string>('');
   const [romFile, setRomFile] = useState<File | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -87,6 +92,7 @@ export const QuickTestModal: React.FC<QuickTestModalProps> = ({ request, onClose
   useEffect(() => {
     let cancelled = false;
     const src = request.source;
+    if (missingBios) return;
     if (src.kind === 'file') {
       acceptRef.current(src.file);
       return;
@@ -140,6 +146,8 @@ export const QuickTestModal: React.FC<QuickTestModalProps> = ({ request, onClose
         core: request.core.core,
         gameName: romFile.name,
         language: emulatorJsLanguage(lang),
+        biosFile: request.biosFile || undefined,
+        biosName: request.biosFile?.name,
       },
       window.location.origin
     );
@@ -205,7 +213,11 @@ export const QuickTestModal: React.FC<QuickTestModalProps> = ({ request, onClose
             </div>
             <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
               {request.consoleShort} · {request.core.label} (WASM)
-              {request.core.biosOptional ? ` · ${t('qt.biosOptional')}` : ''}
+              {request.biosFile
+                ? ` · BIOS: ${request.biosFile.name}`
+                : request.core.biosOptional
+                ? ` · ${t('qt.biosOptional')}`
+                : ''}
             </div>
           </div>
           <div className="flex items-center gap-1 shrink-0">
@@ -248,6 +260,24 @@ export const QuickTestModal: React.FC<QuickTestModalProps> = ({ request, onClose
             <div className="absolute inset-0 flex items-center justify-center gap-2 text-slate-300 text-sm">
               <Loader2 className="w-4 h-4 animate-spin" />
               <span>{t('qt.loadingRom')}</span>
+            </div>
+          )}
+
+          {phase === 'needBios' && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center text-sm">
+              <AlertTriangle className="w-6 h-6 text-amber-400" />
+              <p className="max-w-md text-slate-200">
+                {tf('qt.needBios', { console: request.consoleShort })}
+              </p>
+              {onOpenBios && (
+                <button
+                  type="button"
+                  onClick={onOpenBios}
+                  className="h-10 px-4 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm font-semibold cursor-pointer"
+                >
+                  {t('qt.openBios')}
+                </button>
+              )}
             </div>
           )}
 

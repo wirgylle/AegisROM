@@ -271,6 +271,8 @@ export const EN = {
   'qt.logStart': 'Quick test: «{title}» in {core} ({file})',
   'qt.logError': 'Quick test «{title}»: {err}',
   'qt.footer': 'Built-in EmulatorJS (WASM) runs offline. Controls and settings are in the panel at the bottom of the player. This is a quick check: for real play use the emulator from the Environment section.',
+  'qt.needBios': '{console} needs a BIOS to run, and no verified BIOS was found. Add it in Environment → BIOS: the check there shows which file is needed and where to get it.',
+  'qt.openBios': 'Open BIOS section',
   'insp.launchLog': 'Launching "{title}" ({rom}) in "{emu}"...',
   'insp.launchOk': 'Launched (PID {pid}): {title} → {emu}',
   'insp.launchOkLog': 'Emulator started (PID {pid}): {cmd}',

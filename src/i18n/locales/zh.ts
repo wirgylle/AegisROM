@@ -273,6 +273,8 @@ export const ZH: TranslationDict = {
   'qt.logStart': '快速测试：在 {core} 中运行《{title}》({file})',
   'qt.logError': '快速测试《{title}》：{err}',
   'qt.footer': '内置 EmulatorJS (WASM) 离线运行。操作和设置位于播放器底部栏。这只是快速检查：正式游玩请使用“环境”中的模拟器。',
+  'qt.needBios': '{console} 需要 BIOS 才能运行，但未找到已校验的 BIOS。请在“环境 → BIOS”中添加：那里会显示需要哪个文件以及获取途径。',
+  'qt.openBios': '打开 BIOS 页面',
   'insp.launchLog': '正在通过“{emu}”启动“{title}” ({rom})...',
   'insp.launchOk': '已启动 (PID {pid})：{title} → {emu}',
   'insp.launchOkLog': '模拟器已运行 (PID {pid})：{cmd}',

@@ -273,6 +273,8 @@ export const FR: TranslationDict = {
   'qt.logStart': 'Test rapide : « {title} » dans {core} ({file})',
   'qt.logError': 'Test rapide « {title} » : {err}',
   'qt.footer': 'EmulatorJS (WASM) intégré fonctionne hors ligne. Commandes et réglages dans la barre en bas du lecteur. C’est une vérification rapide : pour jouer, utilisez l’émulateur de la section Environnement.',
+  'qt.needBios': '{console} a besoin d’un BIOS et aucun BIOS vérifié n’a été trouvé. Ajoutez-le dans Environnement → BIOS : on y voit quel fichier il faut et où le trouver.',
+  'qt.openBios': 'Ouvrir la section BIOS',
   'insp.launchLog': 'Lancement de « {title} » ({rom}) dans « {emu} »...',
   'insp.launchOk': 'Lancé (PID {pid}) : {title} → {emu}',
   'insp.launchOkLog': 'Émulateur démarré (PID {pid}) : {cmd}',

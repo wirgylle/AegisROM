@@ -273,6 +273,8 @@ export const JA: TranslationDict = {
   'qt.logStart': 'クイックテスト：「{title}」を {core} で起動 ({file})',
   'qt.logError': 'クイックテスト「{title}」：{err}',
   'qt.footer': '内蔵のEmulatorJS (WASM) はオフラインで動作します。操作と設定はプレーヤー下部のバーにあります。簡易チェック用です。本格的なプレイには「環境」セクションのエミュレーターを使用してください。',
+  'qt.needBios': '{console} の起動には BIOS が必要ですが、検証済みの BIOS が見つかりません。「環境 → BIOS」で追加してください。必要なファイルと入手先が表示されます。',
+  'qt.openBios': 'BIOS セクションを開く',
   'insp.launchLog': '「{title}」({rom}) を「{emu}」で起動中...',
   'insp.launchOk': '起動完了 (PID {pid}): {title} → {emu}',
   'insp.launchOkLog': 'エミュレータ起動 (PID {pid}): {cmd}',
