@@ -1644,42 +1644,20 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     if (text) setSimActionText(text);
   };
 
-  const startSimulatedProgressTask = (taskLabel: string, steps: string[]) => {
+  // Раньше здесь была имитация прогресса: полоса доходила до 100 % и писала «Завершено», хотя
+  // ничего не делалось. Теперь честно говорим, что сначала нужно отсканировать папку.
+  // This used to fake progress up to 100 % and log "Done" while nothing happened. Now it says
+  // plainly that a folder has to be scanned first.
+  const startSimulatedProgressTask = (taskLabel: string, _steps: string[]) => {
     if (simTimerRef.current) {
       window.clearInterval(simTimerRef.current);
+      simTimerRef.current = null;
     }
-    setSimRunning(true);
-    setSimProgress(6);
-    setSimActionText(steps[0] || taskLabel);
-    onAddLog?.(`▶ ${tf('status.simStarted', { label: taskLabel })}`);
-
-    let currentPct = 6;
-    simTimerRef.current = window.setInterval(() => {
-      currentPct += 12;
-      if (currentPct >= 100) {
-        if (simTimerRef.current) window.clearInterval(simTimerRef.current);
-        simTimerRef.current = null;
-        setSimProgress(100);
-        const doneMsg = `✔ ${tf('status.simDone', { label: taskLabel })}`;
-        setSimActionText(doneMsg);
-        onAddLog?.(doneMsg);
-        window.setTimeout(() => {
-          setSimRunning(false);
-          setSimProgress(0);
-        }, 1200);
-      } else {
-        setSimProgress(currentPct);
-        const stepIdx = Math.min(
-          steps.length - 1,
-          Math.floor((currentPct / 100) * steps.length)
-        );
-        const stepText = steps[stepIdx] || taskLabel;
-        setSimActionText(stepText);
-        if (currentPct === 30 || currentPct === 66) {
-          onAddLog?.(`[${currentPct}%] ${stepText}`);
-        }
-      }
-    }, 280);
+    setSimRunning(false);
+    setSimProgress(0);
+    const msg = tf('tools.sim.needScan', { label: taskLabel });
+    setSimActionText(msg);
+    onAddLog?.(msg);
   };
 
   const handleStopAll = () => {
@@ -2522,17 +2500,11 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <button data-tool="scraper"
                       type="button"
                       onClick={() => {
-                        if (scannedRows.length > 0 && onScrapeMedia) {
+                        // Без отсканированных ромов App сам сканирует папку библиотеки. / Without scanned ROMs App scans the library folder itself.
+                        if (onScrapeMedia) {
                           onScrapeMedia();
                         } else {
-                          startSimulatedProgressTask(
-                            t('tools.lib.scraperTitle'),
-                            [
-                              t('tools.sim.scraper1'),
-                              t('tools.sim.scraper2'),
-                              t('tools.sim.scraper3'),
-                            ]
-                          );
+                          startSimulatedProgressTask(t('tools.lib.scraperTitle'), []);
                         }
                       }}
                       disabled={activeRunning}
@@ -2840,13 +2812,10 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <button data-tool="scraper"
                       type="button"
                       onClick={() => {
-                        if (scannedRows.length > 0 && onScrapeMedia) {
+                        if (onScrapeMedia) {
                           onScrapeMedia();
                         } else {
-                          startSimulatedProgressTask(t('tools.sd.scraperBtn'), [
-                            t('tools.sim.sdScrap1'),
-                            t('tools.sim.sdScrap2'),
-                          ]);
+                          startSimulatedProgressTask(t('tools.sd.scraperBtn'), []);
                         }
                       }}
                       disabled={activeRunning}

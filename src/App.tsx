@@ -49,6 +49,7 @@ import {
   isReadableTitle,
   isScrapeMatched,
   mergeScrapedUrls,
+  planScrapeStart,
   slotsToDownload,
   type MediaSlot,
 } from './utils/scrapePlan';
@@ -123,6 +124,7 @@ import {
 } from './utils/multiDiscEngine';
 import {
   saveDirectoryHandle,
+  loadDirectoryHandleRecord,
   listAllSavedDirectoryHandles,
   findSavedHandleMatchingPath,
   checkOrRequestHandlePermission,
@@ -7168,9 +7170,55 @@ export function App() {
     return deletedCount;
   };
 
+  // Скраппер из «Инструментов». После перезапуска библиотека открыта из базы, а ромов в сеансе нет:
+  // раньше кнопка показывала имитацию прогресса и ничего не качала. Теперь сначала сканируем
+  // папку библиотеки (нужны ссылки на папки консолей, чтобы писать images/ и gamelist.xml).
+  // Scraper from Tools. After a restart the library comes from the database and the session has no
+  // ROMs: the button used to show a fake progress bar and download nothing. Now the library folder
+  // is scanned first (console folder handles are needed to write images/ and gamelist.xml).
+  const handleScrapeLibraryMedia = async () => {
+    if (isAnyProcessRunning) return;
+    const hasScanned = romsRef.current.some((r) => r.status === 'verified');
+    let root: any = libraryDirHandle || rootDirHandle || null;
+    if (!hasScanned && !root) {
+      for (const key of ['library_root', 'scan_root']) {
+        const rec = await loadDirectoryHandleRecord(key);
+        if (rec?.handle && (await checkOrRequestHandlePermission(rec.handle, 'readwrite', true)) === 'granted') {
+          root = rec.handle;
+          applyGrantedHandle(rec);
+          setPendingRestoreHandles((prev) => prev.filter((h) => h.key !== rec.key));
+          break;
+        }
+      }
+    }
+    const plan = planScrapeStart(hasScanned, Boolean(root));
+    if (plan === 'scrape') {
+      await handleScrapeR36SMedia(romsRef.current);
+      return;
+    }
+    if (plan === 'needFolder') {
+      const msg = t('app.scrape.needFolder');
+      setCurrentActionText(msg);
+      addLog(msg);
+      return;
+    }
+    addLog(tf('app.scrape.scanFirst', { name: root.name }));
+    await scanDirectoryHandleRecursively(root, 'replace');
+    if (stopRequestedRef.current) return;
+    if (!romsRef.current.some((r) => r.status === 'verified')) {
+      const msg = tf('app.scrape.noRomsInFolder', { name: root.name });
+      setCurrentActionText(msg);
+      addLog(msg);
+      return;
+    }
+    await handleScrapeR36SMedia(romsRef.current, false, root);
+  };
+
   const handleScrapeR36SMedia = async (
     targetList: ScannedRomFile[] = romsRef.current,
-    exportBatAfter = false
+    exportBatAfter = false,
+    // Папка, только что найденная в этом же вызове: в state её ещё нет. / A folder found in this same call: not in state yet.
+    rootOverride: any = null
   ) => {
     const winners = targetList.filter((r) => r.status === 'verified');
     if (winners.length === 0 || isScraping) return;
@@ -7362,7 +7410,7 @@ export function App() {
         // A file is written only after the download is verified, so working media is never
         // overwritten by a failed replacement.
         const consoleDirHandle = r.targetDirHandle || r.parentHandle;
-        const activeRoot = rootDirHandle || sdTargetDirHandle || libraryDirHandle;
+        const activeRoot = rootOverride || rootDirHandle || sdTargetDirHandle || libraryDirHandle;
         const hasDisk = Boolean(activeRoot && consoleDirHandle);
         const saved: Partial<Record<MediaSlot, boolean>> | null = hasDisk ? {} : null;
         if (hasDisk && titleMatched && saved) {
@@ -7434,7 +7482,7 @@ export function App() {
         nextRoms.map((r) => r.targetDirHandle || r.parentHandle).filter(Boolean)
       );
 
-      const activeRoot = rootDirHandle || sdTargetDirHandle || libraryDirHandle;
+      const activeRoot = rootOverride || rootDirHandle || sdTargetDirHandle || libraryDirHandle;
       if (activeRoot) {
         const byConsoleHandle = new Map<any, ScannedRomFile[]>();
         for (const r of allRoms) {
@@ -8817,7 +8865,7 @@ export function App() {
         onGroupMultiDiscFolders={handleGroupMultiDiscFolders}
         autoGroupMultiDisc={autoGroupMultiDisc}
         onChangeAutoGroupMultiDisc={setAutoGroupMultiDisc}
-        onScrapeMedia={() => handleScrapeR36SMedia(roms)}
+        onScrapeMedia={() => void handleScrapeLibraryMedia()}
         onOnlineRename={() => handleOnlineRenameRoms()}
         datSystems={datSystems}
         onScanPhantomFolders={handleScanPhantomFolders}
