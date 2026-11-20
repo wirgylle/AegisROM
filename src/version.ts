@@ -16,8 +16,5 @@ export const DOWNLOAD_ZIP_URL = `${RELEASE_DOWNLOAD_BASE}/${ZIP_PKG_FILENAME}`;
 export const DOWNLOAD_PORTABLE_URL = `${RELEASE_DOWNLOAD_BASE}/${PORTABLE_EXE_FILENAME}`;
 export const DOWNLOAD_SCANNER_EXE_URL = `${RELEASE_DOWNLOAD_BASE}/aegis-scanner-win11-x64.exe`;
 
-// RU: «Угостить разработчика кофе». Пустая строка = кнопка скрыта. Адрес задаётся здесь
-//     или переменной VITE_SUPPORT_URL при сборке. Поменять также в README (раздел «Поддержать»).
-// EN: "Buy the developer a coffee". Empty = the button is hidden. Set it here or via
-//     VITE_SUPPORT_URL at build time. Also update README ("Support" section).
-export const SUPPORT_URL: string = import.meta.env.VITE_SUPPORT_URL || '';
+// RU: Адреса для доната («Угостить разработчика кофе») лежат в src/data/donate.ts.
+// EN: Donation addresses ("Buy the developer a coffee") live in src/data/donate.ts.

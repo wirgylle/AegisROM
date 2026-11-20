@@ -1,6 +1,6 @@
-// Тексты менеджера сохранений и ссылки «угостить кофе» (0.6.0). Лежат отдельно, как biosStrings.ts,
+// Тексты менеджера сохранений (0.6.0). Лежат отдельно, как biosStrings.ts,
 // чтобы не конфликтовать с параллельными ветками. Остальные языки берут английский текст.
-// Save manager and "buy me a coffee" strings (0.6.0). Kept apart like biosStrings.ts;
+// Save manager strings (0.6.0). Kept apart like biosStrings.ts;
 // other languages fall back to English.
 
 type Dict = Record<string, string>;
@@ -15,8 +15,6 @@ const EN: Dict = {
   'sv.noState': 'No saved state yet ({name})',
   'sv.logWritten': '{title}: save written to {name}',
   'sv.logWrittenBackup': '{title}: save written to {name}, previous version kept as {backup}',
-  'coffee.button': 'Buy the developer a coffee',
-  'coffee.hint': 'AegisROM is free. If it saves you time, you can thank the developer with a coffee.',
 };
 
 const RU: Dict = {
@@ -29,8 +27,6 @@ const RU: Dict = {
   'sv.noState': 'Сохранённого состояния пока нет ({name})',
   'sv.logWritten': '{title}: сохранение записано в {name}',
   'sv.logWrittenBackup': '{title}: сохранение записано в {name}, прошлая версия сохранена как {backup}',
-  'coffee.button': 'Угостить разработчика кофе',
-  'coffee.hint': 'AegisROM бесплатный. Если он экономит вам время, можно поблагодарить разработчика чашкой кофе.',
 };
 
 export const SAVE_STRINGS: Record<string, Dict> = { en: EN, ru: RU };
