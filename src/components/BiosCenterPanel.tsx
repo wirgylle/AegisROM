@@ -200,7 +200,8 @@ export const BiosCenterPanel: React.FC<BiosCenterPanelProps> = ({ onAddLog }) =>
     const s = report.systems;
     return {
       ok: s.filter((x) => x.status === 'ok').length,
-      attention: s.filter((x) => ATTENTION.includes(x.status)).length,
+      attention: s.filter((x) => x.status === 'fixable' || x.status === 'warn').length,
+      missing: s.filter((x) => x.status === 'missing').length,
       optional: s.filter((x) => x.status === 'optionalMissing').length,
     };
   }, [report]);
@@ -311,10 +312,13 @@ export const BiosCenterPanel: React.FC<BiosCenterPanelProps> = ({ onAddLog }) =>
             </span>
             <span
               className={`px-2 py-1 rounded-lg font-bold ${
-                summary.attention > 0 ? 'bg-rose-600 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200'
+                summary.attention > 0 ? 'bg-amber-500 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200'
               }`}
             >
               {t('bios.sum.attention')}: {summary.attention}
+            </span>
+            <span className="px-2 py-1 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold">
+              {t('bios.sum.missing')}: {summary.missing}
             </span>
             <span className="px-2 py-1 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold">
               {t('bios.sum.optional')}: {summary.optional}
