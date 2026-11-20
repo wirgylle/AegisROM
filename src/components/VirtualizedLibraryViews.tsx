@@ -17,6 +17,14 @@ interface VirtualizedLibraryViewsProps {
   onSelectGame: (id: string) => void;
   onToggleCheck: (id: string) => void;
   onAddToBuild?: (game: EnrichedBuildGame) => void;
+  /** Коллекции: id карточки-лица → число версий и консоли. / Collections: lead card id → version count and consoles. */
+  collections?: Map<string, LibraryCollectionBadge>;
+  onOpenCollection?: (leadId: string) => void;
+}
+
+export interface LibraryCollectionBadge {
+  count: number;
+  consoles: string[];
 }
 
 // Tile grid: as many columns as fit (min 160px each); covers keep a 3:4 box,
@@ -45,6 +53,10 @@ const warmedImageUrls = new Set<string>();
 interface MemoGridCardProps {
   game: EnrichedBuildGame;
   coverHeight: number;
+  collectionCount: number;
+  collectionConsoles: string;
+  collectionTitle: string;
+  onOpenCollection?: (id: string) => void;
   isSelected: boolean;
   onSelect: (id: string) => void;
   onAddToBuild?: (game: EnrichedBuildGame) => void;
@@ -54,7 +66,7 @@ interface MemoGridCardProps {
 }
 
 const MemoGridCard = React.memo<MemoGridCardProps>(
-  ({ game, coverHeight, isSelected, onSelect, onAddToBuild, addBtnTitle, discLabel }) => {
+  ({ game, coverHeight, isSelected, onSelect, onAddToBuild, addBtnTitle, discLabel, collectionCount, collectionConsoles, collectionTitle, onOpenCollection }) => {
     const [imgFailed, setImgFailed] = useState(false);
 
     useEffect(() => {
@@ -92,10 +104,13 @@ const MemoGridCard = React.memo<MemoGridCardProps>(
             </div>
           )}
           <div className="relative z-10 flex items-center justify-between text-[10px] font-mono">
-            <span className="px-1.5 py-0.5 rounded bg-slate-900/80 text-white font-semibold">
-              {game.consoleShort}
+            <span
+              className="px-1.5 py-0.5 rounded bg-slate-900/80 text-white font-semibold truncate min-w-0"
+              title={collectionCount > 1 ? collectionConsoles : undefined}
+            >
+              {collectionCount > 1 ? collectionConsoles : game.consoleShort}
             </span>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 shrink-0">
               <span className="px-1.5 py-0.5 rounded bg-slate-900/80 text-white font-semibold">
                 {game.region}
               </span>
@@ -115,6 +130,21 @@ const MemoGridCard = React.memo<MemoGridCardProps>(
               )}
             </div>
           </div>
+          {collectionCount > 1 && onOpenCollection && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenCollection(game.id);
+              }}
+              title={collectionTitle}
+              aria-label={collectionTitle}
+              className="relative z-10 self-start h-7 px-2 rounded-md bg-slate-900/85 hover:bg-accent text-white text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition"
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span className="tabular-nums">{collectionCount}</span>
+            </button>
+          )}
         </div>
         <div className="min-w-0">
           <div
@@ -147,6 +177,10 @@ const MemoGridCard = React.memo<MemoGridCardProps>(
     prev.game.region === next.game.region &&
     prev.game.size === next.game.size &&
     prev.game.discCount === next.game.discCount &&
+    prev.collectionCount === next.collectionCount &&
+    prev.collectionConsoles === next.collectionConsoles &&
+    prev.collectionTitle === next.collectionTitle &&
+    prev.onOpenCollection === next.onOpenCollection &&
     prev.onSelect === next.onSelect &&
     prev.onAddToBuild === next.onAddToBuild
 );
@@ -160,10 +194,14 @@ interface MemoCompactRowProps {
   discLabel: string;
   genreLabel: string;
   lang: string;
+  collectionCount: number;
+  collectionConsoles: string;
+  collectionTitle: string;
+  onOpenCollection?: (id: string) => void;
 }
 
 const MemoCompactRow = React.memo<MemoCompactRowProps>(
-  ({ game, isSelected, onSelect, onAddToBuild, addBtnTitle, discLabel, genreLabel }) => (
+  ({ game, isSelected, onSelect, onAddToBuild, addBtnTitle, discLabel, genreLabel, collectionCount, collectionConsoles, collectionTitle, onOpenCollection }) => (
     <tr
       onClick={() => onSelect(game.id)}
       style={{ height: `${COMPACT_ROW_HEIGHT}px` }}
@@ -174,6 +212,21 @@ const MemoCompactRow = React.memo<MemoCompactRowProps>(
       }`}
     >
       <td className="px-3 truncate align-middle" title={game.title}>
+        {collectionCount > 1 && onOpenCollection && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenCollection(game.id);
+            }}
+            title={collectionTitle}
+            aria-label={collectionTitle}
+            className="mr-1.5 h-5 px-1.5 rounded bg-slate-200 dark:bg-slate-700 hover:bg-accent hover:text-white text-slate-700 dark:text-slate-200 text-[10px] font-semibold inline-flex items-center gap-0.5 align-middle cursor-pointer"
+          >
+            <Layers className="w-3 h-3" />
+            <span className="tabular-nums">{collectionCount}</span>
+          </button>
+        )}
         <span>{game.title}</span>
         {game.discCount && game.discCount > 1 && (
           <span className="ml-1.5 text-[10px] font-mono text-slate-400 dark:text-slate-500">
@@ -182,7 +235,9 @@ const MemoCompactRow = React.memo<MemoCompactRowProps>(
         )}
       </td>
       <td className="px-3 font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap align-middle">
-        {game.consoleShort} · {game.discCount && game.discCount > 1 ? discLabel : game.bitnessGroup}
+        <span className="block truncate" title={collectionCount > 1 ? collectionConsoles : undefined}>
+          {collectionCount > 1 ? collectionConsoles : game.consoleShort} · {game.discCount && game.discCount > 1 ? discLabel : game.bitnessGroup}
+        </span>
       </td>
       <td
         className="px-3 text-slate-600 dark:text-slate-400 truncate align-middle"
@@ -220,6 +275,10 @@ const MemoCompactRow = React.memo<MemoCompactRowProps>(
     prev.lang === next.lang &&
     prev.discLabel === next.discLabel &&
     prev.genreLabel === next.genreLabel &&
+    prev.collectionCount === next.collectionCount &&
+    prev.collectionConsoles === next.collectionConsoles &&
+    prev.collectionTitle === next.collectionTitle &&
+    prev.onOpenCollection === next.onOpenCollection &&
     prev.addBtnTitle === next.addBtnTitle &&
     prev.game.id === next.game.id &&
     prev.game.title === next.game.title &&
@@ -330,8 +389,19 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
   onSelectGame,
   onToggleCheck,
   onAddToBuild,
+  collections,
+  onOpenCollection,
 }) => {
   const { t, tf, locale, lang } = useI18n();
+  const badgeOf = (id: string) => {
+    const b = collections?.get(id);
+    if (!b || b.count < 2) return { collectionCount: 1, collectionConsoles: '', collectionTitle: '' };
+    return {
+      collectionCount: b.count,
+      collectionConsoles: b.consoles.join(' · '),
+      collectionTitle: tf('coll.openHint', { count: b.count, consoles: b.consoles.join(', ') }),
+    };
+  };
   const listRootRef = useRef<HTMLDivElement | null>(null);
 
   const [viewportMetrics, setViewportMetrics] = useState({
@@ -617,6 +687,8 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
                 addBtnTitle={addBtnTitle}
                 discLabel={g.discCount && g.discCount > 1 ? tf('lib.discShort', { count: g.discCount }) : ''}
                 lang={lang}
+                {...badgeOf(g.id)}
+                onOpenCollection={onOpenCollection}
               />
             ))}
           </div>
@@ -665,6 +737,8 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
                   discLabel={g.discCount && g.discCount > 1 ? tf('lib.discShort', { count: g.discCount }) : ''}
                   genreLabel={localizeGenre(g.genre, t)}
                   lang={lang}
+                  {...badgeOf(g.id)}
+                  onOpenCollection={onOpenCollection}
                 />
               ))}
               {windowInfo.bottomSpacerPx > 0 && (
