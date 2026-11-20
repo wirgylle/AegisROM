@@ -25,6 +25,8 @@ import {
   GitCompare,
   Wrench,
 } from 'lucide-react';
+import { BuildBiosStrip } from './BuildBiosStrip';
+import { copyBiosIntoBuild, loadBuildCopyBiosPref, saveBuildCopyBiosPref } from '../utils/biosScan';
 import { UnifiedGameRow } from './FigmaConceptStudio';
 import {
   BUILTIN_EXTENDED_GAMES,
@@ -602,6 +604,8 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
   };
 
   // Compute full conversion plan for every game in the queue
+  const [copyBiosToBuild, setCopyBiosToBuild] = useState<boolean>(() => loadBuildCopyBiosPref());
+
   const conversionPlanRows = useMemo(() => {
     return queuedGames.map((g) => {
       const cShort = g.consoleShort.toUpperCase();
@@ -1690,6 +1694,26 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
       }));
       await persistCurrentBuildRecord(targetRootHandle.name, savedItems);
 
+      // BIOS: копируем проверенные файлы для консолей сборки / copy verified BIOS for the build's consoles
+      let biosCopiedCount = 0;
+      if (copyBiosToBuild && conversionPlanRows.length > 0) {
+        try {
+          const bios = await copyBiosIntoBuild(
+            targetRootHandle,
+            selectedProfile.id,
+            conversionPlanRows.map((r) => r.game.consoleShort)
+          );
+          biosCopiedCount = bios.copied;
+          if (bios.copied > 0) {
+            onAddLog?.(tf('bios.build.copiedLog', { count: bios.copied, dir: bios.dir || '' }));
+          } else if (bios.skipped && bios.skipped !== 'noFolder') {
+            onAddLog?.(tf('bios.build.skippedLog', { reason: t(`bios.build.${bios.skipped}`) }));
+          }
+        } catch (err) {
+          onAddLog?.(tf('bios.build.skippedLog', { reason: String(err) }));
+        }
+      }
+
       // Write build manifest into root of chosen export folder
       const manifestJson = JSON.stringify(
         {
@@ -1700,6 +1724,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
           realConvertedCount,
           realCopiedCount,
           portMasterDeployedCount,
+          biosCopiedCount,
           skippedChdCount,
           errorCount,
           items: exportedManifestItems,
@@ -2662,6 +2687,16 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
                 </button>
               )}
             </div>
+
+            <BuildBiosStrip
+              profileId={selectedProfile.id}
+              consoleShorts={conversionPlanRows.map((r) => r.game.consoleShort)}
+              enabled={copyBiosToBuild}
+              onToggle={(on) => {
+                setCopyBiosToBuild(on);
+                saveBuildCopyBiosPref(on);
+              }}
+            />
 
             {/* Summary & Launch Buttons */}
             <div className="pt-2 border-t border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-2 text-xs">

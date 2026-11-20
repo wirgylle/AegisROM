@@ -9,5 +9,6 @@
 | [hacks.md](hacks.md) · [EN](hacks.en.md) | Хаки, переводы и патчи: папки `hackroms/` и `patch/`, распознавание, патчер |
 | [desktop-shell.md](desktop-shell.md) | Нативное окно (Wails), хранение настроек, план macOS |
 | [ROADMAP.md](ROADMAP.md) | Дорожная карта: что и в какой версии планируется |
+| [bios.md](bios.md) | Раздел BIOS: база хешей, проверка, копирование в сборку |
 | [releasing.md](releasing.md) | Версионирование и выпуск релиза через GitHub Releases |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Ветки `main`/`dev`, pull request'ы, CI |
