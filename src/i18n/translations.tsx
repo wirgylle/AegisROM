@@ -9,6 +9,7 @@ import { SR } from './locales/sr';
 import { FR } from './locales/fr';
 import { IT } from './locales/it';
 import { SETUP_STRINGS } from './locales/setup';
+import { BIOS_STRINGS } from './biosStrings';
 
 export type SupportedLanguage =
   | 'en'
@@ -73,19 +74,20 @@ export function detectSystemLanguage(): SupportedLanguage {
   return 'en';
 }
 
-// Setup wizard and tour strings live in locales/setup.ts and are merged here.
-const EN_ALL = { ...EN, ...SETUP_STRINGS.en };
+// Отдельные файлы строк (мастер настройки, BIOS) подмешиваются сюда.
+// Separate string files (setup wizard, BIOS) are merged here.
+const EN_ALL = { ...EN, ...SETUP_STRINGS.en, ...BIOS_STRINGS.en };
 
 const DICTS: Record<SupportedLanguage, TranslationDict> = {
-  ru: { ...RU, ...SETUP_STRINGS.ru },
+  ru: { ...RU, ...SETUP_STRINGS.ru, ...BIOS_STRINGS.ru },
   en: EN_ALL,
-  de: { ...DE, ...SETUP_STRINGS.de },
-  es: { ...ES, ...SETUP_STRINGS.es },
-  ja: { ...JA, ...SETUP_STRINGS.ja },
-  zh: { ...ZH, ...SETUP_STRINGS.zh },
-  sr: { ...SR, ...SETUP_STRINGS.sr },
-  fr: { ...FR, ...SETUP_STRINGS.fr },
-  it: { ...IT, ...SETUP_STRINGS.it },
+  de: { ...DE, ...SETUP_STRINGS.de, ...BIOS_STRINGS.de },
+  es: { ...ES, ...SETUP_STRINGS.es, ...BIOS_STRINGS.es },
+  ja: { ...JA, ...SETUP_STRINGS.ja, ...BIOS_STRINGS.ja },
+  zh: { ...ZH, ...SETUP_STRINGS.zh, ...BIOS_STRINGS.zh },
+  sr: { ...SR, ...SETUP_STRINGS.sr, ...BIOS_STRINGS.sr },
+  fr: { ...FR, ...SETUP_STRINGS.fr, ...BIOS_STRINGS.fr },
+  it: { ...IT, ...SETUP_STRINGS.it, ...BIOS_STRINGS.it },
 };
 
 let activeLangRuntime: SupportedLanguage = detectSystemLanguage();
@@ -263,5 +265,6 @@ export function localizePresetCategory(
   if (c.includes('аудитор') || c.includes('aud')) return t('preset.cat.audience');
   if (c.includes('жанр') || c.includes('genre')) return t('preset.cat.genre');
   if (c.includes('поколен') || c.includes('gen')) return t('preset.cat.generation');
+  if (c.includes('статус') || c.includes('status')) return t('preset.cat.status');
   return category;
 }

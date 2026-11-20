@@ -1,3 +1,5 @@
+import { md5Hex } from './md5';
+
 // CRC32 IEEE 802.3 lookup table implementation
 const makeCRCTable = (): Uint32Array => {
   let c: number;
@@ -30,15 +32,9 @@ export async function calculateSHA1(buffer: ArrayBuffer): Promise<string> {
 }
 
 export async function calculateMD5(buffer: ArrayBuffer): Promise<string> {
-  // Simple fast surrogate MD5/SHA256 for browser runtime if subtle.digest doesn't support MD5 directly
-  try {
-    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    // Use first 16 bytes (32 hex chars) as deterministic checksum representation
-    return hashArray.slice(0, 16).map((b) => b.toString(16).padStart(2, '0')).join('');
-  } catch {
-    return 'cdd3c8c37322978ca8669b34bc89c804';
-  }
+  // Раньше здесь был обрезанный SHA-256 вместо MD5, теперь настоящий MD5.
+  // Previously this returned a truncated SHA-256 instead of MD5; now it is real MD5.
+  return md5Hex(new Uint8Array(buffer));
 }
 
 export async function hashFile(file: File): Promise<{ crc32: string; sha1: string; md5: string }> {

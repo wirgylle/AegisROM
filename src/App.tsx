@@ -104,6 +104,20 @@ import {
   type FolderMediaSignatureStats,
 } from './utils/mediaPlaceholderDetector';
 import { useI18n, tStatic, tfStatic, getActiveLocale } from './i18n/translations';
+import {
+  HACKROMS_DIR,
+  describeRomMod,
+  detectRomMod,
+  isInPatchFolder,
+  isModded,
+  linkPatchesToRom,
+  modTag,
+  refineModWithDat,
+  type PatchFileRef,
+  type RomModInfo,
+} from './utils/romHacks';
+import { isPatchFileName, readPatchInfo } from './utils/romPatcher';
+import { HackMoveModal, type HackMoveCandidate } from './components/HackMoveModal';
 
 interface ConsoleMeta {
   code: string;
@@ -579,6 +593,9 @@ interface ScannedRomFile {
   titleSource?: TitleSource;
   // Почему настоящее название не найдено (пусто, если найдено).
   titleNote?: string;
+  // Хак, перевод или пропатченный ром (см. utils/romHacks.ts).
+  // Hack, translation or patched ROM (see utils/romHacks.ts).
+  mod?: RomModInfo;
 }
 
 interface PhantomFolderCandidate {
@@ -606,8 +623,10 @@ const REGION_REGEX =
 const RUS_TAG_REGEX =
   /(\[rus\]|\(rus\)|\(ru\)|\[r-rus\]|\[russian\]|\(russian\)|_rus\b|\.rus\b|\brus\b|рус)/i;
 const REVISION_REGEX = /\((Rev\s*[0-9A-Z]+|v[0-9]+\.[0-9]+|Alt\s*[0-9]*)\)/i;
+// [h] (хак) и [t] (трейнер) — не мусор: их распознаёт utils/romHacks.ts.
+// [h] (hack) and [t] (trainer) are not junk: utils/romHacks.ts handles them.
 const JUNK_REGEX =
-  /\[(b[0-9]*|h[0-9]*|t[0-9]*|p[0-9]*|o[0-9]*)\]|\((Pirate|Bootleg|Corrupt|Bad)\)/i;
+  /\[(b[0-9]*|p[0-9]*|o[0-9]*)\]|\((Pirate|Bootleg|Corrupt|Bad)\)/i;
 const LEADING_NUM_REGEX = /^[\s\[\(#]*(\d{1,10})[\s\])\._-]+/;
 const PURE_NUMBERED_ROM_REGEX =
   /^(?:rom[_\-\s]*|game[_\-\s]*|track[_\-\s]*|file[_\-\s]*|psx[_\-\s]*|ps1[_\-\s]*|no[_\-\s]*|#)?0*(\d{1,10})(?:[_\-\s]*(?:disc|cd|d|part|track)?[_\-\s]*\d*)?$/i;
@@ -1428,6 +1447,9 @@ function scoreRomCandidate(r: ScannedRomFile, priority: string[]): number {
   if (r.revision) score += 15;
   if (r.isFromTopFolder) score += 10;
   if (r.extension !== '.zip') score += 5;
+  // Из двух одинаковых копий хака оставляем ту, что уже в hackroms/.
+  // Of two identical copies of a hack, keep the one already in hackroms/.
+  if (r.mod?.inHackFolder) score += 20;
   return score;
 }
 
@@ -1468,9 +1490,20 @@ function deduplicateAcrossSubfolders(
     }
   }
 
+  // Хаки, переводы и пропатченные ромы — не дубли оригинала: в сравнение по названию не идут.
+  // Точные копии (тот же CRC) отсеяны выше. Тем, что лежат не в hackroms/, предлагаем перенос.
+  // Hacks, translations and patched ROMs are not duplicates of the original: they skip title matching.
+  // Exact copies (same CRC) were removed above. Those outside hackroms/ get a move suggestion.
+  for (const item of cloned) {
+    if (item.status !== 'verified' || !isModded(item.mod)) continue;
+    item.reason = item.mod!.inHackFolder
+      ? tStatic('app.scan.hackKeptReason')
+      : tfStatic('app.scan.hackMoveReason', { dir: HACKROMS_DIR });
+  }
+
   const groups = new Map<string, ScannedRomFile[]>();
   for (const item of cloned) {
-    if (item.status !== 'verified') continue;
+    if (item.status !== 'verified' || isModded(item.mod)) continue;
     const discSuffix = item.discNumber ? `::disc_${item.discNumber}` : '';
     const gKey = `${item.consoleCode}::title::${item.comparisonKey}${discSuffix}`;
     const list = groups.get(gKey) || [];
@@ -1512,7 +1545,7 @@ function deduplicateAcrossSubfolders(
 
   const winnersByConsole = new Map<string, ScannedRomFile[]>();
   for (const item of cloned) {
-    if (item.status !== 'verified') continue;
+    if (item.status !== 'verified' || isModded(item.mod)) continue;
     const arr = winnersByConsole.get(item.consoleCode) || [];
     arr.push(item);
     winnersByConsole.set(item.consoleCode, arr);
@@ -1642,6 +1675,7 @@ function collapseMultiDiscScannedRoms(
         bitness: meta.generationShort,
         consoleCode: first.consoleCode,
         revision: first.revision,
+        modTag: modTag(first.mod),
       },
       cfg
     );
@@ -1849,6 +1883,8 @@ export function App() {
   const [downloadStatus, setDownloadStatus] = useState<string>('');
 
   const [undoStack, setUndoStack] = useState<UndoAction[]>([]);
+  // Хаки, которые 1G1R предлагает перенести в hackroms/. / Hacks that 1G1R offers to move into hackroms/.
+  const [hackMoveCandidates, setHackMoveCandidates] = useState<HackMoveCandidate[]>([]);
   const [logs, setLogs] = useState<string[]>(() => [
     tStatic('app.init.log1'),
     tStatic('app.init.log2'),
@@ -2621,6 +2657,38 @@ export function App() {
     return entries.filter((e) => !claimedTrackRelPaths.has(e.relPath));
   };
 
+  // Патчи из patch/: BPS и UPS хранят CRC32 исходника и результата, по ним связываем ромы и патчи.
+  // Patches from patch/: BPS and UPS store source and target CRC32, used to link ROMs and patches.
+  const linkScannedPatches = async (
+    inspected: ScannedRomFile[],
+    patchFiles: Array<{ file: File; relPath: string }>
+  ) => {
+    if (patchFiles.length === 0) return;
+    const patchRefs: PatchFileRef[] = [];
+    for (const p of patchFiles) {
+      try {
+        if (p.file.size > 64 * 1024 * 1024) continue;
+        const info = readPatchInfo(new Uint8Array(await p.file.arrayBuffer()));
+        if (!info) continue;
+        patchRefs.push({
+          name: p.file.name,
+          relativePath: p.relPath,
+          sourceCrc32: info.sourceCrc32,
+          targetCrc32: info.targetCrc32,
+        });
+      } catch {}
+    }
+    for (let k = 0; k < inspected.length; k++) {
+      const it = inspected[k];
+      if (!it.mod) continue;
+      inspected[k] = {
+        ...it,
+        mod: linkPatchesToRom(it.mod, [it.crc32, it.headerlessCrc32], patchRefs),
+      };
+    }
+    addLog(tf('app.scan.patchesFound', { count: patchRefs.length }));
+  };
+
   const inspectFileObject = async (
     file: File,
     relativePath: string,
@@ -2748,6 +2816,7 @@ export function App() {
       (cleanTitle.match(/[a-zA-Zа-яА-ЯёЁ]/g) || []).length >= 2;
 
     const { releaseYear } = inferGenreAndYear(cleanTitle, consoleCode);
+    const mod = detectRomMod(file.name, relativePath);
     let canonicalName = file.name;
     if (hasValidAlphabeticTitle) {
       canonicalName = formatRomFilenameByConfig(
@@ -2760,6 +2829,7 @@ export function App() {
           consoleCode,
           extension: canonExt,
           revision,
+          modTag: modTag(mod),
         },
         filenameConfigRef.current
       );
@@ -2838,6 +2908,7 @@ export function App() {
       parentHandle,
       titleSource,
       titleNote,
+      mod,
     };
   };
 
@@ -3505,6 +3576,8 @@ export function App() {
     }> = [];
     const localImageFilesMap = new Map<string, File>();
     const localVideoFilesMap = new Map<string, File>();
+    // Файлы патчей из папок patch/. / Patch files from patch/ folders.
+    const discoveredPatches: Array<{ file: File; relPath: string }> = [];
 
     const rootFolderTitle = rootHandle.name.toLowerCase();
     const prefixStart = CONSOLE_CATALOG[rootFolderTitle] ? rootHandle.name : '';
@@ -3568,7 +3641,11 @@ export function App() {
           const ext = dot !== -1 ? entry.name.slice(dot).toLowerCase() : '';
           const relCandidate = prefix ? `${prefix}/${entry.name}` : entry.name;
           const isPortScript = ext === '.sh' && relCandidate.toLowerCase().includes('port');
-          if (EXT_TO_DEFAULT_CONSOLE[ext] || isPortScript) {
+          if (isPatchFileName(entry.name) && isInPatchFolder(relCandidate)) {
+            try {
+              discoveredPatches.push({ file: await entry.getFile(), relPath: relCandidate });
+            } catch {}
+          } else if (EXT_TO_DEFAULT_CONSOLE[ext] || isPortScript) {
             const file = await entry.getFile();
             discovered.push({
               file,
@@ -3641,6 +3718,8 @@ export function App() {
           setProgressPct(Math.round(((i + 1) / pairedDiscovered.length) * 100));
         }
       }
+
+      await linkScannedPatches(inspected, discoveredPatches);
 
       const deduplicatedIncoming = deduplicateAcrossSubfolders(
         inspected,
@@ -3779,12 +3858,17 @@ export function App() {
     }
 
     const rawDiscovered: DiscoveredScanEntry[] = [];
+    const fallbackPatches: Array<{ file: File; relPath: string }> = [];
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
       const dot = f.name.lastIndexOf('.');
       const ext = dot !== -1 ? f.name.slice(dot).toLowerCase() : '';
       const rel = (f as any).webkitRelativePath || f.name;
       const isPortScript = ext === '.sh' && rel.toLowerCase().includes('port');
+      if (isPatchFileName(f.name) && isInPatchFolder(rel)) {
+        fallbackPatches.push({ file: f, relPath: rel });
+        continue;
+      }
       if (!EXT_TO_DEFAULT_CONSOLE[ext] && !isPortScript) continue;
       const lowerRel = rel.toLowerCase();
       if (
@@ -3835,6 +3919,8 @@ export function App() {
         setProgressPct(Math.round(((i + 1) / Math.max(1, pairedDiscovered.length)) * 100));
       }
     }
+
+    await linkScannedPatches(inspected, fallbackPatches);
 
     const deduplicatedIncoming = deduplicateAcrossSubfolders(
       inspected,
@@ -3986,6 +4072,7 @@ export function App() {
             region: r.region,
             isRussian: r.isRussian,
             year: metaForRom.releaseYear,
+            modTag: modTag(r.mod),
           },
           filenameConfig
         );
@@ -4970,6 +5057,7 @@ export function App() {
         consoleCode: r.consoleCode,
         extension: outExt,
         revision: r.revision,
+        modTag: modTag(r.mod),
       },
       cfg
     );
@@ -4991,6 +5079,7 @@ export function App() {
           bitness: meta.generationShort,
           consoleCode: r.consoleCode,
           revision: r.revision,
+          modTag: modTag(r.mod),
         },
         cfg
       );
@@ -5649,8 +5738,16 @@ export function App() {
           const i = verifiedIndices[v].idx;
           const r = updatedRoms[i];
 
-          const { dirHandle: targetDirHandle, subPath: targetSubPath } =
-            await getCachedConsoleDir(r);
+          const consoleTarget = await getCachedConsoleDir(r);
+          let targetDirHandle = consoleTarget.dirHandle;
+          let targetSubPath = consoleTarget.subPath;
+          // Хаки и переводы раскладываются в <консоль>/hackroms/. / Hacks and translations go to <console>/hackroms/.
+          const toHackDir = isModded(r.mod) && !r.isMultiDisc;
+          if (toHackDir) {
+            targetDirHandle = await targetDirHandle.getDirectoryHandle(HACKROMS_DIR, { create: true });
+            targetSubPath = `${targetSubPath}/${HACKROMS_DIR}`;
+          }
+          const movedMod = toHackDir && r.mod ? { ...r.mod, inHackFolder: true } : r.mod;
 
           // Multi-disc game -> place all discs inside dedicated subfolder + create .m3u playlist
           if (r.isMultiDisc && Array.isArray(r.discs) && r.discs.length > 1) {
@@ -5705,6 +5802,7 @@ export function App() {
               relativePath: `${targetSubPath}/${safeNewName}`,
               parentHandle: targetDirHandle,
               targetDirHandle,
+              mod: movedMod,
             };
             continue;
           }
@@ -5732,6 +5830,7 @@ export function App() {
             relativePath: `${targetSubPath}/${safeNewName}`,
             parentHandle: targetDirHandle,
             targetDirHandle,
+            mod: movedMod,
           };
         }
 
@@ -5925,9 +6024,127 @@ export function App() {
       });
       setCurrentActionText(doneMsg);
       addLog(doneMsg);
+
+      // Хаки и переводы не удаляем как дубли, а предлагаем перенести в hackroms/.
+      // Hacks and translations are not removed as duplicates; we offer to move them into hackroms/.
+      if (!stopRequestedRef.current) {
+        const hackCandidates = remaining.filter(
+          (r) =>
+            r.status === 'verified' &&
+            isModded(r.mod) &&
+            !r.mod!.inHackFolder &&
+            !r.isMultiDisc &&
+            r.parentHandle &&
+            r.fileObj
+        );
+        if (hackCandidates.length > 0) {
+          addLog(tf('app.g1r.hacksFound', { count: hackCandidates.length, dir: HACKROMS_DIR }));
+          setHackMoveCandidates(
+            hackCandidates.map((r) => {
+              const dir = r.relativePath.includes('/')
+                ? r.relativePath.slice(0, r.relativePath.lastIndexOf('/'))
+                : '';
+              return {
+                id: r.id,
+                fileName: r.fileName,
+                relativePath: r.relativePath,
+                targetPath: `${dir ? `${dir}/` : ''}${HACKROMS_DIR}/`,
+                description: describeRomMod(r.mod, tf),
+              };
+            })
+          );
+        }
+      }
     } catch (err) {
       addLog(tf('app.g1r.errLog', { err: String(err) }));
     } finally {
+      setIsOrganizing(false);
+      setProgressPct(100);
+    }
+  };
+
+  // Перенос выбранных хаков в hackroms/ рядом с ромом (в папке консоли).
+  // Moves the chosen hacks into hackroms/ next to the ROM (inside the console folder).
+  const handleMoveHacksToHackroms = async (ids: string[]) => {
+    if (isAnyProcessRunning || ids.length === 0) return;
+    const idSet = new Set(ids);
+    setIsOrganizing(true);
+    setProgressPct(0);
+    let moved = 0;
+    let failed = 0;
+    const newUndoBatch: UndoAction[] = [];
+    const touchedDirs = new Set<any>();
+    const updated = [...romsRef.current];
+    try {
+      const targets = updated
+        .map((r, idx) => ({ r, idx }))
+        .filter((x) => idSet.has(x.r.id) && x.r.parentHandle && x.r.fileObj);
+      for (let k = 0; k < targets.length; k++) {
+        if (stopRequestedRef.current) break;
+        const { r, idx } = targets[k];
+        setCurrentActionText(
+          tf('app.g1r.progress', { i: k + 1, total: targets.length, file: r.fileName })
+        );
+        setProgressPct(Math.round(((k + 1) / Math.max(1, targets.length)) * 95));
+        try {
+          const hackDir = await r.parentHandle.getDirectoryHandle(HACKROMS_DIR, { create: true });
+          await writeRomWithCompanionsToDir(r, hackDir, r.fileName, true);
+          const stem = r.fileName.replace(/\.[^/.]+$/, '');
+          await renameMediaAndSavesForRom(r.parentHandle, hackDir, stem, stem);
+          newUndoBatch.push({
+            fromDirHandle: hackDir,
+            fromName: r.fileName,
+            toDirHandle: r.parentHandle,
+            toName: r.fileName,
+            fileData: new ArrayBuffer(0),
+          });
+          touchedDirs.add(r.parentHandle);
+          const dir = r.relativePath.includes('/')
+            ? r.relativePath.slice(0, r.relativePath.lastIndexOf('/'))
+            : '';
+          const sub = `${dir ? `${dir}/` : ''}${HACKROMS_DIR}`;
+          let fileObj = r.fileObj;
+          try {
+            fileObj = await (await hackDir.getFileHandle(r.fileName)).getFile();
+          } catch {}
+          updated[idx] = {
+            ...r,
+            parentHandle: hackDir,
+            targetDirHandle: hackDir,
+            fileObj,
+            sourceSubfolder: sub,
+            relativePath: `${sub}/${r.fileName}`,
+            reason: t('app.scan.hackKeptReason'),
+            mod: r.mod ? { ...r.mod, inHackFolder: true } : r.mod,
+          };
+          moved++;
+          addLog(tf('app.sort.movedDupLog', { path: r.relativePath, target: sub }));
+        } catch (err) {
+          failed++;
+          addLog(tf('app.g1r.errItemLog', { path: r.relativePath || r.fileName, err: String(err) }));
+        }
+      }
+
+      // gamelist.xml в исходных папках больше не должен ссылаться на перенесённые файлы.
+      // gamelist.xml in the source folders must no longer list the moved files.
+      for (const h of touchedDirs) {
+        const left = updated.filter(
+          (x) => x.status === 'verified' && (x.targetDirHandle || x.parentHandle) === h
+        );
+        await writeGamelistXmlToHandle(h, left);
+      }
+
+      romsRef.current = updated;
+      setRoms(updated);
+      setLastScanMode('replace');
+      setScanRevision((n) => n + 1);
+      if (newUndoBatch.length > 0) setUndoStack(newUndoBatch);
+      if (rootDirHandle) syncScannedRomsIntoDb(updated, rootDirHandle.name, true);
+      const msg = tf('app.g1r.hacksMoved', { moved, failed, dir: HACKROMS_DIR });
+      setCurrentActionText(msg);
+      addLog(msg);
+    } finally {
+      setHackMoveCandidates([]);
       setIsOrganizing(false);
       setProgressPct(100);
     }
@@ -7216,6 +7433,8 @@ export function App() {
       // 1. Hash match against No-Intro / Redump DATs — the primary title source.
       let datHits = 0;
       const datMisses = new Map<string, string>();
+      // Уточнённый статус хака по хешу. / Hack status refined by hash.
+      const datMods = new Map<string, RomModInfo>();
       setCurrentActionText(t('app.rename.datStart'));
       const datResults = await lookupTitlesByHash(
         targets.map((r) => ({
@@ -7243,6 +7462,15 @@ export function App() {
       } else {
         for (const r of targets) {
           const m = datResults.get(r.id);
+          if (m && r.mod) {
+            // Хеш не врёт: совпал с чистым оригиналом — не хак; не нашёлся — ром изменён.
+            // The hash is the truth: a clean original match means not a hack; no match means modified.
+            // «Не найдено» засчитываем, только если DAT для системы был и хеш в нём не нашёлся.
+            // Count a miss only when a DAT for the system was loaded and the hash was not in it.
+            const realMiss = !m.matched && /hash not found/i.test(m.reason || '');
+            const refined = refineModWithDat(r.mod, m.matched || realMiss ? m : null);
+            if (refined !== r.mod) datMods.set(r.id, refined);
+          }
           if (m?.matched && m.name) {
             const d = titleFromDatMatch(m, r.isRussian);
             if ((d.title.match(/[a-zA-Zа-яА-ЯёЁ0-9]/g) || []).length < 1) continue;
@@ -7337,6 +7565,7 @@ export function App() {
         const newCandidate = updateRomWithFilenameConfig(
           {
             ...r,
+            mod: datMods.get(r.id) || r.mod,
             cleanTitle: bestTitle,
             region: resolved?.region || r.region,
             revision: resolved?.region ? resolved.revision || '' : r.revision,
@@ -8131,6 +8360,10 @@ export function App() {
       discs: mappedDiscs,
       titleSource: r.titleSource,
       titleNote: r.titleNote,
+      modKind: r.mod?.kind,
+      modTag: modTag(r.mod) || undefined,
+      modLang: r.mod?.language,
+      modNote: describeRomMod(r.mod, tf) || undefined,
     };
   };
 
@@ -8272,6 +8505,13 @@ export function App() {
             starredEmulatorsByConsole: starredMap,
           }));
         }}
+      />
+
+      <HackMoveModal
+        candidates={hackMoveCandidates}
+        busy={isOrganizing}
+        onConfirm={(ids) => void handleMoveHacksToHackroms(ids)}
+        onClose={() => setHackMoveCandidates([])}
       />
 
       {/* Interactive XML & Deep Header Mapping Modal */}
