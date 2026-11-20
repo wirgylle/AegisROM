@@ -67,7 +67,10 @@ import {
   saveMultiDbsToIndexedDB,
   loadMultiDbsFromIndexedDB,
 } from '../utils/persistentHandles';
-import { VirtualizedLibraryViews } from './VirtualizedLibraryViews';
+import { VirtualizedLibraryViews, type LibraryCollectionBadge } from './VirtualizedLibraryViews';
+import { CollectionModal } from './CollectionModal';
+import { GameRelationsPanel } from './GameRelationsPanel';
+import { buildCollections, indexCollections, seriesSiblings } from '../utils/gameCollections';
 import { inferPortMasterPcTestPlan } from '../utils/portMasterEngine';
 import {
   SUPPORTED_LANGUAGES,
@@ -853,6 +856,16 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   >('title');
   // Фильтр по статусу: оригиналы, переводы, хаки, прочие патчи. / Status filter: originals, translations, hacks, other patches.
   const [libraryModFilter, setLibraryModFilter] = useState<'all' | 'modded' | RomModGroup>('all');
+  // Коллекции: в «Все» одна карточка на игру, версии с других консолей под кнопкой.
+  // Collections: in "All" one card per game, versions from other consoles behind a button.
+  const [groupCollections, setGroupCollections] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('aegis.lib.collections') !== '0';
+    } catch {
+      return true;
+    }
+  });
+  const [collectionModalLeadId, setCollectionModalLeadId] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedGameId, setSelectedGameId] = useState<string>('g1');
@@ -1455,6 +1468,37 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     return filtered;
   }, [enrichedGamesSource, activeSidebarFilterKey, sidebarGroupBy, deferredSearchQuery, librarySortBy, libraryModFilter, t, activeCollator]);
 
+  // В редакторе (таблица файлов) нужны все файлы, поэтому там коллекции не сворачиваются.
+  // The editor (file table) needs every file, so collections are not collapsed there.
+  const collectionsActive =
+    groupCollections && activeSidebarFilterKey === 'ALL' && selectedConcept !== 'concept_c_workbench';
+
+  const groupedLibraryView = React.useMemo(() => {
+    if (!collectionsActive) return null;
+    const cols = buildCollections(filteredGames);
+    const badges = new Map<string, LibraryCollectionBadge>();
+    const leadOf = new Map<string, string>();
+    const membersByLead = new Map<string, typeof filteredGames>();
+    for (const c of cols) {
+      badges.set(c.lead.id, { count: c.members.length, consoles: c.consoles });
+      membersByLead.set(c.lead.id, c.members);
+      for (const m of c.members) leadOf.set(m.id, c.lead.id);
+    }
+    return { games: cols.map((c) => c.lead), badges, leadOf, membersByLead };
+  }, [collectionsActive, filteredGames]);
+
+  // Индекс по всей библиотеке для правой панели (не зависит от фильтров).
+  // Whole-library index for the right panel (does not depend on filters).
+  const libraryCollectionIndex = React.useMemo(
+    () => indexCollections(enrichedGamesSource),
+    [enrichedGamesSource]
+  );
+  const libraryLeadByKey = React.useMemo(() => {
+    const m = new Map<string, string>();
+    for (const [k, c] of libraryCollectionIndex.byKey) m.set(k, c.lead.id);
+    return m;
+  }, [libraryCollectionIndex]);
+
   const selectedGame = React.useMemo(
     () =>
       enrichedGamesSource.find((g) => g.id === selectedGameId) ||
@@ -1963,6 +2007,9 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       {filteredGames.length === enrichedGamesSource.length
                         ? `${enrichedGamesSource.length} ${t('lib.gamesSuffix')}`
                         : `${filteredGames.length} ${t('lib.gamesOf')} ${enrichedGamesSource.length} ${t('lib.gamesSuffix')}`}
+                      {groupedLibraryView && groupedLibraryView.games.length < filteredGames.length
+                        ? ` · ${groupedLibraryView.games.length} ${t('coll.countSuffix')}`
+                        : ''}
                     </span>
                   </h2>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 break-all">
@@ -2026,6 +2073,30 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       </option>
                     ))}
                   </select>
+
+                  {/* Collections toggle */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !groupCollections;
+                      setGroupCollections(next);
+                      try {
+                        localStorage.setItem('aegis.lib.collections', next ? '1' : '0');
+                      } catch {
+                        // ignore
+                      }
+                    }}
+                    aria-pressed={groupCollections}
+                    title={t('coll.toggleHint')}
+                    className={`h-8 px-2.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
+                      groupCollections
+                        ? 'bg-accent text-white border-accent'
+                        : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    <span>{t('coll.toggle')}</span>
+                  </button>
 
                   {/* Sorting Dropdown */}
                   <div className="flex items-center gap-1.5 text-xs">
@@ -2193,10 +2264,14 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
 
               {/* VIRTUALIZED + BUFFERED VIEWS WITH «+» ADD-TO-BUILD BUTTON */}
               <VirtualizedLibraryViews
-                games={filteredGames}
+                games={groupedLibraryView ? groupedLibraryView.games : filteredGames}
                 viewMode={selectedConcept}
                 scrollContainerRef={mainScrollRef}
-                selectedGameId={selectedGame?.id || ''}
+                selectedGameId={
+                  (selectedGame && groupedLibraryView?.leadOf.get(selectedGame.id)) || selectedGame?.id || ''
+                }
+                collections={groupedLibraryView?.badges}
+                onOpenCollection={setCollectionModalLeadId}
                 checkedGameIds={checkedGameIds}
                 onSelectGame={handleSelectGame}
                 onToggleCheck={toggleCheckGame}
@@ -3521,6 +3596,17 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     </div>
                   </div>
 
+                  {/* Versions, series and description */}
+                  <GameRelationsPanel
+                    game={selectedGame}
+                    versions={
+                      libraryCollectionIndex.byKey.get(libraryCollectionIndex.keyOfId.get(selectedGame.id) || '')?.members || [selectedGame]
+                    }
+                    series={seriesSiblings(libraryCollectionIndex, selectedGame.id)}
+                    libraryLeadByKey={libraryLeadByKey}
+                    onSelect={handleSelectGame}
+                  />
+
                   {/* Multi-Disc Folder & Disc List Switcher */}
                   {hasMultiDisc && selectedGame.discs && (
                     <div className="bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/80 rounded-xl p-3 space-y-2 text-xs">
@@ -3760,6 +3846,21 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       {/* ==================================================================== */}
       {/* ADD GAME TO BUILD MODAL («+» в библиотеке / инспекторе)               */}
       {/* ==================================================================== */}
+      {collectionModalLeadId && groupedLibraryView?.membersByLead.get(collectionModalLeadId) && (
+        <CollectionModal
+          title={
+            groupedLibraryView.membersByLead.get(collectionModalLeadId)!.find((m) => m.id === collectionModalLeadId)?.title || ''
+          }
+          members={groupedLibraryView.membersByLead.get(collectionModalLeadId)!}
+          selectedId={selectedGame?.id || ''}
+          onPick={(id) => {
+            handleSelectGame(id);
+            setCollectionModalLeadId(null);
+          }}
+          onClose={() => setCollectionModalLeadId(null)}
+        />
+      )}
+
       {quickTestReq && (
         <QuickTestModal
           request={quickTestReq}

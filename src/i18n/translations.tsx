@@ -10,6 +10,7 @@ import { FR } from './locales/fr';
 import { IT } from './locales/it';
 import { SETUP_STRINGS } from './locales/setup';
 import { BIOS_STRINGS } from './biosStrings';
+import { COLLECTION_STRINGS } from './collectionStrings';
 
 export type SupportedLanguage =
   | 'en'
@@ -76,10 +77,10 @@ export function detectSystemLanguage(): SupportedLanguage {
 
 // Отдельные файлы строк (мастер настройки, BIOS) подмешиваются сюда.
 // Separate string files (setup wizard, BIOS) are merged here.
-const EN_ALL = { ...EN, ...SETUP_STRINGS.en, ...BIOS_STRINGS.en };
+const EN_ALL = { ...EN, ...SETUP_STRINGS.en, ...BIOS_STRINGS.en, ...COLLECTION_STRINGS.en };
 
 const DICTS: Record<SupportedLanguage, TranslationDict> = {
-  ru: { ...RU, ...SETUP_STRINGS.ru, ...BIOS_STRINGS.ru },
+  ru: { ...RU, ...SETUP_STRINGS.ru, ...BIOS_STRINGS.ru, ...COLLECTION_STRINGS.ru },
   en: EN_ALL,
   de: { ...DE, ...SETUP_STRINGS.de, ...BIOS_STRINGS.de },
   es: { ...ES, ...SETUP_STRINGS.es, ...BIOS_STRINGS.es },
