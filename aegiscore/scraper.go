@@ -40,7 +40,12 @@ var libretroThumbnailsBase = "https://thumbnails.libretro.com"
 
 // libretroIndexRetryAfter — сколько не повторять загрузку индекса после сетевой ошибки,
 // чтобы пакетная сверка не ждала таймаут на каждом роме.
-const libretroIndexRetryAfter = 5 * time.Minute
+const libretroIndexRetryAfter = 2 * time.Minute
+
+// libretroIndexTimeout — список обложек больших систем (PS1, FBNeo) весит мегабайты,
+// 20 секунд на медленном канале не хватало, и вся консоль считалась «не найденной».
+// libretroIndexTimeout: big system listings are megabytes; 20 s was too short on slow links.
+var libretroIndexTimeout = 90 * time.Second
 
 type indexFailure struct {
 	err error
@@ -75,16 +80,44 @@ func LoadLibretroIndex(libretroSystem string) ([]libretroEntry, error) {
 	return entries, err
 }
 
+// fetchLibretroIndex качает список с одним повтором: сетевой сбой не должен
+// сразу записывать все ромы консоли в «не найдено».
+// fetchLibretroIndex retries once: one network hiccup must not fail a whole console.
 func fetchLibretroIndex(libretroSystem string) ([]libretroEntry, error) {
+	entries, err := fetchLibretroIndexOnce(libretroSystem)
+	if err != nil && isRetryableIndexError(err) {
+		time.Sleep(libretroIndexRetryDelay)
+		entries, err = fetchLibretroIndexOnce(libretroSystem)
+	}
+	return entries, err
+}
+
+type httpStatusError struct{ code int }
+
+func (e httpStatusError) Error() string { return fmt.Sprintf("HTTP %d", e.code) }
+
+// libretroIndexRetryDelay — пауза перед повтором (в тестах 0). / Pause before the retry (0 in tests).
+var libretroIndexRetryDelay = 2 * time.Second
+
+// Повторяем сетевые сбои и 5xx; 404 и прочие 4xx повторять бессмысленно.
+// Retry network errors and 5xx; 404 and other 4xx won't change.
+func isRetryableIndexError(err error) bool {
+	if se, ok := err.(httpStatusError); ok {
+		return se.code >= 500
+	}
+	return true
+}
+
+func fetchLibretroIndexOnce(libretroSystem string) ([]libretroEntry, error) {
 	indexURL := fmt.Sprintf("%s/%s/Named_Boxarts/", libretroThumbnailsBase, url.PathEscape(libretroSystem))
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := &http.Client{Timeout: libretroIndexTimeout}
 	resp, err := client.Get(indexURL)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+		return nil, httpStatusError{resp.StatusCode}
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -128,28 +161,43 @@ const (
 // libretroFuzzyThreshold — минимальное сходство слов для нечёткого совпадения.
 const libretroFuzzyThreshold = 0.55
 
+// Коды причин промаха: по ним клиент группирует отчёт скраппера и предлагает следующий шаг.
+// Miss reason codes: the client groups the scraper report by them and offers the next step.
+const (
+	MissNoSystem = "no-system" // у консоли нет списка Libretro / console has no Libretro listing
+	MissNoTitle  = "no-title"  // имя — номер или мусор, искать нечего / name is a number or junk
+	MissNetwork  = "network"   // список Libretro не загрузился / listing failed to load
+	MissNotInDB  = "not-in-db" // список загружен, игры в нём нет / listing loaded, game not in it
+)
+
 // TitleMatch — результат онлайн-сверки названия с индексом Libretro.
 type TitleMatch struct {
-	FileName string  // имя из индекса Libretro без .png, например "Contra (USA)"; "" — не найдено
-	Source   string  // TitleSourceLibretroExact / TitleSourceLibretroFuzzy; "" — не найдено
-	Score    float64 // сходство 0..1 (1 для точного совпадения)
-	Reason   string  // почему не найдено (пусто, если найдено)
+	FileName   string  // имя из индекса Libretro без .png, например "Contra (USA)"; "" — не найдено
+	Source     string  // TitleSourceLibretroExact / TitleSourceLibretroFuzzy; "" — не найдено
+	Score      float64 // сходство 0..1 (1 для точного совпадения)
+	Reason     string  // почему не найдено (пусто, если найдено)
+	ReasonCode string  // MissNoSystem / MissNoTitle / MissNetwork / MissNotInDB; пусто, если найдено
 }
 
 // MatchLibretroTitle ищет название рома в индексе обложек Libretro и объясняет, если не нашёл.
 func MatchLibretroTitle(libretroSystem, cleanTitle, compKey, preferredRegion string) TitleMatch {
 	if strings.TrimSpace(libretroSystem) == "" {
-		return TitleMatch{Reason: "для этой консоли нет индекса Libretro"}
+		return TitleMatch{Reason: "для этой консоли нет индекса Libretro", ReasonCode: MissNoSystem}
 	}
 	if IsPureNumberOrGenericTitle(cleanTitle) {
-		return TitleMatch{Reason: "нет исходного названия для поиска (имя файла — номер)"}
+		return TitleMatch{Reason: "нет исходного названия для поиска (имя файла — номер)", ReasonCode: MissNoTitle}
 	}
 	entries, err := LoadLibretroIndex(libretroSystem)
 	if err != nil {
-		return TitleMatch{Reason: "индекс Libretro недоступен: " + err.Error()}
+		code := MissNetwork
+		if se, ok := err.(httpStatusError); ok && se.code == http.StatusNotFound {
+			// Такой папки на сервере Libretro нет: консоль не поддерживается, это не сеть.
+			code = MissNoSystem
+		}
+		return TitleMatch{Reason: "индекс Libretro недоступен: " + err.Error(), ReasonCode: code}
 	}
 	if len(entries) == 0 {
-		return TitleMatch{Reason: "индекс Libretro для «" + libretroSystem + "» пуст"}
+		return TitleMatch{Reason: "индекс Libretro для «" + libretroSystem + "» пуст", ReasonCode: MissNoSystem}
 	}
 	return matchInEntries(entries, cleanTitle, compKey, preferredRegion)
 }
@@ -183,7 +231,7 @@ func matchInEntries(entries []libretroEntry, cleanTitle, compKey, preferredRegio
 
 	targetTokens := tokenizeNormalized(cleanTitle)
 	if len(targetTokens) == 0 {
-		return TitleMatch{Reason: "в названии нет слов для поиска"}
+		return TitleMatch{Reason: "в названии нет слов для поиска", ReasonCode: MissNoTitle}
 	}
 
 	bestName := ""
@@ -217,11 +265,12 @@ func matchInEntries(entries []libretroEntry, cleanTitle, compKey, preferredRegio
 		return TitleMatch{FileName: bestName, Source: TitleSourceLibretroFuzzy, Score: bestScore}
 	}
 	if bestName == "" {
-		return TitleMatch{Reason: "в индексе Libretro нет игр с такими словами"}
+		return TitleMatch{Reason: "в индексе Libretro нет игр с такими словами", ReasonCode: MissNotInDB}
 	}
 	return TitleMatch{
-		Score:  bestScore,
-		Reason: fmt.Sprintf("в индексе Libretro нет похожего названия (ближайшее: «%s», сходство %d%%)", bestName, int(bestScore*100)),
+		Score:      bestScore,
+		ReasonCode: MissNotInDB,
+		Reason:     fmt.Sprintf("в индексе Libretro нет похожего названия (ближайшее: «%s», сходство %d%%)", bestName, int(bestScore*100)),
 	}
 }
 

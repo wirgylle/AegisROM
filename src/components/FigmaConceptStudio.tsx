@@ -39,6 +39,8 @@ import {
 } from 'lucide-react';
 import { GameInspectorCoverVideo } from './GameInspectorCoverVideo';
 import { DatFilesPanel } from './DatFilesPanel';
+import { ScrapeReportCard, ScreenScraperPanel } from './ScreenScraperPanel';
+import type { ScrapeReport } from '../utils/scrapeReport';
 import { PatcherPanel } from './PatcherPanel';
 import {
   APP_FULL_TITLE,
@@ -269,6 +271,8 @@ interface FigmaConceptStudioProps {
   onChangeAutoGroupMultiDisc?: (val: boolean) => void;
   onScrapeMedia?: () => void;
   onOnlineRename?: () => void;
+  // Итог последнего скраппера (null — ещё не запускали). / Last scraper run (null: not run yet).
+  scrapeReport?: ScrapeReport | null;
   // Системы Libretro из библиотеки (для автозагрузки DAT). / Libretro systems in the library (DAT auto-download).
   datSystems?: string[];
   onScanPhantomFolders?: () => void;
@@ -643,6 +647,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   onChangeAutoGroupMultiDisc,
   onScrapeMedia,
   onOnlineRename,
+  scrapeReport = null,
   datSystems,
   onScanPhantomFolders,
   onRepairSdCard,
@@ -2515,7 +2520,27 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     </button>
                   </div>
 
+                  {scrapeReport && (
+                    <ScrapeReportCard
+                      report={scrapeReport}
+                      disabled={activeRunning}
+                      onStep={(step) => {
+                        if (step === 'rename') {
+                          onOnlineRename?.();
+                        } else if (step === 'retry') {
+                          onScrapeMedia?.();
+                        } else {
+                          document
+                            .querySelector('[data-tool="screenscraper"]')
+                            ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }
+                      }}
+                    />
+                  )}
+
                   <DatFilesPanel disabled={activeRunning} systems={datSystems} />
+
+                  <ScreenScraperPanel disabled={activeRunning} />
 
                   <PatcherPanel disabled={activeRunning} />
 

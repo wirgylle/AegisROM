@@ -36,6 +36,15 @@ import {
   List,
   Table as TableIcon,
 } from 'lucide-react';
+import {
+  emptyScrapeReport,
+  mediaFetchUrl,
+  missReasonOf,
+  nextScrapeSteps,
+  screenScraperItem,
+  totalMissed,
+  type ScrapeReport,
+} from './utils/scrapeReport';
 import { computeCRC32Hex } from './utils/crc32';
 import { expandTitleAbbreviations, romanToArabicInKey } from './utils/titleAliases';
 import {
@@ -581,6 +590,7 @@ type TitleSource =
   | 'index-strip'
   | 'libretro-exact'
   | 'libretro-fuzzy'
+  | 'screenscraper'
   | 'dat-nointro'
   | 'dat-redump'
   | 'dat';
@@ -1782,6 +1792,8 @@ export function App() {
   const [isOrganizing, setIsOrganizing] = useState(false);
   const [isRenamingNumbered, setIsRenamingNumbered] = useState(false);
   const [isScraping, setIsScraping] = useState(false);
+  // Итог последнего скраппера по причинам промахов. / Last scraper run grouped by miss reason.
+  const [scrapeReport, setScrapeReport] = useState<ScrapeReport | null>(null);
   const [isCleaningMedia, setIsCleaningMedia] = useState(false);
   const [isScanningPhantoms, setIsScanningPhantoms] = useState(false);
   const [isRepairingSd, setIsRepairingSd] = useState(false);
@@ -7379,9 +7391,57 @@ export function App() {
         matchMap.set(res.id, res);
       }
 
+      // Фаза 2: промахи Libretro ищем в ScreenScraper (если пользователь его настроил).
+      // Phase 2: Libretro misses go to ScreenScraper (if the user configured it).
+      let ssConfigured = false;
+      try {
+        ssConfigured = Boolean((await (await fetch('/api/screenscraper/config')).json()).configured);
+      } catch {}
+      const report: ScrapeReport = emptyScrapeReport(ssConfigured);
+      report.looked = romsNeedingScrape.length;
+      const ssMisses = ssConfigured ? romsNeedingScrape.filter((w) => !isScrapeMatched(matchMap.get(w.id))) : [];
+      if (ssMisses.length > 0 && !stopRequestedRef.current) {
+        addLog(tf('app.scrape.ssStart', { count: ssMisses.length }));
+        const chunk = 5;
+        for (let i = 0; i < ssMisses.length; i += chunk) {
+          if (stopRequestedRef.current) break;
+          setCurrentActionText(tf('app.scrape.ssLooking', { i: Math.min(i + chunk, ssMisses.length), total: ssMisses.length }));
+          const items = ssMisses.slice(i, i + chunk).map((w) =>
+            screenScraperItem(w, (CONSOLE_CATALOG[w.consoleCode] || CONSOLE_CATALOG.nes).libretroSystem)
+          );
+          let out: any = null;
+          try {
+            out = await (
+              await fetch('/api/screenscraper/lookup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ items }),
+              })
+            ).json();
+          } catch {
+            break;
+          }
+          for (const res of out?.results || []) {
+            const prev = matchMap.get(res.id);
+            if (res.matched) {
+              matchMap.set(res.id, res);
+            } else if (prev && missReasonOf(prev) !== 'no-title' && res.reasonCode !== 'ss-auth' && res.reasonCode !== 'ss-limit') {
+              // Номерное имя оставляем причиной «нет имени»: переименование по DAT ещё может помочь.
+              // A numbered name stays "no title": a DAT rename can still help.
+              matchMap.set(res.id, { ...prev, reason: res.reason, reasonCode: res.reasonCode });
+            }
+          }
+          setProgressPct(30 + Math.round(((i + chunk) / ssMisses.length) * 20));
+          if (out?.stop === 'ss-auth' || out?.stop === 'ss-limit') {
+            report.ssStopped = out.stop;
+            addLog(t(out.stop === 'ss-auth' ? 'app.scrape.ssStopAuth' : 'app.scrape.ssStopLimit'));
+            break;
+          }
+        }
+      }
+
       const nextRoms = [...targetList];
       let downloadedMediaCount = 0;
-      let unmatchedCount = 0;
 
       for (let i = 0; i < nextRoms.length; i++) {
         if (stopRequestedRef.current) break;
@@ -7443,7 +7503,9 @@ export function App() {
 
         const savedSlots = saved ? (Object.keys(saved) as MediaSlot[]).filter((k) => saved[k]) : [];
         const gotSomething = saved ? savedSlots.length > 0 : titleMatched;
-        if (!titleMatched) unmatchedCount++;
+        if (!titleMatched) report.missed[missReasonOf(m)]++;
+        else if (m.titleSource === 'screenscraper') report.screenscraper++;
+        else report.libretro++;
         if (gotSomething) downloadedMediaCount++;
 
         nextRoms[i] = {
@@ -7452,8 +7514,8 @@ export function App() {
           cleanTitle: officialTitle,
           canonicalName: newCanonicalName,
           titleSource: titleMatched
-            ? m.titleSource === 'libretro-fuzzy'
-              ? 'libretro-fuzzy'
+            ? m.titleSource === 'libretro-fuzzy' || m.titleSource === 'screenscraper'
+              ? m.titleSource
               : 'libretro-exact'
             : r.titleSource,
           titleNote: titleMatched ? '' : m.reason || r.titleNote,
@@ -7508,9 +7570,27 @@ export function App() {
           downloaded: downloadedMediaCount,
         })
       );
-      if (unmatchedCount > 0) {
-        addLog(tf('app.scrape.unmatchedSummary', { count: unmatchedCount }));
+      // Отчёт по причинам и подсказка следующего шага (кнопки — в блоке «Итог последнего скраппера»).
+      // Report by reason and next-step hints (buttons are in the "Last scraper run" card).
+      addLog(tf('app.scrape.reportFound', { libretro: report.libretro, ss: report.screenscraper }));
+      const missedTotal = totalMissed(report);
+      if (missedTotal > 0) {
+        addLog(
+          tf('app.scrape.reportMissed', {
+            total: missedTotal,
+            noTitle: report.missed['no-title'],
+            notInDb: report.missed['not-in-db'],
+            network: report.missed.network,
+            noSystem: report.missed['no-system'],
+          })
+        );
       }
+      for (const step of nextScrapeSteps(report)) {
+        if (step === 'rename') addLog(tf('app.scrape.hintRename', { count: report.missed['no-title'] }));
+        else if (step === 'setup-screenscraper') addLog(t('app.scrape.hintSetupSs'));
+        else if (step === 'retry') addLog(tf('app.scrape.hintRetry', { count: report.missed.network }));
+      }
+      setScrapeReport(report);
 
       if (exportBatAfter) {
         generateWindowsCatalogBatScript(nextRoms);
@@ -7531,7 +7611,7 @@ export function App() {
   ): Promise<boolean> => {
     if (!remoteUrl) return false;
     try {
-      const resp = await fetch(`/api/r36s/proxy-media?url=${encodeURIComponent(remoteUrl)}`);
+      const resp = await fetch(mediaFetchUrl(remoteUrl));
       if (!resp.ok) return false;
       const buf = await resp.arrayBuffer();
       if (!isFetchedMediaPayloadValid(buf, kind)) {
@@ -8867,6 +8947,7 @@ export function App() {
         onChangeAutoGroupMultiDisc={setAutoGroupMultiDisc}
         onScrapeMedia={() => void handleScrapeLibraryMedia()}
         onOnlineRename={() => handleOnlineRenameRoms()}
+        scrapeReport={scrapeReport}
         datSystems={datSystems}
         onScanPhantomFolders={handleScanPhantomFolders}
         onRepairSdCard={(fw) => handleRepairR36SSDCard(fw as any)}
