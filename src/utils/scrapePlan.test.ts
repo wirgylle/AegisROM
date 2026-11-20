@@ -1,7 +1,7 @@
 // Тесты решений скрапера: `npm test`. / Scraper decision tests: `npm test`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isReadableTitle, mergeScrapedUrls, slotsToDownload } from './scrapePlan.ts';
+import { isReadableTitle, mergeScrapedUrls, planScrapeStart, slotsToDownload } from './scrapePlan.ts';
 
 const ok = { status: 'valid' as const };
 const miss = { status: 'missing' as const };
@@ -73,4 +73,11 @@ test('readable vs garbled titles', () => {
   assert.equal(isReadableTitle('Tetris \uFFFD\uFFFD'), false);
   assert.equal(isReadableTitle('Pokémon Red'), true);
   assert.equal(isReadableTitle(''), false);
+});
+
+test('scraper without scanned ROMs scans the library folder instead of faking progress', () => {
+  assert.equal(planScrapeStart(true, true), 'scrape');
+  assert.equal(planScrapeStart(true, false), 'scrape');
+  assert.equal(planScrapeStart(false, true), 'scanThenScrape');
+  assert.equal(planScrapeStart(false, false), 'needFolder');
 });

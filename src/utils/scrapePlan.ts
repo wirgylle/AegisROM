@@ -103,3 +103,22 @@ export function isReadableTitle(title: string): boolean {
   const letters = (t.match(/[a-zA-Zа-яА-ЯёЁ]/g) || []).length;
   return letters >= 2 && !/^[\d\s_\-.#()\[\]]+$/.test(t);
 }
+
+// С чего начать скраппер из «Инструментов».
+// - В сеансе есть отсканированные ромы: качаем для них.
+// - Ромов нет (библиотека открыта из базы после перезапуска), но папка библиотеки известна:
+//   сначала сканируем её, иначе писать медиа некуда.
+// - Папки нет: честно просим её выбрать. Раньше здесь шла имитация прогресса, которая
+//   ничего не скачивала.
+//
+// How to start the scraper from Tools.
+// - Scanned ROMs in this session: scrape them.
+// - No ROMs (library opened from the database after a restart) but the library folder is known:
+//   scan it first, otherwise there is nowhere to write media.
+// - No folder: ask for one. This used to run a fake progress bar that downloaded nothing.
+export type ScrapeStart = 'scrape' | 'scanThenScrape' | 'needFolder';
+
+export function planScrapeStart(hasScannedRoms: boolean, hasLibraryFolder: boolean): ScrapeStart {
+  if (hasScannedRoms) return 'scrape';
+  return hasLibraryFolder ? 'scanThenScrape' : 'needFolder';
+}
