@@ -595,6 +595,8 @@ func runHybridModernDesktopApp() bool {
 
 	// Быстрый тест: файл рома для встроенного WASM-эмулятора (aegisapi/quicktest.go).
 	aegisapi.RegisterQuickTestRoutes(mux, touch)
+	// Сохранения встроенного запуска рядом с ромом (aegisapi/saves.go).
+	aegisapi.RegisterSaveRoutes(mux, touch)
 
 	// 3b. Native Disc Converter Status & chdman.exe Execution (Multi-track BIN+CUE / ISO <-> CHD)
 	mux.HandleFunc("/api/native/converter/status", func(w http.ResponseWriter, r *http.Request) {

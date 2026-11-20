@@ -39,7 +39,7 @@ EmulatorJS 4.2.3 не принимает BIOS как `File`, поэтому `pla
 
 Файл никуда не загружается. Плеер работает в отдельной странице `public/quicktest/player.html`, её CSP запрещает любые сетевые запросы, кроме адреса самого приложения. Проверку обновлений EmulatorJS на `cdn.emulatorjs.org` мы вырезаем при сборке.
 
-Ограничения: многодорожечный BIN/CUE лучше сконвертировать в CHD (Инструменты → Конвертер). Сохранения (SRAM) и состояния хранятся в IndexedDB браузерного профиля окна, настройки плеера в localStorage. С менеджером сохранений и файлами `.srm` на диске они пока не связаны, при очистке профиля пропадут.
+Ограничения: многодорожечный BIN/CUE лучше сконвертировать в CHD (Инструменты → Конвертер). В десктоп-версии сохранения (SRAM) и состояния пишутся файлами `.srm` и `.state` рядом с ромом, см. [saves.md](saves.md). Без Go API (браузер) они остаются в IndexedDB профиля и пропадут при его очистке. Настройки плеера хранятся в localStorage.
 
 ### Сборка
 
@@ -84,7 +84,7 @@ EmulatorJS 4.2.3 does not accept a BIOS as a `File`, so `player.js` wraps it in 
 
 The file is never uploaded. The player runs in a separate page, `public/quicktest/player.html`, whose CSP blocks all network requests except to the app itself. The EmulatorJS update check against `cdn.emulatorjs.org` is stripped at build time.
 
-Limits: convert multi-track BIN/CUE to CHD (Tools → Converter). Saves (SRAM) and states live in IndexedDB of the window's browser profile, player settings in localStorage. They are not linked to the save manager or `.srm` files on disk yet and are lost if the profile is cleared.
+Limits: convert multi-track BIN/CUE to CHD (Tools → Converter). In the desktop app saves (SRAM) and states are written as `.srm` and `.state` files next to the ROM, see [saves.md](saves.md). Without the Go API (browser) they stay in the profile's IndexedDB and are lost if it is cleared. Player settings live in localStorage.
 
 ### Build
 
