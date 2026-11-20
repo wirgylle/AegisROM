@@ -8,6 +8,7 @@ import { ZH } from './locales/zh';
 import { SR } from './locales/sr';
 import { FR } from './locales/fr';
 import { IT } from './locales/it';
+import { BIOS_STRINGS } from './biosStrings';
 
 export type SupportedLanguage =
   | 'en'
@@ -72,16 +73,18 @@ export function detectSystemLanguage(): SupportedLanguage {
   return 'en';
 }
 
+// Тексты раздела BIOS лежат в отдельном файле и подмешиваются сюда.
+// BIOS section strings live in a separate file and are merged here.
 const DICTS: Record<SupportedLanguage, TranslationDict> = {
-  ru: RU,
-  en: EN,
-  de: DE,
-  es: ES,
-  ja: JA,
-  zh: ZH,
-  sr: SR,
-  fr: FR,
-  it: IT,
+  ru: { ...RU, ...BIOS_STRINGS.ru },
+  en: { ...EN, ...BIOS_STRINGS.en },
+  de: { ...DE, ...BIOS_STRINGS.de },
+  es: { ...ES, ...BIOS_STRINGS.es },
+  ja: { ...JA, ...BIOS_STRINGS.ja },
+  zh: { ...ZH, ...BIOS_STRINGS.zh },
+  sr: { ...SR, ...BIOS_STRINGS.sr },
+  fr: { ...FR, ...BIOS_STRINGS.fr },
+  it: { ...IT, ...BIOS_STRINGS.it },
 };
 
 let activeLangRuntime: SupportedLanguage = detectSystemLanguage();
