@@ -5,7 +5,7 @@ import {
   Share2,
   Gamepad2,
   Play,
-  Zap,
+  ExternalLink,
   FileCode2,
   Search,
   HardDrive,
@@ -3371,7 +3371,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
               );
             };
 
-            // Быстрый тест: встроенное WASM-ядро прямо в окне приложения.
+            // «Запуск»: встроенное WASM-ядро прямо в окне приложения (основной способ).
             const qtDisc =
               activeDiscObj || (hasMultiDisc && selectedGame.discs ? selectedGame.discs[0] : null);
             const qtFileName = qtDisc
@@ -3637,34 +3637,26 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                 </div>
 
                 <div className="flex flex-wrap items-stretch gap-2">
+                  {/* «Запуск» — встроенное WASM-ядро, основной способ. Внешний эмулятор — запасной, ниже. */}
+                  {/* Play uses the built-in WASM core (primary); the external emulator is a secondary option below. */}
                   <button
-                    onClick={handleLaunchGame}
+                    type="button"
+                    onClick={qtCore ? handleQuickTest : handleLaunchGame}
                     title={
-                      isNativeDesktopHost
-                        ? `${t('insp.launchNative')} «${selectedGame.title}» (${activeEmuName})`
-                        : `${t('insp.launchCmd')}: ${selectedGame.title}`
+                      qtCore
+                        ? tf('qt.buttonHint', { core: qtCore.label })
+                        : `${tf('qt.unsupported', { console: selectedGame.consoleShort })} (${activeEmuName})`
                     }
                     className="flex-1 min-w-[12rem] h-10 px-4 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm font-semibold flex items-center justify-center gap-2 cursor-pointer transition"
                   >
                     <Play className="w-4 h-4 fill-white shrink-0" />
                     <span className="truncate">
-                      {isNativeDesktopHost ? t('insp.launchNative') : t('insp.launchCmd')}
+                      {qtCore
+                        ? t('qt.button')
+                        : isNativeDesktopHost
+                        ? t('insp.launchNative')
+                        : t('insp.launchCmd')}
                     </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleQuickTest}
-                    disabled={!qtCore}
-                    title={
-                      qtCore
-                        ? tf('qt.buttonHint', { core: qtCore.label })
-                        : tf('qt.unsupported', { console: selectedGame.consoleShort })
-                    }
-                    className="h-10 px-3.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-slate-800 dark:text-slate-100 text-sm font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition"
-                  >
-                    <Zap className="w-4 h-4" />
-                    <span>{t('qt.button')}</span>
                   </button>
 
                   <button
@@ -3679,6 +3671,26 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <Plus className="w-4 h-4" />
                     <span>{t('lib.addToBuild')}</span>
                   </button>
+
+                  {qtCore && (
+                    <button
+                      type="button"
+                      onClick={handleLaunchGame}
+                      title={
+                        isNativeDesktopHost
+                          ? `${t('insp.launchExternalHint')}: ${resolvedEmu.exePath}`
+                          : `${t('insp.launchCmd')}: ${selectedGame.title}`
+                      }
+                      className="basis-full inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:underline cursor-pointer max-w-full"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">
+                        {isNativeDesktopHost
+                          ? tf('insp.launchExternal', { emu: activeEmuName })
+                          : t('insp.launchCmd')}
+                      </span>
+                    </button>
+                  )}
                 </div>
               </>
             );

@@ -142,7 +142,7 @@ Open an [Issue](https://github.com/wirgylle/AegisROM/issues) and describe what y
 
 | Version | What's coming |
 |---|---|
-| **0.5.5 – 0.5.7** | The patcher and hacks module are already in `dev`; next: compressed xdelta patches. BIOS verification by checksum and copying the required BIOS into a build. Quick game test right in the app window. |
+| **0.5.5 – 0.5.7** | The patcher and hacks module are already in `dev`; next: compressed xdelta patches. BIOS verification by checksum and copying the required BIOS into a build. Play games right in the app window with the built-in emulator. |
 | **0.5.8** | First-run setup wizard: language, library and ROM folders, importing your own ROMs and renaming rules. While the library is built in the background, the app shows a tour of the main features. |
 | **before 0.6.0** | The app's own window instead of Edge or Chrome, with settings stored on disk. A macOS version: one `.dmg` for Intel and Apple Silicon, games launched through Mac emulators. PortMaster on Windows through a Linux environment (WSL). |
 | **0.6.0** | Save manager (`.srm`, `.state`, memory cards) with version history. Uploading builds to the console over Wi-Fi (SFTP / SMB / WebDAV) without removing the card. |
