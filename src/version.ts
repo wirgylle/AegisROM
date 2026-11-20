@@ -1,6 +1,6 @@
 // RU: Базовая версия (как в package.json) — для имён файлов и ссылок на релиз.
 // EN: Base version (same as package.json) for file names and release links.
-export const APP_BASE_VERSION = '0.5.6-dev';
+export const APP_BASE_VERSION = '0.5.6';
 // RU: Показываемая версия. Dev-сборки CI добавляют коммит: 0.5.6-dev+abc1234.
 // EN: Displayed version. CI dev builds append the commit: 0.5.6-dev+abc1234.
 export const APP_VERSION: string = import.meta.env.VITE_APP_VERSION || APP_BASE_VERSION;
