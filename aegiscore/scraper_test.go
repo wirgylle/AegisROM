@@ -24,15 +24,15 @@ func withLibretroServer(t *testing.T, names []string, status int) *int32 {
 		}
 		_, _ = w.Write([]byte(b.String()))
 	}))
-	oldBase := libretroThumbnailsBase
-	libretroThumbnailsBase = srv.URL
+	oldBase, oldDelay := libretroThumbnailsBase, libretroIndexRetryDelay
+	libretroThumbnailsBase, libretroIndexRetryDelay = srv.URL, 0
 	cacheMu.Lock()
 	libretroIndexCache = make(map[string][]libretroEntry)
 	libretroIndexFailures = make(map[string]indexFailure)
 	cacheMu.Unlock()
 	t.Cleanup(func() {
 		srv.Close()
-		libretroThumbnailsBase = oldBase
+		libretroThumbnailsBase, libretroIndexRetryDelay = oldBase, oldDelay
 	})
 	return &hits
 }
@@ -88,12 +88,46 @@ func TestLibretroIndexFailureIsCached(t *testing.T) {
 			t.Fatalf("got %+v", m)
 		}
 	}
-	if n := atomic.LoadInt32(hits); n != 1 {
-		t.Errorf("индекс запрошен %d раз, ожидался 1 (ошибка должна кэшироваться)", n)
+	// Один повтор на 5xx, дальше ошибка кэшируется. / One retry on 5xx, then the error is cached.
+	if n := atomic.LoadInt32(hits); n != 2 {
+		t.Errorf("индекс запрошен %d раз, ожидалось 2 (повтор, затем кэш ошибки)", n)
+	}
+	if m := MatchLibretroTitle(sys, "Sonic", "sonic", "USA"); m.ReasonCode != MissNetwork {
+		t.Errorf("5xx: code %q, want %q", m.ReasonCode, MissNetwork)
 	}
 	// Старый API: при недоступном индексе возвращает "<название> (<регион>)".
 	if got := FindBestLibretroMatch(sys, "Sonic", "sonic", "USA"); got != "Sonic (USA)" {
 		t.Errorf("FindBestLibretroMatch = %q", got)
+	}
+}
+
+func TestMissReasonCodes(t *testing.T) {
+	withLibretroServer(t, []string{"Contra (USA)"}, 200)
+	sys := "Nintendo - Nintendo Entertainment System"
+	cases := []struct{ title, want string }{
+		{"Totally Unknown Game", MissNotInDB},
+		{"Contra Force Extreme Edition Deluxe", MissNotInDB},
+		{"000123", MissNoTitle},
+		{"Contra", ""},
+	}
+	for _, c := range cases {
+		if got := MatchLibretroTitle(sys, c.title, BuildComparisonKey(c.title), "USA").ReasonCode; got != c.want {
+			t.Errorf("%q: code %q, want %q", c.title, got, c.want)
+		}
+	}
+	if got := MatchLibretroTitle("", "Contra", "contra", "USA").ReasonCode; got != MissNoSystem {
+		t.Errorf("empty system: %q", got)
+	}
+}
+
+func TestMissingLibretroFolderIsNoSystem(t *testing.T) {
+	hits := withLibretroServer(t, nil, http.StatusNotFound)
+	m := MatchLibretroTitle("Nintendo - Switch", "Zelda", "zelda", "USA")
+	if m.ReasonCode != MissNoSystem {
+		t.Errorf("404: code %q, want %q", m.ReasonCode, MissNoSystem)
+	}
+	if n := atomic.LoadInt32(hits); n != 1 {
+		t.Errorf("404 не повторяется, запросов %d", n)
 	}
 }
 

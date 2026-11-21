@@ -23,6 +23,7 @@ func RegisterLibraryRoutes(mux *http.ServeMux, appDir string, touch func()) {
 	}
 	dbFilePath := filepath.Join(appDir, "aegisrom-v5-db.json")
 	registerDatRoutes(mux, appDir, touch)
+	registerScreenScraperRoutes(mux, appDir, touch)
 
 	// 4. Persistent AegisDB Endpoints
 	mux.HandleFunc("/api/db/state", func(w http.ResponseWriter, r *http.Request) {
@@ -311,6 +312,7 @@ func RegisterLibraryRoutes(mux *http.ServeMux, appDir string, touch func()) {
 			TitleSource string  `json:"titleSource,omitempty"`
 			MatchScore  float64 `json:"matchScore,omitempty"`
 			Reason      string  `json:"reason,omitempty"`
+			ReasonCode  string  `json:"reasonCode,omitempty"`
 		}
 
 		results := make([]scrapeResult, 0, len(req.Items))
@@ -355,6 +357,7 @@ func RegisterLibraryRoutes(mux *http.ServeMux, appDir string, touch func()) {
 				TitleSource:           match.Source,
 				MatchScore:            match.Score,
 				Reason:                match.Reason,
+				ReasonCode:            match.ReasonCode,
 			})
 		}
 
