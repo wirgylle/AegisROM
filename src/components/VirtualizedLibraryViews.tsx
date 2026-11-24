@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, CheckCircle2, Layers, LibraryBig, Pencil, Plus } from 'lucide-react';
+import { ArrowDown, ArrowUp, CheckCircle2, FolderPlus, Layers, LibraryBig, Pencil, Plus } from 'lucide-react';
 import type { EnrichedBuildGame } from '../utils/buildsAndConverterEngine';
 import { localizeGenre, useI18n } from '../i18n/translations';
 import { MEDIA_FRAME_RATIO, mediaCandidates, mediaSetOf, type MediaKind, type PickedMedia } from '../utils/mediaKinds';
@@ -26,6 +26,8 @@ interface VirtualizedLibraryViewsProps {
   onEditGame?: (id: string) => void;
   /** Какое медиа показывать. / Which media to show. */
   mediaPrefs?: LibraryMediaPrefs;
+  /** «В коллекцию или серию…». / "Add to a collection or series…". */
+  onAddToGroup?: (id: string) => void;
 }
 
 export interface LibraryCollectionBadge {
@@ -82,6 +84,8 @@ const TABLE_OVERSCAN_ROWS = 14;
 const warmedImageUrls = new Set<string>();
 
 interface MemoGridCardProps {
+  onAddToGroup?: (id: string) => void;
+  groupBtnTitle: string;
   game: EnrichedBuildGame;
   coverHeight: number;
   mediaKind: MediaKind;
@@ -101,7 +105,7 @@ interface MemoGridCardProps {
 }
 
 const MemoGridCard = React.memo<MemoGridCardProps>(
-  ({ game, coverHeight, mediaKind, mediaFill, mediaFallback, isSelected, onSelect, onAddToBuild, addBtnTitle, discLabel, collectionCount, collectionConsoles, collectionTitle, collectionIsSeries, onOpenCollection }) => {
+  ({ game, coverHeight, mediaKind, mediaFill, mediaFallback, isSelected, onSelect, onAddToBuild, onAddToGroup, groupBtnTitle, addBtnTitle, discLabel, collectionCount, collectionConsoles, collectionTitle, collectionIsSeries, onOpenCollection }) => {
     const candidates = useMemo(
       () => mediaCandidates(mediaSetOf(game), mediaKind, mediaFallback),
       [game, mediaKind, mediaFallback]
@@ -152,6 +156,20 @@ const MemoGridCard = React.memo<MemoGridCardProps>(
               <span className="px-1.5 py-0.5 rounded bg-slate-900/80 text-white font-semibold">
                 {game.region}
               </span>
+              {onAddToGroup && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onAddToGroup(game.id);
+                  }}
+                  title={groupBtnTitle}
+                  aria-label={groupBtnTitle}
+                  className="w-7 h-7 rounded-md bg-slate-900/85 hover:bg-accent text-white flex items-center justify-center shadow-xs cursor-pointer transition"
+                >
+                  <FolderPlus className="w-4 h-4" />
+                </button>
+              )}
               {onAddToBuild && (
                 <button
                   type="button"
@@ -225,10 +243,14 @@ const MemoGridCard = React.memo<MemoGridCardProps>(
     prev.collectionIsSeries === next.collectionIsSeries &&
     prev.onOpenCollection === next.onOpenCollection &&
     prev.onSelect === next.onSelect &&
-    prev.onAddToBuild === next.onAddToBuild
+    prev.onAddToBuild === next.onAddToBuild &&
+    prev.onAddToGroup === next.onAddToGroup &&
+    prev.groupBtnTitle === next.groupBtnTitle
 );
 
 interface MemoCompactRowProps {
+  onAddToGroup?: (id: string) => void;
+  groupBtnTitle: string;
   game: EnrichedBuildGame;
   /** null — без миниатюры. / null: no thumbnail. */
   mediaKind: MediaKind | null;
@@ -274,7 +296,7 @@ function CompactThumb({ game, kind, fallback }: { game: EnrichedBuildGame; kind:
 }
 
 const MemoCompactRow = React.memo<MemoCompactRowProps>(
-  ({ game, mediaKind, mediaFallback, isSelected, onSelect, onAddToBuild, addBtnTitle, discLabel, genreLabel, collectionCount, collectionConsoles, collectionTitle, collectionIsSeries, onOpenCollection }) => (
+  ({ game, mediaKind, mediaFallback, isSelected, onSelect, onAddToBuild, onAddToGroup, groupBtnTitle, addBtnTitle, discLabel, genreLabel, collectionCount, collectionConsoles, collectionTitle, collectionIsSeries, onOpenCollection }) => (
     <tr
       onClick={() => onSelect(game.id)}
       style={{ height: `${COMPACT_ROW_HEIGHT}px` }}
@@ -332,6 +354,20 @@ const MemoCompactRow = React.memo<MemoCompactRowProps>(
         {game.size}
       </td>
       <td className="px-2 text-right whitespace-nowrap align-middle">
+        {onAddToGroup && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAddToGroup(game.id);
+            }}
+            title={groupBtnTitle}
+            aria-label={groupBtnTitle}
+            className="w-6 h-6 mr-1 rounded-md border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center justify-center cursor-pointer"
+          >
+            <FolderPlus className="w-3.5 h-3.5" />
+          </button>
+        )}
         {onAddToBuild && (
           <button
             type="button"
@@ -368,10 +404,14 @@ const MemoCompactRow = React.memo<MemoCompactRowProps>(
     prev.game.size === next.game.size &&
     prev.game.discCount === next.game.discCount &&
     prev.onSelect === next.onSelect &&
-    prev.onAddToBuild === next.onAddToBuild
+    prev.onAddToBuild === next.onAddToBuild &&
+    prev.onAddToGroup === next.onAddToGroup &&
+    prev.groupBtnTitle === next.groupBtnTitle
 );
 
 interface MemoEditorRowProps {
+  onAddToGroup?: (id: string) => void;
+  groupBtnTitle: string;
   game: EnrichedBuildGame;
   isSelected: boolean;
   isChecked: boolean;
@@ -387,7 +427,7 @@ interface MemoEditorRowProps {
 }
 
 const MemoEditorRow = React.memo<MemoEditorRowProps>(
-  ({ game, isSelected, isChecked, onSelect, onToggleCheck, onAddToBuild, onEditGame, addBtnTitle, editBtnTitle, manualTitle, discLabel }) => (
+  ({ game, isSelected, isChecked, onSelect, onToggleCheck, onAddToBuild, onAddToGroup, groupBtnTitle, onEditGame, addBtnTitle, editBtnTitle, manualTitle, discLabel }) => (
     <tr
       onClick={() => onSelect(game.id)}
       onDoubleClick={() => onEditGame?.(game.id)}
@@ -444,6 +484,20 @@ const MemoEditorRow = React.memo<MemoEditorRowProps>(
         {game.status}
       </td>
       <td className="px-2 text-right whitespace-nowrap align-middle">
+        {onAddToGroup && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAddToGroup(game.id);
+            }}
+            title={groupBtnTitle}
+            aria-label={groupBtnTitle}
+            className="w-6 h-6 mr-1 rounded-md border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center justify-center cursor-pointer"
+          >
+            <FolderPlus className="w-3.5 h-3.5" />
+          </button>
+        )}
         {onEditGame && (
           <button
             type="button"
@@ -489,7 +543,9 @@ const MemoEditorRow = React.memo<MemoEditorRowProps>(
     prev.game.discCount === next.game.discCount &&
     prev.onSelect === next.onSelect &&
     prev.onToggleCheck === next.onToggleCheck &&
-    prev.onAddToBuild === next.onAddToBuild
+    prev.onAddToBuild === next.onAddToBuild &&
+    prev.onAddToGroup === next.onAddToGroup &&
+    prev.groupBtnTitle === next.groupBtnTitle
 );
 
 export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = ({
@@ -505,6 +561,7 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
   onOpenCollection,
   onEditGame,
   mediaPrefs = DEFAULT_MEDIA_PREFS,
+  onAddToGroup,
 }) => {
   const { t, tf, locale, lang } = useI18n();
   const gridKind = mediaPrefs.grid;
@@ -728,6 +785,7 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
 
   const isBufferReady = bufferedCount >= games.length;
   const addBtnTitle = t('lib.addToBuild');
+  const groupBtnTitle = t('atg.button');
 
   return (
     <div ref={listRootRef} className="space-y-2.5">
@@ -810,6 +868,8 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
                 isSelected={selectedGameId === g.id}
                 onSelect={onSelectGame}
                 onAddToBuild={onAddToBuild}
+                onAddToGroup={onAddToGroup}
+                groupBtnTitle={groupBtnTitle}
                 addBtnTitle={addBtnTitle}
                 discLabel={g.discCount && g.discCount > 1 ? tf('lib.discShort', { count: g.discCount }) : ''}
                 lang={lang}
@@ -837,7 +897,7 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
               <col className="w-[28%]" />
               <col className="w-[5rem]" />
               <col className="w-[5.5rem]" />
-              <col className="w-[3.5rem]" />
+              <col className="w-[4.75rem]" />
             </colgroup>
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400">
@@ -865,6 +925,8 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
                   isSelected={selectedGameId === g.id}
                   onSelect={onSelectGame}
                   onAddToBuild={onAddToBuild}
+                  onAddToGroup={onAddToGroup}
+                  groupBtnTitle={groupBtnTitle}
                   addBtnTitle={addBtnTitle}
                   discLabel={g.discCount && g.discCount > 1 ? tf('lib.discShort', { count: g.discCount }) : ''}
                   genreLabel={localizeGenre(g.genre, t)}
@@ -893,7 +955,7 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
               <col />
               <col className="w-[11.5rem]" />
               <col className="w-[18%]" />
-              <col className="w-[4.5rem]" />
+              <col className="w-[6.25rem]" />
             </colgroup>
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400">
@@ -920,6 +982,8 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
                   onSelect={onSelectGame}
                   onToggleCheck={onToggleCheck}
                   onAddToBuild={onAddToBuild}
+                  onAddToGroup={onAddToGroup}
+                  groupBtnTitle={groupBtnTitle}
                   onEditGame={onEditGame}
                   addBtnTitle={addBtnTitle}
                   editBtnTitle={t('ed.editOne')}
