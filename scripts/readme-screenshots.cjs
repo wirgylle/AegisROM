@@ -44,12 +44,15 @@ const out = process.argv[2] || 'docs/screenshots';
   console.log('bios', await bios.count());
   if (await bios.count()) { await bios.first().click(); await shot('bios'); }
 
-  // Окна новых функций / Dialogs of newer features (0.6.0-dev).
+  // Окна новых функций / Dialogs of newer features (0.6.0).
   const esc = async () => { await p.keyboard.press('Escape'); await p.waitForTimeout(600); };
   await click(/^Library/, {exact:false}); await p.waitForTimeout(800);
   await p.getByRole('button', { name: /^Settings$/ }).first().click(); await shot('settings'); await esc();
   await p.getByRole('button', { name: /^Media/ }).first().click(); await shot('library-media'); await esc();
   await p.getByRole('button', { name: /^Groups/ }).first().click(); await shot('library-groups'); await esc();
+  // Предложения ручных коллекций и серий / Manual collection and series suggestions.
+  const sug = p.getByRole('button', { name: /^Suggestions/ });
+  if (await sug.count()) { await sug.first().click(); await shot('manual-groups'); await esc(); }
   // Окно области показывается для своей базы, не для встроенного примера: сохраняем пример и открываем как файл.
   // The scope window shows for a user database, not the built-in sample: save the sample and open it as a file.
   const fs = require('fs'), os = require('os'), path = require('path');

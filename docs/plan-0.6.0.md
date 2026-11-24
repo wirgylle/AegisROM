@@ -13,13 +13,13 @@
 
 | # | Задача | Зависит от | Статус |
 |---|---|---|---|
-| 1 | **Сохранения, шаг 1.** Встроенный «Запуск» пишет `.srm` и `.state` рядом с ромом, прошлые версии в `.aegis-saves/`. См. [saves.md](saves.md). | — | этот PR |
+| 1 | **Сохранения, шаг 1.** Встроенный «Запуск» пишет `.srm` и `.state` рядом с ромом, прошлые версии в `.aegis-saves/`. См. [saves.md](saves.md). | — | сделано (#42) |
 | 2 | **Кнопка «Угостить разработчика кофе»** в шапке и раздел в README. Окно доната в USDT (Tron, Solana, Arbitrum, Avalanche, Ethereum): сумма 2 / 5 / 10 / своя, адрес с копированием и локальный QR. Адреса в `src/data/donate.ts`. | — | сделано |
-| 3 | **Сохранения, шаг 2.** При переименовании рома, 1G1R и замене версии (JP → RU) сохранения переименовываются вместе с ромом, перед этим копия в историю. | 1 | — |
-| 4 | **Сохранения, шаг 3.** Блок «Сохранения» в карточке игры: текущие файлы, история, восстановить, экспорт и импорт. Скан находит `.srm/.sav/.state` и карты памяти (`.mcr/.mcd`, PS2 `.ps2`) в библиотеке и папках эмуляторов из «Среды». | 1 | — |
-| 5 | **Wi-Fi, шаг 1: SFTP.** Профили устройств (R36S/ArkOS, Anbernic/muOS и Knulli, TrimUI, Steam Deck): адрес, логин, папка ромов по прошивке. Заливка сборки по разнице размера и времени, докачка, прогресс. | — | — |
-| 6 | **Wi-Fi, шаг 2: SMB и WebDAV** (Batocera/Knulli, Miyoo с Onion и другие прошивки без SSH). | 5 | — |
-| 7 | **Сохранения со сборкой.** При выгрузке сборки сохранения едут на устройство, при следующей выгрузке забираются обратно; конфликт решается по времени с копией обеих версий. | 3, 5 | — |
+| 3 | **Сохранения, шаг 2.** При переименовании рома, 1G1R и замене версии (JP → RU) сохранения переименовываются вместе с ромом, перед этим копия в историю. | 1 | сделано |
+| 4 | **Сохранения, шаг 3.** Блок «Сохранения» в карточке игры: текущие файлы, история, восстановить, экспорт и импорт. Скан находит `.srm/.sav/.state` и карты памяти (`.mcr/.mcd`, PS2 `.ps2`) в библиотеке и папках эмуляторов из «Среды». | 1 | сделано |
+| 5 | **Wi-Fi, шаг 1: SFTP.** Профили устройств (R36S/ArkOS, Anbernic/muOS и Knulli, TrimUI, Steam Deck): адрес, логин, папка ромов по прошивке. Заливка сборки по разнице размера и времени, докачка, прогресс. См. [wifi-transfer.md](wifi-transfer.md). | — | сделано, на приставке не проверено |
+| 6 | **Wi-Fi, шаг 2: SMB и WebDAV** (Batocera/Knulli, Miyoo с Onion и другие прошивки без SSH). | 5 | SMB сделан, WebDAV нет |
+| 7 | **Сохранения со сборкой.** При выгрузке сборки сохранения едут на устройство, при следующей выгрузке забираются обратно; конфликт решается по времени с копией обеих версий. | 3, 5 | в папку/на SD сделано, по Wi-Fi нет |
 | 8 | Скриншоты, README EN/RU, релиз 0.6.0. | все | — |
 
 **Параллельно можно:** 3 и 5 (разные части кода: переименование во фронте и новый Go-пакет для передачи). 4 — параллельно с 5 и 6. 7 — только после 3 и 5.
@@ -44,13 +44,13 @@ Goal of 0.6.0: game saves live as files and survive renames, and a build can be 
 
 | # | Task | Depends on | Status |
 |---|---|---|---|
-| 1 | **Saves, step 1.** The built-in Play writes `.srm` and `.state` next to the ROM, older versions go to `.aegis-saves/`. See [saves.md](saves.md). | — | this PR |
+| 1 | **Saves, step 1.** The built-in Play writes `.srm` and `.state` next to the ROM, older versions go to `.aegis-saves/`. See [saves.md](saves.md). | — | done (#42) |
 | 2 | **"Buy the developer a coffee" button** in the header and a README section. USDT donate window (Tron, Solana, Arbitrum, Avalanche, Ethereum): amount 2 / 5 / 10 / custom, address with copy and a local QR. Addresses in `src/data/donate.ts`. | — | done |
-| 3 | **Saves, step 2.** Renaming a ROM, 1G1R and replacing a version (JP → RU) rename its saves too, with a copy into history first. | 1 | — |
-| 4 | **Saves, step 3.** A Saves block in the game card: current files, history, restore, export and import. The scan finds `.srm/.sav/.state` and memory cards (`.mcr/.mcd`, PS2 `.ps2`) in the library and in emulator folders from Environment. | 1 | — |
-| 5 | **Wi-Fi, step 1: SFTP.** Device profiles (R36S/ArkOS, Anbernic/muOS and Knulli, TrimUI, Steam Deck): address, login, ROM folder per firmware. Upload a build by size/time difference, resume, progress. | — | — |
-| 6 | **Wi-Fi, step 2: SMB and WebDAV** (Batocera/Knulli, Miyoo with Onion and other firmwares without SSH). | 5 | — |
-| 7 | **Saves with builds.** Saves travel to the device with the build and come back on the next upload; conflicts are resolved by time, keeping both versions. | 3, 5 | — |
+| 3 | **Saves, step 2.** Renaming a ROM, 1G1R and replacing a version (JP → RU) rename its saves too, with a copy into history first. | 1 | done |
+| 4 | **Saves, step 3.** A Saves block in the game card: current files, history, restore, export and import. The scan finds `.srm/.sav/.state` and memory cards (`.mcr/.mcd`, PS2 `.ps2`) in the library and in emulator folders from Environment. | 1 | done |
+| 5 | **Wi-Fi, step 1: SFTP.** Device profiles (R36S/ArkOS, Anbernic/muOS and Knulli, TrimUI, Steam Deck): address, login, ROM folder per firmware. Upload a build by size/time difference, resume, progress. See [wifi-transfer.md](wifi-transfer.md). | — | done, not checked on a handheld |
+| 6 | **Wi-Fi, step 2: SMB and WebDAV** (Batocera/Knulli, Miyoo with Onion and other firmwares without SSH). | 5 | SMB done, WebDAV not |
+| 7 | **Saves with builds.** Saves travel to the device with the build and come back on the next upload; conflicts are resolved by time, keeping both versions. | 3, 5 | folder/SD done, not over Wi-Fi yet |
 | 8 | Screenshots, README EN/RU, 0.6.0 release. | all | — |
 
 **In parallel:** 3 and 5 (different code: frontend renaming vs a new Go transfer package). 4 alongside 5 and 6. 7 only after 3 and 5.

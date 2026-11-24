@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"aegisgui/aegisapi"
+	"aegisgui/aegistransfer"
 )
 
 func defaultDataDir() string {
@@ -34,14 +35,15 @@ func main() {
 	distDir := flag.String("dist", "dist", "папка собранного фронтенда (vite build)")
 	dataDir := flag.String("data", defaultDataDir(), "папка базы, сборок и кэша")
 	devPickDir := flag.String("dev-pick-dir", "", "для тестов: папка, которую «выбирает» диалог /api/native/vfs/pick (включает файлы через Go во фронтенде)")
+	devSecrets := flag.Bool("dev-memory-secrets", false, "для тестов: пароли устройств в памяти вместо хранилища ключей ОС")
 	flag.Parse()
 
-	if err := run(*addr, *distDir, *dataDir, *devPickDir); err != nil {
+	if err := run(*addr, *distDir, *dataDir, *devPickDir, *devSecrets); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(addr, distDir, dataDir, devPickDir string) error {
+func run(addr, distDir, dataDir, devPickDir string, devSecrets bool) error {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return fmt.Errorf("неверный -addr: %w", err)
@@ -68,6 +70,12 @@ func run(addr, distDir, dataDir, devPickDir string) error {
 	// Запуск в окне и сохранения рядом с ромом (как в aegis-gui).
 	aegisapi.RegisterQuickTestRoutes(mux, nil)
 	aegisapi.RegisterSaveRoutes(mux, nil)
+	// Заливка по Wi-Fi (SFTP, SMB). / Wi-Fi upload (SFTP, SMB).
+	transferOpts := aegisapi.TransferOptions{}
+	if devSecrets {
+		transferOpts.Secrets = &aegistransfer.MemorySecrets{}
+	}
+	aegisapi.RegisterTransferRoutes(mux, dataDir, nil, transferOpts)
 
 	if index, err := os.ReadFile(filepath.Join(distDir, "index.html")); err == nil {
 		mux.Handle("/", aegisapi.SPAHandler(os.DirFS(distDir), index, nil))

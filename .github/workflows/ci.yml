@@ -65,7 +65,7 @@ jobs:
 
       - name: Core and server build (macOS, Windows)
         run: |
-          GOOS=darwin GOARCH=arm64 go build -o /dev/null ./aegiscore ./aegisapi ./cmd/aegis-server
+          GOOS=darwin GOARCH=arm64 go build -o /dev/null ./aegiscore ./aegisapi ./aegisdesktop ./cmd/aegis-server
           GOOS=windows GOARCH=amd64 go vet ./aegiscore ./aegisapi ./cmd/aegis-server
 
       - name: aegis-scanner module (vet, build linux/windows/macOS)
@@ -75,3 +75,43 @@ jobs:
           go build -o /dev/null .
           GOOS=windows GOARCH=amd64 go build -o /dev/null .
           GOOS=darwin GOARCH=arm64 go build -o /dev/null .
+
+  # RU: Приложение для macOS собирается с cgo только на Mac. Здесь — vet, тесты общего
+  #     кода на файловой системе macOS и полная сборка .dmg (scripts/release-mac.sh),
+  #     файл лежит в артефактах запуска.
+  # EN: The macOS app builds with cgo on a Mac only. Here: vet, shared-code tests on a
+  #     macOS file system and the full .dmg build (scripts/release-mac.sh); the file is
+  #     in the run's artifacts.
+  macos:
+    name: macOS app (vet, test, .dmg)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: go vet (darwin)
+        run: go vet ./aegisdesktop ./aegisapi ./aegistransfer ./cmd/aegis-mac
+
+      - name: go test (darwin)
+        run: go test ./aegisdesktop ./aegisapi ./aegiscore ./aegistransfer
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build AegisROM.app & .dmg (arm64 + amd64)
+        run: npm run release:mac
+
+      - name: Upload .dmg
+        uses: actions/upload-artifact@v4
+        with:
+          name: AegisROM-macOS-dmg-${{ github.sha }}
+          retention-days: 14
+          path: public/downloads/AegisROM-v*-macOS-universal.dmg

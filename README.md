@@ -11,8 +11,9 @@ Tidies up your collection, removes duplicates, downloads box art and builds a re
 
 [Download](https://github.com/wirgylle/AegisROM/releases) · [Features](#features) · [Installation](#installation) · [Quick start](#quick-start) · [FAQ](#faq) · [Roadmap](#roadmap)
 
-![Version](https://img.shields.io/badge/version-0.5.6_beta-orange)
+![Version](https://img.shields.io/badge/version-0.6.0_beta-orange)
 ![Platform](https://img.shields.io/badge/Windows_11-x64-blue)
+![macOS](https://img.shields.io/badge/macOS-beta-lightgrey)
 ![Languages](https://img.shields.io/badge/UI_languages-9-green)
 
 </div>
@@ -40,6 +41,10 @@ The app scans your collection and identifies games by checksums and disc serial 
 - **Groups and media**: show only collections, only series or no single games, in any mix and inside one console; pick the picture the cards show (box art, screenshot, title screen, banner), all cards the same size, thumbnails in the list.
 - **Opening without a full scan**: when a database already exists, picking the folder only grants access to it. 1G1R, renaming, the scraper and moves take ROMs from the database and don't read every file again.
 - **Play** `beta`: the built-in emulator (EmulatorJS) runs a game right in the app window, no emulator install needed. Sega CD and PC Engine CD take their BIOS from the BIOS section.
+- **Saves** `beta`: games from Play save as files next to the ROM (`.srm`, `.state`, named like RetroArch). The game card shows the saves, a history of the last 10 versions with restore, and saves found in emulator folders. When a ROM is renamed, moved or removed as a 1G1R duplicate, its saves follow it.
+- **Your own collections and series**: group games by hand, take a game out of an automatic group, and accept or reject suggestions the app makes after a scan ("Suggestions" button).
+- **Studio**: group and sort the library by developer or publisher.
+- **Game data in CSV / XML**: export titles, genre, year, developer, publisher, players, rating and description to a spreadsheet, edit them and load them back with a preview of every change. `gamelist.xml` from ES, ES-DE and Skraper is read too.
 
 | List | Editor |
 |---|---|
@@ -48,6 +53,8 @@ The app scans your collection and identifies games by checksums and disc serial 
 | Card media | Groups |
 |---|---|
 | <img src="docs/screenshots/library-media.png" alt="Choosing the picture on cards" /> | <img src="docs/screenshots/library-groups.png" alt="Groups: collections and series" /> |
+
+<p align="center"><img src="docs/screenshots/manual-groups.png" alt="Your own collections and series: suggestions" width="900" /></p>
 
 > Features marked `beta` are already in the app but still in development: they may not always work, or may not work as expected. If something is wrong, please report it in [Issues](https://github.com/wirgylle/AegisROM/issues).
 
@@ -74,6 +81,8 @@ The app scans your collection and identifies games by checksums and disc serial 
 - Fitting to SD card size: 16, 32, 64, 128, 256 GB, leaving room for firmware and BIOS.
 - Syncing a build with the main library, showing the differences.
 - **Fast export**: several ROMs are copied at once and files already there with the same size are skipped, so a repeated export only copies what's new. Media (box art, image, banner, video) and a `gamelist.xml` with titles and descriptions go with the build, laid out for your device.
+- **Upload over Wi-Fi** `beta`: SFTP or SMB straight to the handheld, no need to take the card out. Only new and changed files are sent, an interrupted upload resumes. Ready-made profiles for ArkOS, muOS, Knulli, Batocera, Onion, TrimUI and Steam Deck; passwords are kept in the system password store. Details: [docs/wifi-transfer.md](docs/wifi-transfer.md).
+- **Saves with the build**: when exporting to a folder or SD card, saves can go along and newer saves from the card come back.
 - **Image converter**: `.cue/.bin`, `.iso`, `.gdi` → `.chd` (via `chdman`), plus `.pbp` and `.cso`.
 - **PortMaster catalog** `beta`: list of ports with a "ready to run" / "needs files from Steam or GOG" filter and automatic placement into `ports/`.
 
@@ -101,12 +110,12 @@ The Settings button in the header: theme (light, dark or same as system), langua
 
 | | |
 |---|---|
-| OS | Windows 11 x64 |
-| Browser | Microsoft Edge or Google Chrome (the app window opens through it) |
+| OS | Windows 11 x64; macOS 11 or newer `beta` |
+| Browser (Windows) | Microsoft Edge or Google Chrome (the app window opens through it) |
 | For `.chd` conversion | `chdman` from the MAME package |
 | Internet | only needed for the box art scraper and the PortMaster catalog |
 
-There are no Linux or macOS versions yet; they are planned.
+The macOS version (one `.dmg` for Intel and Apple Silicon) is new in 0.6.0 and hasn't been checked on a real Mac yet. It isn't signed by Apple, so macOS blocks the first start; how to open it: [docs/macos.md](docs/macos.md). There is no Linux version yet.
 
 ## Installation
 
@@ -119,6 +128,7 @@ There are no Linux or macOS versions yet; they are planned.
 | `AegisROM-Portable-Win11-x64.exe` | **Portable version** in a single file, no installation. |
 | `AegisROM-vX.Y.Z-Win11-x64.zip` | Full archive with all components. |
 | `aegis-scanner-win11-x64.exe` | Standalone command-line scanner for advanced users. |
+| `AegisROM-vX.Y.Z-macOS-universal.dmg` | **macOS** `beta`, Intel and Apple Silicon. Drag AegisROM to Applications. |
 
 3. Run the installer and follow the wizard.
 
@@ -152,8 +162,8 @@ Press "Download DATs for my consoles" in "Tools": AegisROM fetches No-Intro and 
 **Do I need internet?**
 Only for downloading box art, videos and the PortMaster catalog. Scanning, 1G1R, renaming and builds work offline.
 
-**Will there be a Linux / macOS / Steam Deck version?**
-It's planned. Right now the app only runs on Windows 11.
+**Is there a Linux / macOS / Steam Deck version?**
+macOS: yes, since 0.6.0, as a `beta` that hasn't been checked on a real Mac yet. Linux and Steam Deck are planned.
 
 **I found a bug or have an idea.**
 Open an [Issue](https://github.com/wirgylle/AegisROM/issues) and describe what you did and what happened. A screenshot helps a lot.
@@ -162,10 +172,10 @@ Open an [Issue](https://github.com/wirgylle/AegisROM/issues) and describe what y
 
 | Version | What's coming |
 |---|---|
+| **0.6.0** (released) | Saves next to the ROM with history, saves follow renames and go with builds. Upload over Wi-Fi (SFTP / SMB). macOS version `beta`. Your own collections and series with suggestions, studio grouping, game data in CSV / XML. Scraper source choice (Libretro, ScreenScraper, Skraper / ES-DE folder), settings window and system theme, faster build export with media and `gamelist.xml`. |
 | **0.5.6** (released) | Hacks and patches module with an IPS/UPS/BPS/xdelta patcher, BIOS section with MD5 check, playing games in the app window, first-run setup wizard and tour, library collections, settings stored on disk. |
 | **0.5.7 – 0.5.8** | Manual editing in Editor view (names, details, media paths), Series in the library (a whole game franchise), better online renaming, compressed xdelta patches. |
-| **before 0.6.0** | The app's own window instead of Edge or Chrome, with settings stored on disk. A macOS version: one `.dmg` for Intel and Apple Silicon, games launched through Mac emulators. PortMaster on Windows through a Linux environment (WSL). |
-| **0.6.0** | Save manager (`.srm`, `.state`, memory cards) with version history. First step is in `dev`: games from the built-in Play save as files next to the ROM. Uploading builds to the console over Wi-Fi (SFTP / SMB / WebDAV) without removing the card. |
+| **0.6.x** | Saves over Wi-Fi, WebDAV upload, checking macOS and Wi-Fi upload on real devices. The app's own window instead of Edge or Chrome. PortMaster on Windows through a Linux environment (WSL). |
 | **0.7.0** | RetroAchievements: checking achievement support by ROM hash. PDF manuals, walkthrough maps and a soundtrack player in the game card. |
 | **after 1.0** | After the move to a server + client setup: streaming to local media servers such as Plex and Kodi, play in the browser, and an optional ready-made hosted server by subscription. |
 

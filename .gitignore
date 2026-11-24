@@ -8,6 +8,11 @@ coverage/
 cmd/aegis-gui/webdist/*
 !cmd/aegis-gui/webdist/.gitkeep
 
+# Generated frontend embedded into AegisROM.app (built by `npm run release:mac`)
+cmd/aegis-mac/webdist/*
+!cmd/aegis-mac/webdist/.gitkeep
+*.dmg
+
 # Generated Setup.exe payload (built by `npm run release:win`)
 cmd/aegis-setup/payload/AegisROM.exe.gz
 
