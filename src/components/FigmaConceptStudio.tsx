@@ -98,6 +98,7 @@ import {
 } from './LibraryViewControls';
 import { OperationScopeModal } from './OperationScopeModal';
 import { ScrapeOptionsPanel } from './ScrapeOptionsPanel';
+import { ScrapeSourcesPanel } from './ScrapeSourcesPanel';
 import {
   defaultScrapeOptions,
   loadScrapeOptions,
@@ -4149,7 +4150,29 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         operation={scopeRequest?.op || 'other'}
         rows={scopeRows}
         busy={activeRunning}
-        extra={scopeRequest?.op === 'scrape' ? <ScrapeOptionsPanel value={scrapeOpts} onChange={setScrapeOpts} /> : undefined}
+        extra={
+          scopeRequest?.op === 'scrape' ? (
+            <div className="space-y-4">
+              <ScrapeSourcesPanel
+                value={scrapeOpts.sources}
+                onChange={(sources) => setScrapeOpts({ ...scrapeOpts, sources })}
+                onOpenScreenScraper={() => {
+                  setScopeRequest(null);
+                  // Блок логина ScreenScraper — в «Инструментах». / The ScreenScraper login block is in Tools.
+                  setTimeout(
+                    () =>
+                      document
+                        .querySelector('[data-tool="screenscraper"]')
+                        ?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
+                    50
+                  );
+                }}
+              />
+              <div className="border-t border-slate-200 dark:border-slate-800" />
+              <ScrapeOptionsPanel value={scrapeOpts} onChange={setScrapeOpts} />
+            </div>
+          ) : undefined
+        }
         hasMedia={scopeRequest?.op === 'scrape' ? (row) => rowHasScrapeMedia(row as any, scrapeOpts.slots) : undefined}
         onClose={() => setScopeRequest(null)}
         onConfirm={(ids, scope) => {

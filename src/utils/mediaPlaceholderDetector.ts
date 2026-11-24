@@ -193,7 +193,7 @@ export async function auditRomMediaOnDisk(
 
   for (const base of Array.from(new Set([romBaseNoExt, safeTitle].filter(Boolean)))) {
     imgCandidates.push(`${base}-image.png`, `${base}.png`, `${base}-image.jpg`, `${base}.jpg`, `${base}-thumb.png`);
-    marqueeCandidates.push(`${base}-marquee.png`, `${base}.png`);
+    marqueeCandidates.push(`${base}-marquee.png`, `${base}.png`, `${base}-marquee.jpg`);
     videoCandidates.push(`${base}-video.mp4`, `${base}.mp4`);
   }
 

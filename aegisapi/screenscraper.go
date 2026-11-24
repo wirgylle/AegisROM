@@ -582,6 +582,30 @@ func registerScreenScraperRoutes(mux *http.ServeMux, appDir string, touch func()
 		}
 	})
 
+	// GET — остаток запросов на сегодня из ssuserInfos (один запрос к ScreenScraper). Нужен окну
+	// выбора источника: при исчерпанном лимите источник пропускается, а не падает на каждом роме.
+	// GET: today's remaining requests from ssuserInfos (one ScreenScraper request). Used by the
+	// source picker: with the quota used up the source is skipped instead of failing on every ROM.
+	mux.HandleFunc("/api/screenscraper/quota", func(w http.ResponseWriter, r *http.Request) {
+		touch()
+		c := ss.get()
+		if !c.configured() {
+			writeJSON(w, map[string]any{"ok": false, "configured": false})
+			return
+		}
+		info, err := ss.checkUser(c)
+		if err != nil {
+			code := aegiscore.MissNetwork
+			var he ssHTTPError
+			if errors.As(err, &he) {
+				code = he.reasonCode()
+			}
+			writeJSON(w, map[string]any{"ok": false, "configured": true, "reasonCode": code, "error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "configured": true, "user": c.User, "info": info})
+	})
+
 	// POST {items:[…]} — поиск по одной игре за раз, с паузами. Клиент шлёт небольшие пачки,
 	// чтобы показывать прогресс и уметь остановиться.
 	// POST {items:[…]}: one game at a time with pauses. The client sends small batches to show

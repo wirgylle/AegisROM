@@ -207,6 +207,7 @@ export function ScrapeReportCard({
       </div>
       <p className="text-slate-600 dark:text-slate-300">
         {tf('tools.scrapeReport.found', { libretro: report.libretro, ss: report.screenscraper, looked: report.looked })}
+        {report.local > 0 && ` ${tf('scrape.src.reportLocal', { count: report.local })}`}
       </p>
       {missed > 0 && (
         <div className="space-y-0.5">
