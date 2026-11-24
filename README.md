@@ -38,18 +38,24 @@ The app scans your collection and identifies games by checksums and disc serial 
 - Save and open the library database so you don't have to rescan your drives.
 - **Collections**: one game released on several consoles is shown as one group; the game card shows a description from Wikidata.
 - **Groups and media**: show only collections, only series or no single games, in any mix and inside one console; pick the picture the cards show (box art, screenshot, title screen, banner), all cards the same size, thumbnails in the list.
+- **Opening without a full scan**: when a database already exists, picking the folder only grants access to it. 1G1R, renaming, the scraper and moves take ROMs from the database and don't read every file again.
 - **Play** `beta`: the built-in emulator (EmulatorJS) runs a game right in the app window, no emulator install needed. Sega CD and PC Engine CD take their BIOS from the BIOS section.
 
 | List | Editor |
 |---|---|
 | <img src="docs/screenshots/compact.png" alt="List mode" /> | <img src="docs/screenshots/editor.png" alt="Editor mode" /> |
 
+| Card media | Groups |
+|---|---|
+| <img src="docs/screenshots/library-media.png" alt="Choosing the picture on cards" /> | <img src="docs/screenshots/library-groups.png" alt="Groups: collections and series" /> |
+
 > Features marked `beta` are already in the app but still in development: they may not always work, or may not work as expected. If something is wrong, please report it in [Issues](https://github.com/wirgylle/AegisROM/issues).
 
 ### 🛠 Tools
 - **Scanning** with identification by CRC32 (including headerless ROMs) and disc serial codes (`SLUS`, `SCES`, `SLPS`).
 - **1G1R (one game, one ROM):** out of all versions of a game, the best one by your region priority is kept, for example `Russia → USA → Europe → Japan`.
-- **Box art and video scraper** (Libretro, Archive.org). Finds empty placeholder images and re-downloads them, leaves good files alone.
+- **Box art and video scraper**: Libretro (the libretro-thumbnails catalog on GitHub, cached for 14 days), ScreenScraper (with a screenscraper.fr account), Archive.org and ready-made media from another program (a Skraper, ES-DE, Batocera or RetroBat folder with `gamelist.xml`: nothing is downloaded and there are no limits). Before a run you pick the sources and their order; if a source finds nothing, has no login or hits its limit, the next one is used. In the same window you choose what to download: box art, screenshot, logo/banner, video. Games that had no media last time are skipped by default, and the summary shows why games were missed. Empty placeholder images are re-downloaded, good files are left alone, and cleanup no longer deletes media of multi-disc games or files referenced by `gamelist.xml`.
+- **"What to run on" window** for 1G1R, online rename and the scraper: consoles, bitness, folders, single games, collections and series, "only without media", "only new".
 - **Names by hash**: matching against No-Intro (cartridges) and Redump (discs) DAT files by CRC32 / SHA1, and by serial number for PBP and large images. A name found this way takes priority over online search, and its source is shown in the game card. How to add a DAT: [docs/dat.md](docs/dat.md).
 - **Renaming**: by hash from a DAT, online search, `gamelist.xml` and ROM headers. Understands numbered files like `000001.chd`, as found on stock R36S cards.
 - **File name builder**: title, region, language, translation author, disc number, extension case, `[T+Rus]` / `[Hack]` status tag.
@@ -61,10 +67,13 @@ The app scans your collection and identifies games by checksums and disc serial 
 
 <p align="center"><img src="docs/screenshots/tools.png" alt="Tools" width="900" /></p>
 
+<p align="center"><img src="docs/screenshots/scope-scraper.png" alt="Scraper: scope, sources and media types" width="900" /></p>
+
 ### 📦 Builds
 - Ready-made themed collections: by age (6+, 10+, 14+, 18+), by mood, by genre and bitness. Or your own build via filters.
 - Fitting to SD card size: 16, 32, 64, 128, 256 GB, leaving room for firmware and BIOS.
 - Syncing a build with the main library, showing the differences.
+- **Fast export**: several ROMs are copied at once and files already there with the same size are skipped, so a repeated export only copies what's new. Media (box art, image, banner, video) and a `gamelist.xml` with titles and descriptions go with the build, laid out for your device.
 - **Image converter**: `.cue/.bin`, `.iso`, `.gdi` → `.chd` (via `chdman`), plus `.pbp` and `.cso`.
 - **PortMaster catalog** `beta`: list of ports with a "ready to run" / "needs files from Steam or GOG" filter and automatic placement into `ports/`.
 
@@ -79,6 +88,11 @@ The app scans your collection and identifies games by checksums and disc serial 
 <p align="center"><img src="docs/screenshots/environment.png" alt="Emulator environment" width="900" /></p>
 
 <p align="center"><img src="docs/screenshots/bios.png" alt="BIOS section" width="900" /></p>
+
+### ⚙️ Settings
+The Settings button in the header: theme (light, dark or same as system), language, start section and library view, sorting, 1G1R priority, rename on sort, scraper, duplicate deletion, combine and SD card. These values apply on every start; switches inside sections change only the current session.
+
+<p align="center"><img src="docs/screenshots/settings.png" alt="Settings window" width="900" /></p>
 
 ### 🌍 9 UI languages
 Русский, English, Deutsch, Español, Français, Italiano, 日本語, Srpski (Latin), 简体中文. The language is detected automatically, with a switcher in the header.
