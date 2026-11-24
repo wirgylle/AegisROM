@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Check, Layers, LibraryBig, Plus, Search, Sparkles, Trash2, Undo2, X } from 'lucide-react';
+import { Check, Layers, LibraryBig, Plus, Search, Trash2, Undo2, X } from 'lucide-react';
 import { useI18n } from '../i18n/translations';
 import {
   acceptSuggestion,
@@ -14,6 +14,7 @@ import {
   setDetached,
   type GroupSuggestion,
   type ManualGroupKind,
+  type SuggestionEdit,
 } from '../utils/manualGroups';
 import { useManualGroupsVersion } from './useManualGroups';
 
@@ -30,6 +31,7 @@ export interface ManualGroupsGame {
 }
 
 type Tab = 'groups' | 'suggest' | 'detached';
+type SuggestFilter = 'all' | 'series' | 'collection';
 
 interface Props {
   games: readonly ManualGroupsGame[];
@@ -50,8 +52,17 @@ const inputCls =
 const KindIcon: React.FC<{ kind: ManualGroupKind; className?: string }> = ({ kind, className }) =>
   kind === 'series' ? <LibraryBig className={className} /> : <Layers className={className} />;
 
-const GameLine: React.FC<{ g: ManualGroupsGame; right?: React.ReactNode }> = ({ g, right }) => (
-  <li className="flex items-center gap-2 px-3 py-1.5">
+const GameLine: React.FC<{ g: ManualGroupsGame; right?: React.ReactNode; checked?: boolean; onCheck?: (on: boolean) => void }> = ({ g, right, checked, onCheck }) => (
+  <li className={`flex items-center gap-2 px-3 py-1.5 ${checked === false ? 'opacity-50' : ''}`}>
+    {onCheck ? (
+      <input
+        type="checkbox"
+        checked={checked !== false}
+        onChange={(e) => onCheck(e.target.checked)}
+        aria-label={g.title}
+        className="accent-[var(--color-accent,#2563eb)] shrink-0 cursor-pointer"
+      />
+    ) : null}
     <span className="px-1.5 py-0.5 rounded bg-slate-900 text-white dark:bg-slate-700 font-mono font-semibold text-[10px] shrink-0">
       {g.consoleShort}
     </span>
@@ -74,6 +85,8 @@ export const ManualGroupsModal: React.FC<Props> = ({ games, checkedIds, suggesti
   const [withChecked, setWithChecked] = useState(false);
   const [query, setQuery] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [edits, setEdits] = useState<Record<string, SuggestionEdit>>({});
+  const [filter, setFilter] = useState<SuggestFilter>('all');
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -127,14 +140,171 @@ export const ManualGroupsModal: React.FC<Props> = ({ games, checkedIds, suggesti
     return out;
   }, [query, selected, games]);
 
-  const describe = (s: GroupSuggestion) =>
+  const kindOf = (s: GroupSuggestion): ManualGroupKind => edits[s.id]?.kind || s.kind;
+  const nameOf = (s: GroupSuggestion) => (edits[s.id]?.name ?? '').trim() || s.name;
+  const describe = (s: GroupSuggestion, count = s.gameIds.length) =>
     s.action === 'create'
-      ? tf('mg.suggest.create', { name: s.name, count: s.gameIds.length })
-      : tf(s.kind === 'series' ? 'mg.suggest.add.series' : 'mg.suggest.add.collection', { name: s.name, count: s.gameIds.length });
+      ? tf(kindOf(s) === 'collection' ? 'mg.suggest.createCollection' : 'mg.suggest.create', { name: nameOf(s), count })
+      : tf(s.kind === 'series' ? 'mg.suggest.add.series' : 'mg.suggest.add.collection', { name: s.name, count });
+  const why = (s: GroupSuggestion) => {
+    if (s.reason === 'common-prefix' && s.parts) return tf('mg.suggest.why.common-prefix', { name: s.name, games: s.parts.length });
+    if (s.reason === 'multi-console' && s.consoles)
+      return tf('mg.suggest.why.multi-console', { count: s.consoles.length, consoles: s.consoles.join(', '), series: s.seriesName || '' });
+    return t(`mg.suggest.reason.${s.reason}`);
+  };
+
+  const setEdit = (id: string, patch: Partial<SuggestionEdit>) =>
+    setEdits((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
+  const isOn = (s: GroupSuggestion, key: string) => !(edits[s.id]?.excluded || []).includes(key);
+  const toggleKeys = (s: GroupSuggestion, keys: readonly string[], on: boolean) => {
+    const cur = new Set(edits[s.id]?.excluded || []);
+    for (const k of keys) {
+      if (on) cur.delete(k);
+      else cur.add(k);
+    }
+    setEdit(s.id, { excluded: Array.from(cur) });
+  };
+  const selectedCount = (s: GroupSuggestion) => s.gameKeys.filter((k) => isOn(s, k)).length;
 
   const accept = (s: GroupSuggestion) => {
-    acceptSuggestion(s);
-    onLog?.(tf('mg.acceptedLog', { text: describe(s) }));
+    const n = selectedCount(s);
+    if (n === 0) return;
+    acceptSuggestion(s, edits[s.id]);
+    onLog?.(tf('mg.acceptedLog', { text: describe(s, n) }));
+  };
+
+  // Коллекции внутри предложенной серии показываются в её карточке.
+  // Collections inside a suggested series are shown in its card.
+  const suggestionIds = useMemo(() => new Set(suggestions.map((s) => s.id)), [suggestions]);
+  const childrenOf = useMemo(() => {
+    const m = new Map<string, GroupSuggestion[]>();
+    for (const s of suggestions) {
+      if (!s.parentId || !suggestionIds.has(s.parentId)) continue;
+      const arr = m.get(s.parentId) || [];
+      arr.push(s);
+      m.set(s.parentId, arr);
+    }
+    return m;
+  }, [suggestions, suggestionIds]);
+  const countSeries = suggestions.filter((s) => s.kind === 'series').length;
+  const countCollections = suggestions.length - countSeries;
+  const visible = suggestions.filter((s) => {
+    if (filter === 'all') return !s.parentId || !suggestionIds.has(s.parentId);
+    return s.kind === filter;
+  });
+  const visibleAll = filter === 'all' ? suggestions : visible;
+
+  const renderSuggestion = (s: GroupSuggestion, nested = false): React.ReactNode => {
+    const kind = kindOf(s);
+    const n = selectedCount(s);
+    const kids = !nested && filter === 'all' ? childrenOf.get(s.id) || [] : [];
+    return (
+      <div key={s.id} className={`rounded-xl border border-slate-200 dark:border-slate-800 ${nested ? 'bg-slate-50 dark:bg-slate-800/30' : ''}`}>
+        <div className="px-3 py-2 flex flex-wrap items-start gap-2 border-b border-slate-100 dark:border-slate-800">
+          <KindIcon kind={kind} className="w-4 h-4 text-accent shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-[12rem]">
+            <div className="font-semibold text-slate-900 dark:text-slate-100">{describe(s, n)}</div>
+            <div className="text-slate-500 dark:text-slate-400">{why(s)}</div>
+          </div>
+          <button type="button" className={btnPrimary} onClick={() => accept(s)} disabled={n === 0}>
+            <Check className="w-3.5 h-3.5" />
+            {t('mg.accept')}
+          </button>
+          <button type="button" className={btnGhost} onClick={() => rejectSuggestion(s)}>
+            {t('mg.reject')}
+          </button>
+        </div>
+        {s.action === 'create' && (
+          <div className="px-3 py-2 flex flex-wrap items-center gap-2 border-b border-slate-100 dark:border-slate-800">
+            <input
+              value={edits[s.id]?.name ?? s.name}
+              onChange={(e) => setEdit(s.id, { name: e.target.value })}
+              aria-label={t('mg.suggest.nameLabel')}
+              placeholder={s.name}
+              className={`${inputCls} flex-1 min-w-[10rem] w-auto font-semibold`}
+            />
+            <div className="flex items-center gap-0.5 p-0.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800" role="group" aria-label={t('mg.suggest.kindLabel')}>
+              {(['series', 'collection'] as const).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  aria-pressed={kind === k}
+                  onClick={() => setEdit(s.id, { kind: k })}
+                  className={`h-7 px-2.5 rounded-md text-xs font-semibold inline-flex items-center gap-1 cursor-pointer ${
+                    kind === k ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-2xs' : 'text-slate-600 dark:text-slate-400'
+                  }`}
+                >
+                  <KindIcon kind={k} className="w-3.5 h-3.5" />
+                  {t(`mg.kind.${k}`)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {s.parts && s.parts.length > 0 ? (
+          <div className="divide-y divide-slate-100 dark:divide-slate-800">
+            {s.parts.map((p) => {
+              const onCount = p.gameKeys.filter((k) => isOn(s, k)).length;
+              return (
+                <div key={p.gameKeys[0]}>
+                  <label className="px-3 py-1.5 flex flex-wrap items-center gap-2 cursor-pointer bg-slate-50/60 dark:bg-slate-800/40">
+                    <input
+                      type="checkbox"
+                      checked={onCount > 0}
+                      ref={(el) => {
+                        if (el) el.indeterminate = onCount > 0 && onCount < p.gameKeys.length;
+                      }}
+                      onChange={(e) => toggleKeys(s, p.gameKeys, e.target.checked)}
+                      className="accent-[var(--color-accent,#2563eb)] cursor-pointer"
+                    />
+                    <span className="font-semibold text-slate-900 dark:text-slate-100 truncate">{p.title}</span>
+                    {p.consoles.map((c) => (
+                      <span key={c} className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 font-mono font-semibold text-[10px] text-slate-800 dark:text-slate-100">
+                        {c}
+                      </span>
+                    ))}
+                    {p.gameIds.length > 1 ? (
+                      <span className="inline-flex items-center gap-1 text-slate-500">
+                        <Layers className="w-3 h-3" />
+                        {tf('mg.suggest.part.versions', { count: p.gameIds.length })}
+                      </span>
+                    ) : null}
+                  </label>
+                  {p.gameIds.length > 1 && (
+                    <ul className="pl-5 divide-y divide-slate-100 dark:divide-slate-800">
+                      {p.gameIds.map((id, i) => {
+                        const g = byId.get(id);
+                        const k = p.gameKeys[i];
+                        return g ? <GameLine key={id} g={g} checked={isOn(s, k)} onCheck={(on) => toggleKeys(s, [k], on)} /> : null;
+                      })}
+                    </ul>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+            {s.gameIds.map((id, i) => {
+              const g = byId.get(id);
+              const k = s.gameKeys[i];
+              return g ? <GameLine key={id} g={g} checked={isOn(s, k)} onCheck={(on) => toggleKeys(s, [k], on)} /> : null;
+            })}
+          </ul>
+        )}
+        {n < s.gameKeys.length && (
+          <p className="px-3 py-1.5 text-slate-500 border-t border-slate-100 dark:border-slate-800">
+            {tf('mg.suggest.selected', { n, total: s.gameKeys.length })}
+          </p>
+        )}
+        {kids.length > 0 && (
+          <div className="px-3 py-2 space-y-2 border-t border-slate-100 dark:border-slate-800">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{t('mg.suggest.nested')}</div>
+            {kids.map((c) => renderSuggestion(c, true))}
+          </div>
+        )}
+      </div>
+    );
   };
 
   const tabBtn = (id: Tab, label: string, count?: number) => (
@@ -156,14 +326,14 @@ export const ManualGroupsModal: React.FC<Props> = ({ games, checkedIds, suggesti
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs"
+      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-xs"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-label={t('mg.title')}
     >
       <div
-        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-4xl w-full max-h-[88vh] overflow-hidden flex flex-col shadow-2xl text-xs"
+        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-4xl w-full max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden flex flex-col shadow-2xl text-xs"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-start justify-between gap-3">
@@ -226,12 +396,12 @@ export const ManualGroupsModal: React.FC<Props> = ({ games, checkedIds, suggesti
           </div>
         )}
 
-        <div className="flex-1 min-h-0 overflow-hidden">
+        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
           {tab === 'groups' &&
             (groups.length === 0 ? (
-              <p className="p-6 text-slate-500 dark:text-slate-400">{t('mg.empty')}</p>
+              <p className="p-6 text-slate-500 dark:text-slate-400 overflow-y-auto">{t('mg.empty')}</p>
             ) : (
-              <div className="grid md:grid-cols-[15rem_1fr] h-full min-h-0">
+              <div className="flex-1 min-h-0 grid grid-rows-[auto_minmax(0,1fr)] md:grid-rows-[minmax(0,1fr)] md:grid-cols-[15rem_minmax(0,1fr)]">
                 <ul className="border-b md:border-b-0 md:border-r border-slate-200 dark:border-slate-800 overflow-y-auto max-h-40 md:max-h-none">
                   {groups.map((g) => (
                     <li key={g.id}>
@@ -343,52 +513,50 @@ export const ManualGroupsModal: React.FC<Props> = ({ games, checkedIds, suggesti
               </div>
             ))}
 
-          {tab === 'suggest' && (
-            <div className="overflow-y-auto h-full p-4 space-y-3">
-              {suggestions.length === 0 ? (
-                <p className="text-slate-500 dark:text-slate-400">{t('mg.suggest.none')}</p>
-              ) : (
-                <>
-                  <div className="flex gap-2">
-                    <button type="button" className={btnPrimary} onClick={() => suggestions.forEach(accept)}>
-                      <Check className="w-3.5 h-3.5" />
-                      {t('mg.acceptAll')}
-                    </button>
-                    <button type="button" className={btnGhost} onClick={() => suggestions.forEach((s) => rejectSuggestion(s))}>
-                      {t('mg.rejectAll')}
-                    </button>
+          {tab === 'suggest' &&
+            (suggestions.length === 0 ? (
+              <p className="p-4 text-slate-500 dark:text-slate-400">{t('mg.suggest.none')}</p>
+            ) : (
+              <>
+                <div className="px-4 py-2 flex flex-wrap items-center gap-2 border-b border-slate-200 dark:border-slate-800 shrink-0">
+                  <div className="flex items-center gap-0.5 p-0.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800" role="group">
+                    {(
+                      [
+                        ['all', suggestions.length],
+                        ['series', countSeries],
+                        ['collection', countCollections],
+                      ] as const
+                    ).map(([f, c]) => (
+                      <button
+                        key={f}
+                        type="button"
+                        aria-pressed={filter === f}
+                        onClick={() => setFilter(f)}
+                        className={`h-7 px-2.5 rounded-md text-xs font-semibold cursor-pointer ${
+                          filter === f ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-2xs' : 'text-slate-600 dark:text-slate-400'
+                        }`}
+                      >
+                        {t(`mg.suggest.filter.${f}`)} <span className="tabular-nums opacity-80">{c}</span>
+                      </button>
+                    ))}
                   </div>
-                  {suggestions.map((s) => (
-                    <div key={s.id} className="rounded-xl border border-slate-200 dark:border-slate-800">
-                      <div className="px-3 py-2 flex flex-wrap items-center gap-2 border-b border-slate-100 dark:border-slate-800">
-                        <Sparkles className="w-4 h-4 text-accent shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <div className="font-semibold text-slate-900 dark:text-slate-100">{describe(s)}</div>
-                          <div className="text-slate-500 dark:text-slate-400">{t(`mg.suggest.reason.${s.reason}`)}</div>
-                        </div>
-                        <button type="button" className={btnPrimary} onClick={() => accept(s)}>
-                          <Check className="w-3.5 h-3.5" />
-                          {t('mg.accept')}
-                        </button>
-                        <button type="button" className={btnGhost} onClick={() => rejectSuggestion(s)}>
-                          {t('mg.reject')}
-                        </button>
-                      </div>
-                      <ul className="divide-y divide-slate-100 dark:divide-slate-800 max-h-48 overflow-y-auto">
-                        {s.gameIds.map((id) => {
-                          const g = byId.get(id);
-                          return g ? <GameLine key={id} g={g} /> : null;
-                        })}
-                      </ul>
-                    </div>
-                  ))}
-                </>
-              )}
-            </div>
-          )}
+                  <div className="flex-1" />
+                  <button type="button" className={btnPrimary} onClick={() => visibleAll.forEach(accept)}>
+                    <Check className="w-3.5 h-3.5" />
+                    {t('mg.acceptAll')}
+                  </button>
+                  <button type="button" className={btnGhost} onClick={() => visibleAll.forEach((s) => rejectSuggestion(s))}>
+                    {t('mg.rejectAll')}
+                  </button>
+                </div>
+                <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 space-y-3" data-testid="mg-suggest-list">
+                  {visible.map((s) => renderSuggestion(s))}
+                </div>
+              </>
+            ))}
 
           {tab === 'detached' && (
-            <div className="overflow-y-auto h-full p-4 space-y-2">
+            <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-2">
               {detachedKeys.length === 0 ? (
                 <p className="text-slate-500 dark:text-slate-400">{t('mg.detached.none')}</p>
               ) : (
