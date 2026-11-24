@@ -18,7 +18,7 @@
 import { buildCollections, buildSeries, collectionKeyOf, type CollectionInput } from './gameCollections.ts';
 
 /** Операции, у которых есть свой выбор области. / Operations with their own scope. */
-export type ScopeOperation = 'scrape' | 'rename' | 'g1r' | 'organize' | 'multiDisc' | 'phantom' | 'build' | 'other';
+export type ScopeOperation = 'scrape' | 'rename' | 'g1r' | 'organize' | 'multiDisc' | 'phantom' | 'build' | 'gameData' | 'other';
 
 export interface OperationScope {
   /** Коды консолей (consoleShort, верхний регистр). Пусто = все. / Console codes, upper case. Empty = all. */
