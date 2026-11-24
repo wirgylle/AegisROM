@@ -54,7 +54,21 @@ import {
   type ScrapeReport,
 } from './utils/scrapeReport';
 import { computeCRC32Hex } from './utils/crc32';
-import { expandTitleAbbreviations, romanToArabicInKey } from './utils/titleAliases';
+import { romanToArabicInKey } from './utils/titleAliases';
+import {
+  LEADING_NUM_REGEX,
+  PURE_NUMBERED_ROM_REGEX,
+  PREFIXED_SEQ_ROM_REGEX,
+  isJamesBond007Game,
+  stripLeadingIndexExcept007,
+  isNumberedRomFilename,
+  prettifyBinaryHeaderTitle,
+  extractCleanTitle,
+  canBuildNameFromTitle,
+  isNumericTitleWithTags,
+  isPlausibleTitleText,
+  stripFileExtension,
+} from './utils/romTitle';
 import {
   fetchDatStatus,
   fetchLibretroDats,
@@ -691,10 +705,6 @@ const REVISION_REGEX = /\((Rev\s*[0-9A-Z]+|v[0-9]+\.[0-9]+|Alt\s*[0-9]*)\)/i;
 // [h] (hack) and [t] (trainer) are not junk: utils/romHacks.ts handles them.
 const JUNK_REGEX =
   /\[(b[0-9]*|p[0-9]*|o[0-9]*)\]|\((Pirate|Bootleg|Corrupt|Bad)\)/i;
-const LEADING_NUM_REGEX = /^[\s\[\(#]*(\d{1,10})[\s\])\._-]+/;
-const PURE_NUMBERED_ROM_REGEX =
-  /^(?:rom[_\-\s]*|game[_\-\s]*|track[_\-\s]*|file[_\-\s]*|psx[_\-\s]*|ps1[_\-\s]*|no[_\-\s]*|#)?0*(\d{1,10})(?:[_\-\s]*(?:disc|cd|d|part|track)?[_\-\s]*\d*)?$/i;
-const PREFIXED_SEQ_ROM_REGEX = /^[\s\[\(#]*0*(\d{1,10})[\s\])\._-]+(.*)$/;
 const PS1_SERIAL_REGEX =
   /\b(SLUS|SCUS|SLES|SCES|SLPS|SLPM|SCPS|PAPX|PCPX|LSP|SIPS|ESPM)[_.\-\s]?(\d{3})[_.\-\s]?(\d{2})\b/i;
 
@@ -811,93 +821,6 @@ const PHANTOM_MEDIA_DIR_KEYS: Record<string, Parameters<typeof tStatic>[0]> = {
   carts: 'app.phan.dirDesc.carts',
   '3dboxes': 'app.phan.dirDesc.3dboxes',
 };
-
-// Исключение для игр про Агента 007 (James Bond 007), чтобы не отрезать "007" и не попадать в цикл переименования
-function isJamesBond007Game(text: string): boolean {
-  const lower = text.toLowerCase().trim();
-  const bondKeywords = [
-    'james bond',
-    'agent 007',
-    'агент 007',
-    'tomorrow never dies',
-    'world is not enough',
-    'goldeneye',
-    '007 racing',
-    'nightfire',
-    'everything or nothing',
-    'from russia with love',
-    'agent under fire',
-    'goldfinger',
-    'licence to kill',
-    'live and let die',
-    'the duel',
-    'quantum of solace',
-    'blood stone',
-  ];
-  if (bondKeywords.some((kw) => lower.includes(kw))) {
-    return true;
-  }
-  const m = lower.match(LEADING_NUM_REGEX);
-  if (m && m[1] === '007') {
-    const rest = lower.slice(m[0].length).trim();
-    if (rest.length >= 3) return true;
-  }
-  return false;
-}
-
-function stripLeadingIndexExcept007(s: string): string {
-  if (isJamesBond007Game(s)) {
-    const m = s.match(LEADING_NUM_REGEX);
-    if (m && m[1] !== '007') {
-      const rest = s.slice(m[0].length).trim();
-      if (rest.toLowerCase().startsWith('007')) {
-        return rest;
-      }
-    }
-    return s;
-  }
-  let res = s;
-  for (let i = 0; i < 2; i++) {
-    const m = res.match(LEADING_NUM_REGEX);
-    if (!m) break;
-    if (m[1] === '007') break;
-    const candidateRest = res.slice(m[0].length).trim();
-    // КРИТИЧЕСКИЙ ФИКС v4.3.1: Никогда не отрезаем номер, если после удаления тегов (USA)/(World) остается пустая строка!
-    // Иначе 500 ненайденных файлов переименовываются в одно и то же имя без номера!
-    const withoutTags = candidateRest.replace(/\[.*?\]|\(.*?\)/g, '').trim();
-    const letterCount = (withoutTags.match(/[a-zA-Zа-яА-ЯёЁ]/g) || []).length;
-    if (letterCount < 2) {
-      break;
-    }
-    res = candidateRest;
-  }
-  return res;
-}
-
-function isNumberedRomFilename(
-  fileName: string,
-  extractedTitle = '',
-  inSequentialFolder = false
-): boolean {
-  const base = fileName.replace(/\.[^/.]+$/, '').trim();
-  const baseNoTags = base.replace(/\[.*?\]|\(.*?\)/g, '').trim();
-  // Исключение 007: если файл уже называется "007 - Tomorrow Never Dies", не переименовываем повторно
-  if (isJamesBond007Game(base) && base.length > 5) {
-    const m = base.match(PREFIXED_SEQ_ROM_REGEX);
-    if (!m || m[1] === '7' || base.trim().startsWith('007')) {
-      return false;
-    }
-  }
-  if (PURE_NUMBERED_ROM_REGEX.test(base) || PURE_NUMBERED_ROM_REGEX.test(baseNoTags)) {
-    return true;
-  }
-  const stripped = stripLeadingIndexExcept007(baseNoTags).trim();
-  if (stripped.length <= 1) return true;
-  if (inSequentialFolder && PREFIXED_SEQ_ROM_REGEX.test(baseNoTags)) {
-    return true;
-  }
-  return false;
-}
 
 function markSequentialNumberedRoms(items: ScannedRomFile[]): ScannedRomFile[] {
   const numsByDir = new Map<string, Set<number>>();
@@ -1353,72 +1276,6 @@ function analyzeSubfolderContext(relPath: string): {
     lower.includes('лучш') ||
     lower.includes('100');
   return { sourceSubfolder: sub, isRusFolder, isTopFolder };
-}
-
-function prettifyBinaryHeaderTitle(raw: string): string {
-  const cleaned = raw
-    .replace(/[\x00-\x1f\x7f-\x9f]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!cleaned) return '';
-  const letters = (cleaned.match(/[a-zA-Zа-яА-ЯёЁ]/g) || []).length;
-  if (letters < 2) return '';
-  // If internal binary header is ALL CAPS (e.g. "CASTLEVANIA ARIA" or "TEKKENTHREE"), convert cleanly to Title Case
-  const hasLower = /[a-zа-яё]/.test(cleaned);
-  if (!hasLower && cleaned.length >= 4) {
-    return cleaned
-      .toLowerCase()
-      .replace(/(^|\s|[-:])([a-zа-яё])/g, (_, sep, ch) => `${sep}${ch.toUpperCase()}`);
-  }
-  return cleaned;
-}
-
-function extractCleanTitle(fileName: string): string {
-  const originalBase = fileName.replace(/\.[^/.]+$/, '').trim();
-  const withoutTags = originalBase.replace(/\[.*?\]|\(.*?\)/g, '').trim();
-  if (PURE_NUMBERED_ROM_REGEX.test(originalBase) || PURE_NUMBERED_ROM_REGEX.test(withoutTags)) {
-    return withoutTags || originalBase;
-  }
-  // «FFVIII» → «Final Fantasy VIII»: иначе по сокращению не найти ни DAT-имя, ни обложку.
-  // "FFVIII" → "Final Fantasy VIII": an abbreviation matches neither a DAT name nor a cover.
-  const base = expandTitleAbbreviations(stripLeadingIndexExcept007(withoutTags || originalBase));
-  // Keep legitimate dots in titles like "Dr. Mario", "Ms. Pac-Man", "G.I. Joe"; normalize underscores and multi-spaces
-  const stripped = base
-    .replace(/\[.*?\]|\(.*?\)/g, ' ')
-    .replace(/_+/g, ' ')
-    .replace(/\s+-\s+/g, ' - ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  const tokens = stripped.split(/\s+/).filter(Boolean);
-  const filtered = tokens.filter((t) => {
-    const up = t.toUpperCase();
-    return ![
-      'USA',
-      'EUR',
-      'EUROPE',
-      'JAPAN',
-      'JPN',
-      // 'WORLD' не вырезаем: это часть названий (Super Mario World), а (World) в скобках уже убран.
-      'RUS',
-      'RUSSIAN',
-      'RU',
-      'V1',
-      'V1.0',
-      'V1.1',
-      'TOP100',
-      'РУС',
-      'РУССКАЯ',
-      'ВЕРСИЯ',
-    ].includes(up);
-  });
-  const candidate = (filtered.length > 0 ? filtered.join(' ') : stripped)
-    .replace(/^[\s\-–—]+|[\s\-–—]+$/g, '')
-    .trim();
-  const letters = (candidate.match(/[a-zA-Zа-яА-ЯёЁ]/g) || []).length;
-  if (!candidate || (letters < 2 && !PURE_NUMBERED_ROM_REGEX.test(candidate))) {
-    return withoutTags || originalBase;
-  }
-  return candidate;
 }
 
 function buildComparisonKey(cleanTitle: string): string {
@@ -2883,7 +2740,6 @@ export function App() {
 
     const fileDiscInfo = extractDiscNumberAndBaseTitle(file.name);
     const filenameClean = extractCleanTitle(fileDiscInfo.baseNameWithoutDisc || file.name);
-    const filenameLetterCount = (filenameClean.match(/[a-zA-Zа-яА-ЯёЁ]/g) || []).length;
     const prelimNumbered = isNumberedRomFilename(file.name, extractedInternalTitle, false);
     if (!extractedInternalTitle && prelimNumbered) {
       if (FACTORY_NUMBER_TO_TITLE_MAP[baseNoExt]) {
@@ -2894,7 +2750,12 @@ export function App() {
       if (extractedInternalTitle) extractedSource = 'factory';
     }
     // Only fall back to binary ROM headers when the filename is numbered/opaque (never overwrite clean human-readable filenames with 12-char uppercase cart codes!)
-    if (!extractedInternalTitle && (prelimNumbered || filenameLetterCount < 3)) {
+    // Порог был «меньше 3 букв»: «E.T.», «P.O.W» и подобные уходили в заголовок рома и получали мусор
+    // вроде «)6el». Теперь заголовок нужен, только если в имени файла названия нет совсем.
+    // The threshold was "fewer than 3 letters": "E.T." and the like fell back to the ROM header and got
+    // junk such as ")6el". The header is now used only when the file name carries no title at all.
+    const filenameHasTitle = canBuildNameFromTitle(filenameClean, isNumericTitleWithTags(baseNoExt));
+    if (!extractedInternalTitle && (prelimNumbered || !filenameHasTitle)) {
       const rawBinTitle = await extractInternalBinaryRomTitle(
         payloadFile,
         payloadExt,
@@ -2915,7 +2776,7 @@ export function App() {
     const region = parseRegion(extractedInternalTitle || file.name, isRussian);
     const revision = parseRevision(file.name);
     const usesExtractedTitle = Boolean(
-      extractedInternalTitle && (prelimNumbered || filenameLetterCount < 3 || gamelistMap)
+      extractedInternalTitle && (prelimNumbered || !filenameHasTitle || gamelistMap)
     );
     const cleanTitle = usesExtractedTitle
       ? extractCleanTitle(titleDiscInfo.baseNameWithoutDisc || extractedInternalTitle)
@@ -2929,9 +2790,10 @@ export function App() {
     if (rawExt === '.smc') canonExt = '.sfc';
     if (rawExt === '.gen' || rawExt === '.smd') canonExt = '.md';
 
-    const hasValidAlphabeticTitle =
-      !PURE_NUMBERED_ROM_REGEX.test(cleanTitle) &&
-      (cleanTitle.match(/[a-zA-Zа-яА-ЯёЁ]/g) || []).length >= 2;
+    const hasValidAlphabeticTitle = canBuildNameFromTitle(
+      cleanTitle,
+      !usesExtractedTitle && isNumericTitleWithTags(baseNoExt)
+    );
 
     const { releaseYear } = inferGenreAndYear(cleanTitle, consoleCode);
     const mod = detectRomMod(file.name, relativePath);
@@ -5162,10 +5024,12 @@ export function App() {
   ): string => {
     const meta = CONSOLE_CATALOG[r.consoleCode] || CONSOLE_CATALOG.psx;
     const baseTitle = r.cleanTitle || extractCleanTitle(r.fileName);
-    const hasAlpha =
-      !PURE_NUMBERED_ROM_REGEX.test(baseTitle) &&
-      (baseTitle.match(/[a-zA-Zа-яА-ЯёЁ]/g) || []).length >= 2;
-    if (!hasAlpha) return r.fileName;
+    // Название-число («1942») берём, если его подтвердил DAT / точный поиск или в имени есть тег региона.
+    // A numeric title ("1942") is used when a DAT / exact search confirmed it or the name has a region tag.
+    const numericConfirmed =
+      /^(dat|libretro-exact)/.test(r.titleSource || '') ||
+      isNumericTitleWithTags(stripFileExtension(r.fileName));
+    if (!canBuildNameFromTitle(baseTitle, numericConfirmed)) return r.fileName;
 
     const { releaseYear } = inferGenreAndYear(baseTitle, r.consoleCode);
     let outExt = normalizeDiskOutputExt(r.extension);
@@ -7921,7 +7785,7 @@ export function App() {
       for (const r of targets) {
         if (resolvedTitles.has(r.id)) continue;
         const q = [r.extractedInternalTitle, r.cleanTitle].find(
-          (x) => x && isReadableTitle(extractCleanTitle(x))
+          (x) => x && isReadableTitle(extractCleanTitle(x)) && isPlausibleTitleText(extractCleanTitle(x))
         );
         if (q) searchTitleById.set(r.id, q);
         else unresolvedReasons.set(r.id, t('title.note.unreadableTitle'));
@@ -8007,6 +7871,7 @@ export function App() {
             ...r,
             mod: datMods.get(r.id) || r.mod,
             cleanTitle: bestTitle,
+            titleSource: resolved ? resolved.source : r.titleSource,
             region: resolved?.region || r.region,
             revision: resolved?.region ? resolved.revision || '' : r.revision,
           },
