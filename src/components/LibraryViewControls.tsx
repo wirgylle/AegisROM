@@ -272,7 +272,9 @@ export const LibraryGroupsControl: React.FC<{
   groupingDisabled?: boolean;
   filter: LibraryGroupFilter;
   onFilter: (f: LibraryGroupFilter) => void;
-}> = ({ grouping, onGrouping, groupingDisabled, filter, onFilter }) => {
+  /** Окно ручных коллекций и серий. / Manual collections and series window. */
+  onOpenManager?: () => void;
+}> = ({ grouping, onGrouping, groupingDisabled, filter, onFilter, onOpenManager }) => {
   const { t } = useI18n();
   const { open, setOpen, ref } = usePopover();
   const filtered = !isGroupFilterAll(filter);
@@ -350,6 +352,18 @@ export const LibraryGroupsControl: React.FC<{
             )}
           </div>
           <p className="text-[11px] leading-snug text-slate-500 dark:text-slate-400">{t('lv.scopeNote')}</p>
+          {onOpenManager && (
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                onOpenManager();
+              }}
+              className="w-full h-8 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+            >
+              {t('mg.open')}
+            </button>
+          )}
         </div>
       )}
     </div>

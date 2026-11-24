@@ -97,6 +97,7 @@ export function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
     bitness: t('cat.byBitness'),
     genre: t('cat.byGenre'),
     age: t('cat.byAge'),
+    studio: t('studio.by'),
   };
   const catalogLabel: Record<AppSettings['catalogMode'], string> = {
     r36s_flat_console: t('tools.lib.catalogMode.flat'),

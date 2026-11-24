@@ -75,6 +75,19 @@ import { VirtualizedLibraryViews, type LibraryCollectionBadge } from './Virtuali
 import { EditorToolbar, GameEditModal, useManualEditsVersion } from './LibraryEditor';
 import { applyManualEditToRow, exportManualEdits, importManualEdits } from '../utils/manualEdits';
 import { CollectionModal } from './CollectionModal';
+import { ManualGroupsModal } from './ManualGroupsModal';
+import { useManualGroupsVersion } from './useManualGroups';
+import {
+  applyManualGroups,
+  exportManualGroups,
+  gameKeyOf,
+  getManualGroupsState,
+  importManualGroups,
+  removeFromManualGroup,
+  setDetached,
+  suggestGroups,
+} from '../utils/manualGroups';
+import { NO_STUDIO, studioKeyOf, studioOf } from '../utils/studio';
 import { GameRelationsPanel } from './GameRelationsPanel';
 import {
   buildCollections,
@@ -255,6 +268,11 @@ export interface UnifiedGameRow {
   // Editor manual edits (utils/manualEdits.ts) and the gamelist.xml fields they set.
   developer?: string;
   publisher?: string;
+  // Ручные коллекции/серии (utils/manualGroups.ts), только при показе. / Manual groups, display only.
+  manualCollection?: string;
+  manualCollectionLabel?: string;
+  manualSeries?: string;
+  manualSeriesLabel?: string;
   players?: string;
   rating?: string;
   desc?: string;
@@ -933,13 +951,13 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
 
   // Dynamic Sidebar Grouping Mode: 'console' | 'bitness' | 'genre' | 'age'
   const [sidebarGroupBy, setSidebarGroupBy] = useState<
-    'console' | 'bitness' | 'genre' | 'age'
+    'console' | 'bitness' | 'genre' | 'age' | 'studio'
   >(() => loadAppSettings().sidebarGroupBy);
   const [activeSidebarFilterKey, setActiveSidebarFilterKey] = useState<string>('ALL');
 
   // Library Main Sorting Mode: 'title' | 'console' | 'bitness' | 'genre' | 'age' | 'size'
   const [librarySortBy, setLibrarySortBy] = useState<
-    'title' | 'console' | 'bitness' | 'genre' | 'age' | 'size' | 'status'
+    'title' | 'console' | 'bitness' | 'genre' | 'age' | 'size' | 'status' | 'studio'
   >(() => loadAppSettings().librarySortBy);
   // Сохранили «Настройки» — применяем значения по умолчанию к текущему сеансу (раздел при открытии не трогаем).
   // Settings saved — apply the defaults to this session (the start section is left alone).
@@ -991,6 +1009,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     saveMediaPrefs(p);
   };
   const [collectionModalLeadId, setCollectionModalLeadId] = useState<string | null>(null);
+  const [manualGroupsTab, setManualGroupsTab] = useState<null | 'groups' | 'suggest' | 'detached'>(null);
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedGameId, setSelectedGameId] = useState<string>('g1');
@@ -1333,6 +1352,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         const n = importManualEdits(parsed.manualEdits);
         if (n > 0) onAddLog?.(tf('ed.importedLog', { count: n }));
       }
+      if (parsed && !Array.isArray(parsed) && parsed.manualGroups) importManualGroups(parsed.manualGroups);
       if (Array.isArray(parsed)) {
         loadedRows = parsed;
       } else if (parsed && Array.isArray(parsed.rows)) {
@@ -1412,6 +1432,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       totalGames: gamesSource.length,
       // Ручные правки редактора хранятся отдельно от строк. / Editor manual edits are kept apart from rows.
       manualEdits: exportManualEdits(),
+      // Ручные коллекции и серии. / Manual collections and series.
+      manualGroups: exportManualGroups(),
       rows: gamesSource.map((g) => ({
         ...g,
         fileObj: undefined,
@@ -1514,10 +1536,21 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
 
   // Ручные правки редактора поверх строк базы. / Editor manual edits laid over the database rows.
   const manualEditsVersion = useManualEditsVersion();
+  // Ручные коллекции и серии (utils/manualGroups.ts) тоже накладываются здесь.
+  // Manual collections and series (utils/manualGroups.ts) are laid over here too.
+  const manualGroupsVersion = useManualGroupsVersion();
   const enrichedGamesSource = React.useMemo(
-    () => gamesSource.map((g) => enrichGameForBuild(applyManualEditToRow(g))),
+    () => applyManualGroups(gamesSource.map((g) => enrichGameForBuild(applyManualEditToRow(g))), getManualGroupsState()),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [gamesSource, manualEditsVersion]
+    [gamesSource, manualEditsVersion, manualGroupsVersion]
+  );
+  // Предложения: игры, похожие на часть серии или коллекции. Применяются только по «Принять».
+  // Suggestions: games that look like part of a series or collection. Applied only on "Accept".
+  const deferredGamesForSuggest = useDeferredValue(enrichedGamesSource);
+  const groupSuggestions = React.useMemo(
+    () => suggestGroups(deferredGamesForSuggest, getManualGroupsState()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [deferredGamesForSuggest, manualGroupsVersion]
   );
   const [editorEditIds, setEditorEditIds] = useState<string[] | null>(null);
   const editorEditGames = React.useMemo(() => {
@@ -1552,6 +1585,9 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         const primaryGenre = (g.genre || t('app.miscGenre')).split('/')[0].trim();
         key = primaryGenre;
         label = localizeGenre(primaryGenre, t);
+      } else if (sidebarGroupBy === 'studio') {
+        key = studioKeyOf(g);
+        label = key === NO_STUDIO ? t('studio.unknown') : studioOf(g);
       } else {
         // 'age'
         key = g.ageRating;
@@ -1580,6 +1616,9 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     } else if (sidebarGroupBy === 'bitness') {
       const order: Record<string, number> = { '8-bit': 1, '16-bit': 2, '32/64-bit': 3 };
       list.sort((a, b) => (order[a.key] || 99) - (order[b.key] || 99));
+    } else if (sidebarGroupBy === 'studio') {
+      // По алфавиту, «не указана» в конце. / Alphabetical, "not set" last.
+      list.sort((a, b) => (a.key === NO_STUDIO ? 1 : 0) - (b.key === NO_STUDIO ? 1 : 0) || activeCollator.compare(a.label, b.label));
     } else {
       list.sort((a, b) => b.count - a.count || activeCollator.compare(a.label, b.label));
     }
@@ -1618,6 +1657,9 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         if (sidebarGroupBy === 'age' && g.ageRating !== activeSidebarFilterKey) {
           continue;
         }
+        if (sidebarGroupBy === 'studio' && studioKeyOf(g) !== activeSidebarFilterKey) {
+          continue;
+        }
       }
       if (libraryModFilter !== 'all') {
         const grp = modGroup((g.modKind as RomModKind) || 'original');
@@ -1633,7 +1675,9 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
           g.cleanFile.toLowerCase().includes(q) ||
           g.serial.toLowerCase().includes(q) ||
           g.genre.toLowerCase().includes(q) ||
-          g.console.toLowerCase().includes(q);
+          g.console.toLowerCase().includes(q) ||
+          (g.developer || '').toLowerCase().includes(q) ||
+          (g.publisher || '').toLowerCase().includes(q);
         if (!hit) continue;
       }
       filtered.push(g);
@@ -1672,6 +1716,12 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       }
       if (librarySortBy === 'size') {
         return b.sizeMB - a.sizeMB;
+      }
+      if (librarySortBy === 'studio') {
+        // Игры без студии в конце. / Games without a studio go last.
+        const sa = studioOf(a);
+        const sb = studioOf(b);
+        return (sa ? 0 : 1) - (sb ? 0 : 1) || activeCollator.compare(sa, sb) || activeCollator.compare(a.title, b.title);
       }
       if (librarySortBy === 'status') {
         return (
@@ -1714,15 +1764,19 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         // На карточке серии — название серии. / A series card shows the series name.
         games.push(multi ? { ...s.lead, title: s.label } : s.lead);
       }
-      return { mode: 'series' as const, games, badges, leadOf, membersByLead, labelByLead };
+      return { mode: 'series' as const, games, badges, leadOf, membersByLead, labelByLead, nameByLead: new Map<string, string>() };
     }
     const cols = buildCollections(filteredGames);
+    const nameByLead = new Map<string, string>();
     for (const c of cols) {
       badges.set(c.lead.id, { count: c.members.length, consoles: c.consoles });
       membersByLead.set(c.lead.id, c.members);
       for (const m of c.members) leadOf.set(m.id, c.lead.id);
+      if (c.label) nameByLead.set(c.lead.id, c.label);
     }
-    return { mode: 'collections' as const, games: cols.map((c) => c.lead), badges, leadOf, membersByLead, labelByLead };
+    // Ручная коллекция показывает своё название. / A manual collection shows its own name.
+    const games = cols.map((c) => (c.label && c.members.length > 1 ? { ...c.lead, title: c.label } : c.lead));
+    return { mode: 'collections' as const, games, badges, leadOf, membersByLead, labelByLead, nameByLead };
   }, [collectionsActive, libraryGrouping, filteredGames]);
 
   // Индекс по всей библиотеке для правой панели (не зависит от фильтров).
@@ -2144,6 +2198,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   { id: 'bitness', label: t('cat.byBitness') },
                   { id: 'genre', label: t('cat.byGenre') },
                   { id: 'age', label: t('cat.byAge') },
+                  { id: 'studio', label: t('studio.by') },
                 ].map((mode) => (
                   <button
                     key={mode.id}
@@ -2157,7 +2212,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         }
                       });
                     }}
-                    className={`py-1 px-1.5 rounded-md text-center cursor-pointer transition ${
+                    className={`py-1 px-1.5 rounded-md text-center cursor-pointer transition ${mode.id === 'studio' ? 'col-span-2' : ''} ${
                       sidebarGroupBy === mode.id
                         ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-2xs'
                         : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
@@ -2191,6 +2246,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       ? t('cat.allBitness')
                       : sidebarGroupBy === 'genre'
                       ? t('cat.allGenre')
+                      : sidebarGroupBy === 'studio'
+                      ? t('studio.all')
                       : t('cat.allAge')}
                   </span>
                   <span className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">
@@ -2302,6 +2359,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         ? t('cat.allBitness')
                         : sidebarGroupBy === 'genre'
                         ? t('cat.allGenre')
+                        : sidebarGroupBy === 'studio'
+                        ? t('studio.all')
                         : t('cat.allAge')}{' '}
                       ({enrichedGamesSource.length})
                     </option>
@@ -2319,7 +2378,21 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     groupingDisabled={selectedConcept === 'concept_c_workbench'}
                     filter={libraryGroupFilter}
                     onFilter={changeLibraryGroupFilter}
+                    onOpenManager={() => setManualGroupsTab('groups')}
                   />
+
+                  {/* Предложения по сериям и коллекциям после скана / Series and collection suggestions after a scan */}
+                  {groupSuggestions.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setManualGroupsTab('suggest')}
+                      title={t('mg.badgeHint')}
+                      className="h-8 px-2.5 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer hover:bg-amber-100 dark:hover:bg-amber-900/40"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      {tf('mg.badge', { count: groupSuggestions.length })}
+                    </button>
+                  )}
 
                   {/* Медиа на карточках / Media on cards */}
                   {selectedConcept !== 'concept_c_workbench' && (
@@ -2345,6 +2418,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       <option value="genre">{t('lib.sort.genre')}</option>
                       <option value="age">{t('lib.sort.age')}</option>
                       <option value="size">{t('lib.sort.size')}</option>
+                      <option value="studio">{t('lib.sort.studio')}</option>
                       <option value="status">{t('lib.sort.status')}</option>
                     </select>
                   </div>
@@ -4137,6 +4211,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
           mode={groupedLibraryView.labelByLead.has(collectionModalLeadId) ? 'series' : 'collection'}
           title={
             groupedLibraryView.labelByLead.get(collectionModalLeadId) ||
+            groupedLibraryView.nameByLead.get(collectionModalLeadId) ||
             groupedLibraryView.membersByLead.get(collectionModalLeadId)!.find((m) => m.id === collectionModalLeadId)?.title ||
             ''
           }
@@ -4147,6 +4222,33 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
             setCollectionModalLeadId(null);
           }}
           onClose={() => setCollectionModalLeadId(null)}
+          onRemove={(id) => {
+            // Ручная группа — убрать из неё; автоматическая — вынуть игру из группы.
+            // Manual group: remove from it; automatic group: take the game out.
+            const row = enrichedGamesSource.find((g) => g.id === id);
+            if (!row) return;
+            const key = gameKeyOf(row);
+            const isSeries = groupedLibraryView.labelByLead.has(collectionModalLeadId);
+            const manual = isSeries ? row.manualSeries : row.manualCollection;
+            const prefix = isSeries ? 'm:s:' : 'm:c:';
+            if (manual && manual.startsWith(prefix)) removeFromManualGroup(manual.slice(prefix.length), [key]);
+            else setDetached(isSeries ? 'series' : 'collection', [key], true);
+          }}
+          onOpenManager={() => {
+            setCollectionModalLeadId(null);
+            setManualGroupsTab('groups');
+          }}
+        />
+      )}
+
+      {manualGroupsTab && (
+        <ManualGroupsModal
+          games={enrichedGamesSource}
+          checkedIds={Object.keys(checkedGameIds).filter((id) => checkedGameIds[id])}
+          suggestions={groupSuggestions}
+          initialTab={manualGroupsTab}
+          onClose={() => setManualGroupsTab(null)}
+          onLog={onAddLog}
         />
       )}
 
