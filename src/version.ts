@@ -1,8 +1,8 @@
 // RU: Базовая версия (как в package.json) — для имён файлов и ссылок на релиз.
 // EN: Base version (same as package.json) for file names and release links.
-export const APP_BASE_VERSION = '0.6.0';
-// RU: Показываемая версия. Dev-сборки CI добавляют коммит: 0.6.0+abc1234.
-// EN: Displayed version. CI dev builds append the commit: 0.6.0+abc1234.
+export const APP_BASE_VERSION = '0.6.1-dev';
+// RU: Показываемая версия. Dev-сборки CI добавляют коммит: 0.6.1-dev+abc1234.
+// EN: Displayed version. CI dev builds append the commit: 0.6.1-dev+abc1234.
 export const APP_VERSION: string = import.meta.env.VITE_APP_VERSION || APP_BASE_VERSION;
 export const APP_VERSION_TAG = `v${APP_VERSION} (Beta)`;
 export const APP_FULL_TITLE = `AegisROM ${APP_VERSION_TAG}`;
