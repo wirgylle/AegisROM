@@ -31,6 +31,8 @@ export interface ScrapeReport {
   looked: number;
   libretro: number;
   screenscraper: number;
+  // Найдено в папке готовых медиа (Skraper и т. п.). / Found in the ready-made media folder.
+  local: number;
   // Не найдено нигде, по причине последнего источника, который пробовали.
   missed: Record<MissReason, number>;
   // ScreenScraper был настроен на момент запуска.
@@ -44,6 +46,7 @@ export function emptyScrapeReport(ssConfigured: boolean): ScrapeReport {
     looked: 0,
     libretro: 0,
     screenscraper: 0,
+    local: 0,
     missed: { 'no-title': 0, 'not-in-db': 0, network: 0, 'no-system': 0, 'ss-auth': 0, 'ss-limit': 0 },
     ssConfigured,
     ssStopped: '',

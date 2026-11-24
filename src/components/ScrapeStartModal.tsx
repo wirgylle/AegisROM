@@ -3,6 +3,7 @@ import { Image as ImageIcon, X } from 'lucide-react';
 import { useI18n } from '../i18n/translations';
 import { MEDIA_SLOTS, type ScrapeOptions } from '../utils/scrapeOptions';
 import type { MediaSlot } from '../utils/scrapePlan';
+import { ScrapeSourcesPanel } from './ScrapeSourcesPanel';
 
 // Выбор типов медиа и повтора прошлых промахов перед скраппером. Панель отдельно от окна:
 // её же вставляем в общее окно выбора области операции (OperationScopeModal, prop extra).
@@ -61,11 +62,13 @@ export function ScrapeStartModal({
   initial,
   onConfirm,
   onClose,
+  onOpenScreenScraper,
 }: {
   open: boolean;
   initial: ScrapeOptions;
   onConfirm: (opts: ScrapeOptions) => void;
   onClose: () => void;
+  onOpenScreenScraper?: () => void;
 }) {
   const { t } = useI18n();
   const [opts, setOpts] = useState<ScrapeOptions>(initial);
@@ -77,7 +80,7 @@ export function ScrapeStartModal({
         aria-modal="true"
         aria-label={t('scrape.opts.title')}
         onClick={(e) => e.stopPropagation()}
-        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-lg w-full max-h-[85vh] overflow-hidden flex flex-col shadow-2xl"
+        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
       >
         <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-start justify-between gap-3">
           <div className="flex items-start gap-2 min-w-0">
@@ -93,7 +96,13 @@ export function ScrapeStartModal({
             <X className="w-5 h-5" />
           </button>
         </div>
-        <div className="overflow-y-auto px-5 py-4">
+        <div className="overflow-y-auto px-5 py-4 space-y-4">
+          <ScrapeSourcesPanel
+            value={opts.sources}
+            onChange={(sources) => setOpts({ ...opts, sources })}
+            onOpenScreenScraper={onOpenScreenScraper}
+          />
+          <div className="border-t border-slate-200 dark:border-slate-800" />
           <ScrapeOptionsPanel value={opts} onChange={setOpts} />
         </div>
         <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-800 flex justify-end gap-2">
@@ -106,7 +115,7 @@ export function ScrapeStartModal({
           </button>
           <button
             type="button"
-            disabled={opts.slots.length === 0}
+            disabled={opts.slots.length === 0 || opts.sources.enabled.length === 0}
             onClick={() => onConfirm(opts)}
             className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white cursor-pointer disabled:opacity-50"
           >

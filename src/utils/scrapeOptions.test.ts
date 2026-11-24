@@ -17,7 +17,11 @@ test('normalizeScrapeOptions drops unknown slots and keeps a fallback', () => {
   assert.deepEqual(normalizeScrapeOptions({ slots: ['video', 'bogus'], retryMisses: 1 }, fb), {
     slots: ['video'],
     retryMisses: true,
+    sources: fb.sources,
   });
+  const src = normalizeScrapeOptions({ slots: ['image'], sources: { order: ['local'], enabled: ['local'], fallback: false } }, fb).sources;
+  assert.deepEqual(src.enabled, ['local']);
+  assert.equal(src.fallback, false);
   assert.deepEqual(normalizeScrapeOptions({ slots: [] }, fb).slots, fb.slots);
   assert.deepEqual(normalizeScrapeOptions(null, fb), fb);
 });
@@ -30,4 +34,7 @@ test('skipKnownMiss', () => {
   assert.equal(skipKnownMiss(miss, false, true), false, 'ScreenScraper connected since');
   assert.equal(skipKnownMiss({ ...miss, source: 'libretro+screenscraper' }, false, true), true);
   assert.equal(skipKnownMiss({ code: 'network', at: 1 }, false, false), false, 'network errors are retried');
+  assert.equal(skipKnownMiss(miss, false, ['libretro']), true);
+  assert.equal(skipKnownMiss(miss, false, ['libretro', 'local']), false, 'a new source is active now');
+  assert.equal(skipKnownMiss({ ...miss, source: 'local+libretro' }, false, ['libretro']), true);
 });

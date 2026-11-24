@@ -2,6 +2,7 @@ package aegisapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -160,5 +161,33 @@ func TestScreenScraperLoginOnlyWithBuiltinKey(t *testing.T) {
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/screenscraper/config", nil))
 	if !strings.Contains(rec.Body.String(), `"builtinDevKey":true`) || strings.Contains(rec.Body.String(), "bpw") {
 		t.Errorf("GET: %s", rec.Body.String())
+	}
+}
+
+// Остаток запросов для окна выбора источника. / Remaining requests for the source picker.
+func TestScreenScraperQuota(t *testing.T) {
+	fakeScreenScraper(t)
+	mux := http.NewServeMux()
+	registerScreenScraperRoutes(mux, t.TempDir(), func() {})
+	get := func() map[string]any {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/screenscraper/quota", nil))
+		var out map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return out
+	}
+	if out := get(); out["configured"] != false {
+		t.Fatalf("unconfigured: %v", out)
+	}
+	if out := ssPost(t, mux, "/api/screenscraper/config", `{"devId":"d","devPassword":"dp","user":"val","password":"secret"}`); out["ok"] != true {
+		t.Fatalf("config: %v", out)
+	}
+	out := get()
+	info, _ := out["info"].(map[string]any)
+	if out["ok"] != true || info["requestsToday"] != float64(5) || info["maxRequestsPerDay"] != float64(20000) {
+		t.Fatalf("quota: %v", out)
+	}
+	if strings.Contains(fmt.Sprint(out), "secret") {
+		t.Fatalf("quota leaks password: %v", out)
 	}
 }

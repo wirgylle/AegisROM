@@ -74,6 +74,15 @@ import {
   type ScrapeOptions,
 } from './utils/scrapeOptions';
 import { ScrapeStartModal } from './components/ScrapeStartModal';
+import { fetchSsQuota, LOCAL_MEDIA_HANDLE_KEY, ssStateOf } from './components/ScrapeSourcesPanel';
+import { planSources, type ScrapeSourceId, type SourceStatus } from './utils/scrapeSources';
+import {
+  buildLocalConsoleIndex,
+  findConsoleDir,
+  lookupLocalMedia,
+  type LocalConsoleIndex,
+  type LocalSlots,
+} from './utils/localMediaIndex';
 import {
   findGamelistEntry,
   indexGamelistEntries,
@@ -7272,7 +7281,12 @@ export function App() {
     // Media types and retrying past misses (the start dialog). Without it: the old behaviour.
     opts: ScrapeOptions | null = null
   ) => {
-    const runOpts = opts || defaultScrapeOptions(scrapeShortVideos);
+    // Без окна (автоскраппер после сортировки, редактор): типы как раньше, источники — последний выбор.
+    // Without the dialog (auto-scrape after sorting, editor): old types, the last chosen sources.
+    const runOpts = opts || {
+      ...defaultScrapeOptions(scrapeShortVideos),
+      sources: loadScrapeOptions(defaultScrapeOptions(scrapeShortVideos)).sources,
+    };
     const wantVideo = runOpts.slots.includes('video');
     const wantedSlots = new Set<MediaSlot>(runOpts.slots);
     const winners = targetList.filter((r) => r.status === 'verified');
@@ -7293,10 +7307,38 @@ export function App() {
     try {
       // Ромы, для которых медиа не нашлось раньше: по умолчанию не ищем их заново.
       // ROMs with no media found earlier are not searched again by default.
-      let ssConfigured = false;
+      // Источники этого запуска: какие включены, в каком порядке и доступны ли сейчас
+      // (логин и лимит ScreenScraper, папка с готовыми медиа).
+      // This run's sources: which are on, in what order, and whether they are available now.
+      const ssState = await fetchSsQuota();
+      const ssConfigured = ssState.configured;
+      let localRoot: any = null;
+      let localFolderName = '';
       try {
-        ssConfigured = Boolean((await (await fetch('/api/screenscraper/config')).json()).configured);
+        const rec = await loadDirectoryHandleRecord(LOCAL_MEDIA_HANDLE_KEY);
+        if (rec?.handle) {
+          localFolderName = rec.libraryPathHint || rec.folderName;
+          if ((await checkOrRequestHandlePermission(rec.handle, 'read', true)) === 'granted') localRoot = rec.handle;
+          else addLog(t('scrape.src.localNoAccess'));
+        }
       } catch {}
+      const sourceStatus: SourceStatus = {
+        local: localRoot ? 'ready' : 'no-folder',
+        libretro: 'ready',
+        screenscraper: ssStateOf(ssState),
+      };
+      const sourcePlan = planSources(runOpts.sources, sourceStatus);
+      const sourceName = (id: ScrapeSourceId) => t(`scrape.src.${id}.name`);
+      for (const sk of sourcePlan.skipped) {
+        addLog(tf('scrape.src.runSkipped', { name: sourceName(sk.id), state: t(`scrape.src.state.${sk.state}`) }));
+      }
+      if (sourcePlan.run.length === 0) {
+        const msg = t('scrape.src.nothingToRun');
+        setCurrentActionText(msg);
+        addLog(msg);
+        return;
+      }
+      addLog(tf('scrape.src.runPlan', { list: sourcePlan.run.map(sourceName).join(' → ') }));
       const knownMisses = await fetchScrapeMisses();
       let skippedKnownMissCount = 0;
 
@@ -7329,7 +7371,7 @@ export function App() {
       for (let i = 0; i < winners.length; i++) {
         if (stopRequestedRef.current) break;
         const w = winners[i];
-        if (skipKnownMiss(knownMisses[romManualEditKey(w)], runOpts.retryMisses, ssConfigured)) {
+        if (skipKnownMiss(knownMisses[romManualEditKey(w)], runOpts.retryMisses, sourcePlan.run)) {
           skippedKnownMissCount++;
           continue;
         }
@@ -7440,59 +7482,134 @@ export function App() {
         };
       });
 
-      const resp = await fetch('/api/r36s/scrape-batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items: payload }),
-      });
-      const data = await resp.json();
       const matchMap = new Map<string, any>();
-      for (const res of data.results || []) {
-        matchMap.set(res.id, res);
-      }
+      // Результат источника: найденное заменяет промах, промах — только прежний промах
+      // (причина берётся от последнего источника, который пробовали).
+      // A source's result: a hit replaces a miss; a miss only replaces an earlier miss.
+      const mergeSourceResult = (res: any) => {
+        const prev = matchMap.get(res.id);
+        if (isScrapeMatched(res) || !prev) {
+          matchMap.set(res.id, res);
+          return;
+        }
+        if (isScrapeMatched(prev)) return;
+        // Номерное имя оставляем причиной «нет имени»: переименование по DAT ещё может помочь.
+        // A numbered name stays "no title": a DAT rename can still help.
+        if (missReasonOf(prev) !== 'no-title' && res.reasonCode !== 'ss-auth' && res.reasonCode !== 'ss-limit') {
+          matchMap.set(res.id, { ...prev, reason: res.reason, reasonCode: res.reasonCode });
+        }
+      };
+      const pendingRoms = () => romsNeedingScrape.filter((w) => !isScrapeMatched(matchMap.get(w.id)));
+      const payloadById = new Map(payload.map((p) => [p.id, p] as const));
 
-      // Фаза 2: промахи Libretro ищем в ScreenScraper (если пользователь его настроил).
-      // Phase 2: Libretro misses go to ScreenScraper (if the user configured it).
       const report: ScrapeReport = emptyScrapeReport(ssConfigured);
       report.looked = romsNeedingScrape.length;
-      const ssMisses = ssConfigured ? romsNeedingScrape.filter((w) => !isScrapeMatched(matchMap.get(w.id))) : [];
-      if (ssMisses.length > 0 && !stopRequestedRef.current) {
-        addLog(tf('app.scrape.ssStart', { count: ssMisses.length }));
-        const chunk = 5;
-        for (let i = 0; i < ssMisses.length; i += chunk) {
+
+      // Готовые медиа: индекс папки консоли строим один раз за запуск.
+      // Ready-made media: each console folder is indexed once per run.
+      const localIndexCache = new Map<string, LocalConsoleIndex | null>();
+      const runLocal = async (list: ScannedRomFile[]) => {
+        addLog(tf('scrape.src.localStart', { folder: localFolderName, count: list.length }));
+        let found = 0;
+        for (let i = 0; i < list.length; i++) {
           if (stopRequestedRef.current) break;
-          setCurrentActionText(tf('app.scrape.ssLooking', { i: Math.min(i + chunk, ssMisses.length), total: ssMisses.length }));
-          const items = ssMisses.slice(i, i + chunk).map((w) =>
-            screenScraperItem(w, (CONSOLE_CATALOG[w.consoleCode] || CONSOLE_CATALOG.nes).libretroSystem)
-          );
-          let out: any = null;
-          try {
-            out = await (
-              await fetch('/api/screenscraper/lookup', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ items }),
-              })
-            ).json();
-          } catch {
-            break;
+          const w = list[i];
+          const consoleDir = w.targetDirHandle || w.parentHandle;
+          const meta = CONSOLE_CATALOG[w.consoleCode] || CONSOLE_CATALOG.nes;
+          const names = [consoleDir?.name || '', w.consoleCode, meta.libretroSystem || ''].filter(Boolean);
+          const cacheKey = names.join('|').toLowerCase();
+          if (!localIndexCache.has(cacheKey)) {
+            let idx: LocalConsoleIndex | null = null;
+            try {
+              const dir = await findConsoleDir(localRoot, names);
+              if (dir) idx = await buildLocalConsoleIndex(dir, (n) => buildComparisonKey(extractCleanTitle(n)));
+            } catch {}
+            if (!idx) addLog(tf('scrape.src.localNoConsole', { folder: localFolderName, console: names[0] }));
+            localIndexCache.set(cacheKey, idx);
           }
-          for (const res of out?.results || []) {
-            const prev = matchMap.get(res.id);
-            if (res.matched) {
-              matchMap.set(res.id, res);
-            } else if (prev && missReasonOf(prev) !== 'no-title' && res.reasonCode !== 'ss-auth' && res.reasonCode !== 'ss-limit') {
-              // Номерное имя оставляем причиной «нет имени»: переименование по DAT ещё может помочь.
-              // A numbered name stays "no title": a DAT rename can still help.
-              matchMap.set(res.id, { ...prev, reason: res.reason, reasonCode: res.reasonCode });
+          const idx = localIndexCache.get(cacheKey);
+          const romStem = (
+            w.isMultiDisc && w.multiDiscFolderName ? w.multiDiscFolderName : w.fileName.replace(/\.[^/.]+$/, '')
+          ).trim();
+          const hit: LocalSlots | null = idx
+            ? lookupLocalMedia(idx, romStem, w.cleanTitle, (n) => buildComparisonKey(extractCleanTitle(n)))
+            : null;
+          const usable = hit ? (Object.keys(hit) as MediaSlot[]).filter((sl) => wantedSlots.has(sl)) : [];
+          if (hit && usable.length > 0) {
+            found++;
+            mergeSourceResult({
+              id: w.id,
+              matched: true,
+              matchedCanonicalTitle: w.cleanTitle,
+              titleSource: 'local',
+              localFiles: hit,
+            });
+          } else {
+            mergeSourceResult({
+              id: w.id,
+              matched: false,
+              reasonCode: idx ? 'not-in-db' : 'no-system',
+              reason: t('scrape.src.local.name'),
+            });
+          }
+          if (i % 25 === 0) setCurrentActionText(tf('scrape.src.localStart', { folder: localFolderName, count: list.length - i }));
+        }
+        addLog(tf('scrape.src.localFound', { count: found }));
+      };
+
+      const runLibretro = async (list: ScannedRomFile[]) => {
+        const resp = await fetch('/api/r36s/scrape-batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: list.map((w) => payloadById.get(w.id)).filter(Boolean) }),
+        });
+        const data = await resp.json();
+        for (const res of data.results || []) mergeSourceResult(res);
+      };
+
+      const runScreenScraper = async (ssMisses: ScannedRomFile[]) => {
+        if (ssMisses.length > 0 && !stopRequestedRef.current) {
+          addLog(tf('app.scrape.ssStart', { count: ssMisses.length }));
+          const chunk = 5;
+          for (let i = 0; i < ssMisses.length; i += chunk) {
+            if (stopRequestedRef.current) break;
+            setCurrentActionText(tf('app.scrape.ssLooking', { i: Math.min(i + chunk, ssMisses.length), total: ssMisses.length }));
+            const items = ssMisses.slice(i, i + chunk).map((w) =>
+              screenScraperItem(w, (CONSOLE_CATALOG[w.consoleCode] || CONSOLE_CATALOG.nes).libretroSystem)
+            );
+            let out: any = null;
+            try {
+              out = await (
+                await fetch('/api/screenscraper/lookup', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ items }),
+                })
+              ).json();
+            } catch {
+              break;
+            }
+            for (const res of out?.results || []) mergeSourceResult(res);
+            setProgressPct(30 + Math.round(((i + chunk) / ssMisses.length) * 20));
+            if (out?.stop === 'ss-auth' || out?.stop === 'ss-limit') {
+              report.ssStopped = out.stop;
+              addLog(t(out.stop === 'ss-auth' ? 'app.scrape.ssStopAuth' : 'app.scrape.ssStopLimit'));
+              break;
             }
           }
-          setProgressPct(30 + Math.round(((i + chunk) / ssMisses.length) * 20));
-          if (out?.stop === 'ss-auth' || out?.stop === 'ss-limit') {
-            report.ssStopped = out.stop;
-            addLog(t(out.stop === 'ss-auth' ? 'app.scrape.ssStopAuth' : 'app.scrape.ssStopLimit'));
-            break;
-          }
+        }
+      };
+
+      for (const src of sourcePlan.run) {
+        if (stopRequestedRef.current) break;
+        const list = pendingRoms();
+        if (list.length === 0) break;
+        try {
+          if (src === 'local') await runLocal(list);
+          else if (src === 'libretro') await runLibretro(list);
+          else await runScreenScraper(list);
+        } catch (err) {
+          addLog(`${sourceName(src)}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
 
@@ -7553,30 +7670,43 @@ export function App() {
             ['marquee', m.marqueeUrl, 'marquees', `${romBaseNoExt}-marquee.png`, 'image'],
             ['video', m.videoUrl, 'videos', `${romBaseNoExt}-video.mp4`, 'video'],
           ];
+          const localFiles: LocalSlots | undefined = m.localFiles;
           for (const [slot, url, folder, fileName, kind] of jobs) {
-            if (!url || !slots.has(slot)) continue;
+            const local = localFiles?.[slot];
+            if ((!url && !local) || !slots.has(slot)) continue;
             const dh = await dirFor(folder);
             if (!dh) continue;
-            saved[slot] = await saveRemoteMediaToHandle(url, dh, fileName, kind);
+            if (local) {
+              // Готовый файл: расширение оставляем (jpg остаётся jpg), видео — только mp4.
+              // A ready-made file keeps its extension (jpg stays jpg); video: mp4 only.
+              const ext = (local.path.match(/\.[^./]+$/)?.[0] || '.png').toLowerCase();
+              if (kind === 'video' && ext !== '.mp4') continue;
+              saved[slot] = await copyLocalMediaToHandle(local.handle, dh, fileName.replace(/\.[^.]+$/, ext), kind);
+            } else if (url) {
+              saved[slot] = await saveRemoteMediaToHandle(url, dh, fileName, kind);
+            }
           }
         }
 
         const savedSlots = saved ? (Object.keys(saved) as MediaSlot[]).filter((k) => saved[k]) : [];
         const gotSomething = saved ? savedSlots.length > 0 : titleMatched;
-        if (!titleMatched) report.missed[missReasonOf(m)]++;
         const missKey = romManualEditKey(r);
         if (!titleMatched) {
+          report.missed[missReasonOf(m)]++;
           missSet[missKey] = {
             code: missReasonOf(m),
             at: Date.now(),
             title: r.cleanTitle,
-            source: ssConfigured ? 'libretro+screenscraper' : 'libretro',
+            // ScreenScraper, остановленный логином или лимитом, не считаем опробованным.
+            // ScreenScraper stopped by login or quota does not count as tried.
+            source: sourcePlan.run.filter((x) => !(x === 'screenscraper' && report.ssStopped)).join('+'),
           };
-        } else if (gotSomething && knownMisses[missKey]) {
-          missClear.push(missKey);
+        } else {
+          if (gotSomething && knownMisses[missKey]) missClear.push(missKey);
+          if (m.titleSource === 'screenscraper') report.screenscraper++;
+          else if (m.titleSource === 'local') report.local++;
+          else report.libretro++;
         }
-        else if (m.titleSource === 'screenscraper') report.screenscraper++;
-        else report.libretro++;
         if (gotSomething) downloadedMediaCount++;
 
         nextRoms[i] = {
@@ -7585,7 +7715,9 @@ export function App() {
           cleanTitle: officialTitle,
           canonicalName: newCanonicalName,
           titleSource: titleMatched
-            ? m.titleSource === 'libretro-fuzzy' || m.titleSource === 'screenscraper'
+            ? m.titleSource === 'local'
+              ? r.titleSource
+              : m.titleSource === 'libretro-fuzzy' || m.titleSource === 'screenscraper'
               ? m.titleSource
               : 'libretro-exact'
             : r.titleSource,
@@ -7646,6 +7778,7 @@ export function App() {
       // Отчёт по причинам и подсказка следующего шага (кнопки — в блоке «Итог последнего скраппера»).
       // Report by reason and next-step hints (buttons are in the "Last scraper run" card).
       addLog(tf('app.scrape.reportFound', { libretro: report.libretro, ss: report.screenscraper }));
+      if (report.local > 0) addLog(tf('scrape.src.reportLocal', { count: report.local }));
       const missedTotal = totalMissed(report);
       if (missedTotal > 0) {
         addLog(
@@ -7673,6 +7806,27 @@ export function App() {
     } finally {
       setIsScraping(false);
       setProgressPct(100);
+    }
+  };
+
+  // Копия готового файла из папки другой программы (источник «Готовые медиа»).
+  // Copy a ready-made file from another program's folder (the "ready-made media" source).
+  const copyLocalMediaToHandle = async (
+    src: any,
+    dirHandle: any,
+    fileName: string,
+    kind: 'image' | 'video' = 'image'
+  ): Promise<boolean> => {
+    try {
+      const buf = await (await src.getFile()).arrayBuffer();
+      if (!isFetchedMediaPayloadValid(buf, kind)) return false;
+      const fh = await dirHandle.getFileHandle(fileName, { create: true });
+      const writable = await fh.createWritable();
+      await writable.write(buf);
+      await writable.close();
+      return true;
+    } catch {
+      return false;
     }
   };
 
@@ -8392,7 +8546,7 @@ export function App() {
     try {
       const mDir = await consoleDirHandle.getDirectoryHandle('marquees');
       for (const base of candidateBases) {
-        for (const sfx of ['-marquee.png', '.png', '.jpg']) {
+        for (const sfx of ['-marquee.png', '.png', '-marquee.jpg', '.jpg']) {
           try {
             const fh = await mDir.getFileHandle(`${base}${sfx}`);
             const f = await fh.getFile();
@@ -9336,6 +9490,14 @@ export function App() {
             setScrapeStartOpen(false);
             persistScrapeOptions(o);
             void handleScrapeLibraryMedia(o);
+          }}
+          onOpenScreenScraper={() => {
+            setScrapeStartOpen(false);
+            // Блок логина ScreenScraper — в «Инструментах». / The ScreenScraper login block is in Tools.
+            setTimeout(
+              () => document.querySelector('[data-tool="screenscraper"]')?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
+              50
+            );
           }}
         />
       )}
