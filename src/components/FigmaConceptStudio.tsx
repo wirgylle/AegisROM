@@ -35,6 +35,7 @@ import {
   AlertTriangle,
   Check,
   Wand2,
+  Settings as SettingsIcon,
   Coffee,
 } from 'lucide-react';
 import { GameInspectorCoverVideo } from './GameInspectorCoverVideo';
@@ -114,6 +115,8 @@ import {
 import { WorkbenchContextPanel, type HoveredTool } from './WorkbenchContextPanel';
 import { QuickTestModal, type QuickTestRequest } from './QuickTestModal';
 import { DonateModal } from './DonateModal';
+import { SettingsModal } from './SettingsModal';
+import { loadAppSettings, subscribeAppSettings } from '../utils/appSettings';
 import { resolveQuickTestCore, pickCueDataTrack, pickBiosForRegion, fileExt } from '../utils/quickTest';
 import { getVerifiedBiosFiles } from '../utils/biosScan';
 
@@ -231,6 +234,8 @@ interface FigmaConceptStudioProps {
   } | null;
   /** Opens the first-run setup wizard again (top bar wand button). */
   onOpenSetupWizard?: () => void;
+  /** Called after the Settings window saved new defaults (for the log). */
+  onSettingsSaved?: () => void;
   selectedConcept: FigmaConceptId;
   onSelectConcept: (id: FigmaConceptId) => void;
   isDarkMode: boolean;
@@ -622,6 +627,7 @@ function buildSampleDefaultGames(): UnifiedGameRow[] {
 export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   navigateRequest,
   onOpenSetupWizard,
+  onSettingsSaved,
   selectedConcept,
   onSelectConcept,
   isDarkMode,
@@ -716,14 +722,17 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     () => new Intl.Collator(locale, { sensitivity: 'base', numeric: true }),
     [locale]
   );
-  const [previewTab, setPreviewTab] = useState<'library' | 'tools' | 'builds' | 'env'>('library');
+  const [previewTab, setPreviewTab] = useState<'library' | 'tools' | 'builds' | 'env'>(
+    () => loadAppSettings().startSection
+  );
   const [toolsMode, setToolsMode] = useState<'library' | 'sd_folder' | 'combine'>('library');
   useEffect(() => {
     if (!navigateRequest) return;
     setPreviewTab(navigateRequest.target.tab);
     if (navigateRequest.target.toolsMode) setToolsMode(navigateRequest.target.toolsMode);
   }, [navigateRequest?.nonce]);
-  const [renameOnSortRules, setRenameOnSortRules] = useState<boolean>(true);
+  const [renameOnSortRules, setRenameOnSortRules] = useState<boolean>(() => loadAppSettings().renameOnSort);
+  const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
   const [librarySyncModalOpen, setLibrarySyncModalOpen] = useState<boolean>(false);
   const [selectedDiscIndex, setSelectedDiscIndex] = useState<number | null>(null);
   const [quickTestReq, setQuickTestReq] = useState<QuickTestRequest | null>(null);
@@ -886,13 +895,26 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   // Dynamic Sidebar Grouping Mode: 'console' | 'bitness' | 'genre' | 'age'
   const [sidebarGroupBy, setSidebarGroupBy] = useState<
     'console' | 'bitness' | 'genre' | 'age'
-  >('console');
+  >(() => loadAppSettings().sidebarGroupBy);
   const [activeSidebarFilterKey, setActiveSidebarFilterKey] = useState<string>('ALL');
 
   // Library Main Sorting Mode: 'title' | 'console' | 'bitness' | 'genre' | 'age' | 'size'
   const [librarySortBy, setLibrarySortBy] = useState<
     'title' | 'console' | 'bitness' | 'genre' | 'age' | 'size' | 'status'
-  >('title');
+  >(() => loadAppSettings().librarySortBy);
+  // Сохранили «Настройки» — применяем значения по умолчанию к текущему сеансу (раздел при открытии не трогаем).
+  // Settings saved — apply the defaults to this session (the start section is left alone).
+  useEffect(
+    () =>
+      subscribeAppSettings(() => {
+        const s = loadAppSettings();
+        setRenameOnSortRules(s.renameOnSort);
+        setLibrarySortBy(s.librarySortBy);
+        setSidebarGroupBy(s.sidebarGroupBy);
+        setActiveSidebarFilterKey('ALL');
+      }),
+    []
+  );
   // Фильтр по статусу: оригиналы, переводы, хаки, прочие патчи. / Status filter: originals, translations, hacks, other patches.
   const [libraryModFilter, setLibraryModFilter] = useState<'all' | 'modded' | RomModGroup>('all');
   // Коллекции: в «Все» одна карточка на игру, версии с других консолей под кнопкой.
@@ -1913,6 +1935,17 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
           >
             <Coffee className="w-4 h-4" />
             <span className="hidden 2xl:inline">{t('coffee.button')}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            title={t('settings.button')}
+            aria-label={t('settings.button')}
+            className="h-8 px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition"
+          >
+            <SettingsIcon className="w-4 h-4" />
+            <span className="hidden xl:inline">{t('settings.button')}</span>
           </button>
 
           {onOpenSetupWizard && (
@@ -4053,6 +4086,9 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       )}
 
       <DonateModal open={donateOpen} onClose={() => setDonateOpen(false)} />
+      {settingsOpen && (
+        <SettingsModal onClose={() => setSettingsOpen(false)} onSaved={() => onSettingsSaved?.()} />
+      )}
 
       <OperationScopeModal
         open={Boolean(scopeRequest)}
