@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, CheckCircle2, Layers, LibraryBig, Pencil, Plus } from 'lucide-react';
 import type { EnrichedBuildGame } from '../utils/buildsAndConverterEngine';
 import { localizeGenre, useI18n } from '../i18n/translations';
+import { MEDIA_FRAME_RATIO, mediaCandidates, mediaSetOf, type MediaKind, type PickedMedia } from '../utils/mediaKinds';
+import { DEFAULT_MEDIA_PREFS, type LibraryMediaPrefs } from './LibraryViewControls';
 
 export type LibraryViewMode =
   | 'concept_a_sidebar'
@@ -22,6 +24,8 @@ interface VirtualizedLibraryViewsProps {
   onOpenCollection?: (leadId: string) => void;
   /** Редактор: открыть правку одного рома. / Editor: open the single-ROM edit dialog. */
   onEditGame?: (id: string) => void;
+  /** Какое медиа показывать. / Which media to show. */
+  mediaPrefs?: LibraryMediaPrefs;
 }
 
 export interface LibraryCollectionBadge {
@@ -32,23 +36,45 @@ export interface LibraryCollectionBadge {
   label?: string;
 }
 
-// Tile grid: as many columns as fit (min 160px each); covers keep a 3:4 box,
-// so the row height is derived from the measured column width.
-const GRID_MIN_COL_WIDTH = 160;
+// Tile grid: as many columns as fit; every card has the same frame for the picked media kind
+// (box art 3:4, screenshot 4:3, banner 2.4:1), so the row height comes from the column width.
+// Плитка: все карточки одного размера, кадр зависит от выбранного вида медиа.
 const GRID_GAP = 16;
 const GRID_TEXT_HEIGHT = 46; // title + meta line under the cover
 const GRID_OVERSCAN_ROWS = 3;
 
-function computeGridMetrics(width: number) {
-  const w = Math.max(width, GRID_MIN_COL_WIDTH * 2 + GRID_GAP);
-  const cols = Math.max(2, Math.floor((w + GRID_GAP) / (GRID_MIN_COL_WIDTH + GRID_GAP)));
+const GRID_MIN_COL_WIDTH: Record<MediaKind, number> = {
+  boxart: 160,
+  snap: 200,
+  title: 200,
+  image: 200,
+  marquee: 220,
+};
+
+function computeGridMetrics(width: number, kind: MediaKind = 'boxart') {
+  const minCol = GRID_MIN_COL_WIDTH[kind];
+  const w = Math.max(width, minCol * 2 + GRID_GAP);
+  const cols = Math.max(2, Math.floor((w + GRID_GAP) / (minCol + GRID_GAP)));
   const colWidth = (w - GRID_GAP * (cols - 1)) / cols;
-  const coverHeight = Math.round((colWidth * 4) / 3);
+  const coverHeight = Math.round(colWidth * MEDIA_FRAME_RATIO[kind]);
   const cardHeight = coverHeight + GRID_TEXT_HEIGHT;
   return { cols, coverHeight, cardHeight, rowStride: cardHeight + GRID_GAP };
 }
 
-const COMPACT_ROW_HEIGHT = 40;
+// Список: строка чуть выше, чтобы влезла миниатюра. / List: a slightly taller row for the thumbnail.
+const COMPACT_ROW_HEIGHT = 44;
+const COMPACT_THUMB_HEIGHT = 36;
+
+/** Картинка с переходом к следующему кандидату при ошибке. / An image that moves to the next candidate on error. */
+function useMediaCandidate(candidates: PickedMedia[]) {
+  const key = candidates.map((c) => c.url).join('|');
+  const [failed, setFailed] = useState(0);
+  useEffect(() => {
+    setFailed(0);
+  }, [key]);
+  const current = candidates[failed];
+  return { current, onError: () => setFailed((n) => n + 1) };
+}
 const EDITOR_ROW_HEIGHT = 42;
 const TABLE_OVERSCAN_ROWS = 14;
 
@@ -58,6 +84,9 @@ const warmedImageUrls = new Set<string>();
 interface MemoGridCardProps {
   game: EnrichedBuildGame;
   coverHeight: number;
+  mediaKind: MediaKind;
+  mediaFill: boolean;
+  mediaFallback: boolean;
   collectionCount: number;
   collectionConsoles: string;
   collectionTitle: string;
@@ -72,12 +101,14 @@ interface MemoGridCardProps {
 }
 
 const MemoGridCard = React.memo<MemoGridCardProps>(
-  ({ game, coverHeight, isSelected, onSelect, onAddToBuild, addBtnTitle, discLabel, collectionCount, collectionConsoles, collectionTitle, collectionIsSeries, onOpenCollection }) => {
-    const [imgFailed, setImgFailed] = useState(false);
-
-    useEffect(() => {
-      setImgFailed(false);
-    }, [game.boxArtUrl]);
+  ({ game, coverHeight, mediaKind, mediaFill, mediaFallback, isSelected, onSelect, onAddToBuild, addBtnTitle, discLabel, collectionCount, collectionConsoles, collectionTitle, collectionIsSeries, onOpenCollection }) => {
+    const candidates = useMemo(
+      () => mediaCandidates(mediaSetOf(game), mediaKind, mediaFallback),
+      [game, mediaKind, mediaFallback]
+    );
+    const { current, onError } = useMediaCandidate(candidates);
+    // Баннеры и логотипы прозрачные: их не обрезаем. / Banners and logos are transparent: never cropped.
+    const fit = mediaFill && current?.kind !== 'marquee' ? 'object-cover' : 'object-contain';
 
     return (
       <div
@@ -93,18 +124,19 @@ const MemoGridCard = React.memo<MemoGridCardProps>(
               : 'group-hover:ring-1 group-hover:ring-slate-300 dark:group-hover:ring-slate-600'
           }`}
         >
-          {game.boxArtUrl && !imgFailed && (
+          {current && (
             <img
-              src={game.boxArtUrl}
+              key={current.url}
+              src={current.url}
               alt={game.title}
               loading="lazy"
               decoding="async"
               referrerPolicy="no-referrer"
-              onError={() => setImgFailed(true)}
-              className="absolute inset-0 w-full h-full object-contain"
+              onError={onError}
+              className={`absolute inset-0 w-full h-full ${fit} ${current.kind === 'marquee' ? 'p-3' : ''}`}
             />
           )}
-          {(!game.boxArtUrl || imgFailed) && (
+          {!current && (
             <div className="absolute inset-0 flex items-center justify-center p-3 text-center text-sm font-semibold text-slate-500 dark:text-slate-400">
               {game.title}
             </div>
@@ -174,6 +206,9 @@ const MemoGridCard = React.memo<MemoGridCardProps>(
   (prev, next) =>
     prev.isSelected === next.isSelected &&
     prev.coverHeight === next.coverHeight &&
+    prev.mediaKind === next.mediaKind &&
+    prev.mediaFill === next.mediaFill &&
+    prev.mediaFallback === next.mediaFallback &&
     prev.lang === next.lang &&
     prev.discLabel === next.discLabel &&
     prev.addBtnTitle === next.addBtnTitle &&
@@ -195,6 +230,9 @@ const MemoGridCard = React.memo<MemoGridCardProps>(
 
 interface MemoCompactRowProps {
   game: EnrichedBuildGame;
+  /** null — без миниатюры. / null: no thumbnail. */
+  mediaKind: MediaKind | null;
+  mediaFallback: boolean;
   isSelected: boolean;
   onSelect: (id: string) => void;
   onAddToBuild?: (game: EnrichedBuildGame) => void;
@@ -209,8 +247,34 @@ interface MemoCompactRowProps {
   onOpenCollection?: (id: string) => void;
 }
 
+function CompactThumb({ game, kind, fallback }: { game: EnrichedBuildGame; kind: MediaKind; fallback: boolean }) {
+  const candidates = useMemo(() => mediaCandidates(mediaSetOf(game), kind, fallback), [game, kind, fallback]);
+  const { current, onError } = useMediaCandidate(candidates);
+  const width = Math.round(COMPACT_THUMB_HEIGHT / MEDIA_FRAME_RATIO[kind]);
+  return (
+    <span
+      className="relative shrink-0 inline-block rounded bg-slate-200/70 dark:bg-slate-800 overflow-hidden align-middle"
+      style={{ width: `${width}px`, height: `${COMPACT_THUMB_HEIGHT}px` }}
+      aria-hidden="true"
+    >
+      {current && (
+        <img
+          key={current.url}
+          src={current.url}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          onError={onError}
+          className={`absolute inset-0 w-full h-full ${current.kind === 'marquee' || kind === 'marquee' ? 'object-contain' : 'object-cover'}`}
+        />
+      )}
+    </span>
+  );
+}
+
 const MemoCompactRow = React.memo<MemoCompactRowProps>(
-  ({ game, isSelected, onSelect, onAddToBuild, addBtnTitle, discLabel, genreLabel, collectionCount, collectionConsoles, collectionTitle, collectionIsSeries, onOpenCollection }) => (
+  ({ game, mediaKind, mediaFallback, isSelected, onSelect, onAddToBuild, addBtnTitle, discLabel, genreLabel, collectionCount, collectionConsoles, collectionTitle, collectionIsSeries, onOpenCollection }) => (
     <tr
       onClick={() => onSelect(game.id)}
       style={{ height: `${COMPACT_ROW_HEIGHT}px` }}
@@ -220,6 +284,11 @@ const MemoCompactRow = React.memo<MemoCompactRowProps>(
           : 'hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-800 dark:text-slate-200'
       }`}
     >
+      {mediaKind && (
+        <td className="pl-3 pr-0 align-middle">
+          <CompactThumb game={game} kind={mediaKind} fallback={mediaFallback} />
+        </td>
+      )}
       <td className="px-3 truncate align-middle" title={game.title}>
         {collectionCount > 1 && onOpenCollection && (
           <button
@@ -281,6 +350,8 @@ const MemoCompactRow = React.memo<MemoCompactRowProps>(
   ),
   (prev, next) =>
     prev.isSelected === next.isSelected &&
+    prev.mediaKind === next.mediaKind &&
+    prev.mediaFallback === next.mediaFallback &&
     prev.lang === next.lang &&
     prev.discLabel === next.discLabel &&
     prev.genreLabel === next.genreLabel &&
@@ -433,8 +504,12 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
   collections,
   onOpenCollection,
   onEditGame,
+  mediaPrefs = DEFAULT_MEDIA_PREFS,
 }) => {
   const { t, tf, locale, lang } = useI18n();
+  const gridKind = mediaPrefs.grid;
+  const compactKind: MediaKind | null = mediaPrefs.compact === 'none' ? null : mediaPrefs.compact;
+  const compactCols = compactKind ? 7 : 6;
   const badgeOf = (id: string) => {
     const b = collections?.get(id);
     if (!b || b.count < 2) return { collectionCount: 1, collectionConsoles: '', collectionTitle: '', collectionIsSeries: false };
@@ -454,7 +529,7 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
     scrollTop: 0,
     clientHeight: 720,
     listTopOffset: 240,
-    ...computeGridMetrics(720),
+    ...computeGridMetrics(720, gridKind),
   });
 
   // Progressive background buffer index so large lists warm smoothly without blocking UI interactions
@@ -476,7 +551,7 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
       const lRect = listEl ? listEl.getBoundingClientRect() : sRect;
       const listTopOffset = Math.max(0, lRect.top - sRect.top + scrollEl.scrollTop);
       const width = listEl ? listEl.clientWidth : scrollEl.clientWidth;
-      const grid = computeGridMetrics(width);
+      const grid = computeGridMetrics(width, gridKind);
 
       setViewportMetrics((prev) => {
         if (
@@ -484,7 +559,8 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
           Math.abs(prev.clientHeight - scrollEl.clientHeight) < 4 &&
           Math.abs(prev.listTopOffset - listTopOffset) < 4 &&
           prev.cols === grid.cols &&
-          Math.abs(prev.cardHeight - grid.cardHeight) < 2
+          Math.abs(prev.cardHeight - grid.cardHeight) < 2 &&
+          prev.coverHeight === grid.coverHeight
         ) {
           return prev;
         }
@@ -519,7 +595,7 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
       window.removeEventListener('resize', scheduleMeasure);
       ro?.disconnect();
     };
-  }, [scrollContainerRef, viewMode, games.length]);
+  }, [scrollContainerRef, viewMode, games.length, gridKind]);
 
   // Background progressive buffer zone filler (yields every frame so scroll/click/search stay <16ms)
   useEffect(() => {
@@ -609,7 +685,8 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
 
     const timer = window.setTimeout(() => {
       for (let i = prefetchStart; i < prefetchEnd; i++) {
-        const url = games[i]?.boxArtUrl;
+        const g = games[i];
+        const url = g ? mediaCandidates(mediaSetOf(g), gridKind, mediaPrefs.fallback)[0]?.url : undefined;
         if (url && !url.startsWith('blob:') && !warmedImageUrls.has(url)) {
           if (warmedImageUrls.size > 1200) warmedImageUrls.clear();
           warmedImageUrls.add(url);
@@ -621,7 +698,7 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
     }, 120);
 
     return () => window.clearTimeout(timer);
-  }, [games, viewMode, windowInfo.endIdx]);
+  }, [games, viewMode, windowInfo.endIdx, gridKind, mediaPrefs.fallback]);
 
   const jumpToRatio = (ratio: number) => {
     const scrollEl = scrollContainerRef.current;
@@ -727,6 +804,9 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
                 key={g.id}
                 game={g}
                 coverHeight={viewportMetrics.coverHeight}
+                mediaKind={gridKind}
+                mediaFill={mediaPrefs.fill}
+                mediaFallback={mediaPrefs.fallback}
                 isSelected={selectedGameId === g.id}
                 onSelect={onSelectGame}
                 onAddToBuild={onAddToBuild}
@@ -749,6 +829,9 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
         <div className="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-xl">
           <table className="w-full table-fixed text-left border-collapse text-xs">
             <colgroup>
+              {compactKind && (
+                <col style={{ width: `${Math.round(COMPACT_THUMB_HEIGHT / MEDIA_FRAME_RATIO[compactKind]) + 12}px` }} />
+              )}
               <col />
               <col className="w-[8.5rem]" />
               <col className="w-[28%]" />
@@ -758,6 +841,7 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
             </colgroup>
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400">
+                {compactKind && <th className="py-2.5 pl-3 pr-0" aria-hidden="true" />}
                 <th className="py-2.5 px-3">{t('lib.col.title')}</th>
                 <th className="py-2.5 px-3 whitespace-nowrap">{t('lib.col.consoleBit')}</th>
                 <th className="py-2.5 px-3">{t('lib.col.genreAge')}</th>
@@ -769,13 +853,15 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/70">
               {windowInfo.topSpacerPx > 0 && (
                 <tr aria-hidden="true">
-                  <td colSpan={6} style={{ height: `${windowInfo.topSpacerPx}px`, padding: 0, border: 0 }} />
+                  <td colSpan={compactCols} style={{ height: `${windowInfo.topSpacerPx}px`, padding: 0, border: 0 }} />
                 </tr>
               )}
               {visibleGames.map((g) => (
                 <MemoCompactRow
                   key={g.id}
                   game={g}
+                  mediaKind={compactKind}
+                  mediaFallback={mediaPrefs.fallback}
                   isSelected={selectedGameId === g.id}
                   onSelect={onSelectGame}
                   onAddToBuild={onAddToBuild}
@@ -789,7 +875,7 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
               ))}
               {windowInfo.bottomSpacerPx > 0 && (
                 <tr aria-hidden="true">
-                  <td colSpan={6} style={{ height: `${windowInfo.bottomSpacerPx}px`, padding: 0, border: 0 }} />
+                  <td colSpan={compactCols} style={{ height: `${windowInfo.bottomSpacerPx}px`, padding: 0, border: 0 }} />
                 </tr>
               )}
             </tbody>

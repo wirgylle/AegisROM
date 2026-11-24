@@ -16,7 +16,6 @@ import {
   FolderInput,
   FolderOpen,
   Layers,
-  LibraryBig,
   FolderSearch,
   Undo2,
   RefreshCw,
@@ -77,7 +76,26 @@ import { EditorToolbar, GameEditModal, useManualEditsVersion } from './LibraryEd
 import { applyManualEditToRow, exportManualEdits, importManualEdits } from '../utils/manualEdits';
 import { CollectionModal } from './CollectionModal';
 import { GameRelationsPanel } from './GameRelationsPanel';
-import { buildCollections, buildSeries, indexCollections, seriesSiblings } from '../utils/gameCollections';
+import {
+  buildCollections,
+  buildSeries,
+  groupMembership,
+  indexCollections,
+  isGroupFilterAll,
+  passesGroupFilter,
+  seriesSiblings,
+  type LibraryGroupFilter,
+} from '../utils/gameCollections';
+import { stripBlobMedia, type MediaSet } from '../utils/mediaKinds';
+import {
+  LibraryGroupsControl,
+  LibraryMediaControl,
+  loadGroupFilter,
+  loadMediaPrefs,
+  saveGroupFilter,
+  saveMediaPrefs,
+  type LibraryMediaPrefs,
+} from './LibraryViewControls';
 import { OperationScopeModal } from './OperationScopeModal';
 import { ScrapeOptionsPanel } from './ScrapeOptionsPanel';
 import { ScrapeSourcesPanel } from './ScrapeSourcesPanel';
@@ -162,6 +180,7 @@ function sanitizeDatabasesForStorage<T extends { rows: UnifiedGameRow[] }>(dbs: 
             : undefined,
           boxArtUrl: isDeadOrLocalBlobUrl(r.boxArtUrl) ? undefined : r.boxArtUrl,
           videoUrl: isDeadOrLocalBlobUrl(r.videoUrl) ? undefined : r.videoUrl,
+          media: stripBlobMedia(r.media),
         }))
       : [],
   }));
@@ -233,6 +252,9 @@ export interface UnifiedGameRow {
   desc?: string;
   manualFields?: string[];
   manualMedia?: Partial<Record<'image' | 'thumbnail' | 'marquee' | 'video', string>>;
+  // Картинки по видам: боксарт, скриншот, титульный экран, баннер (utils/mediaKinds.ts).
+  // Images by kind: box art, screenshot, title screen, banner (utils/mediaKinds.ts).
+  media?: MediaSet;
 }
 
 interface FigmaConceptStudioProps {
@@ -939,14 +961,26 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       return 'collections';
     }
   });
-  const toggleLibraryGrouping = (mode: 'collections' | 'series') => {
-    const next = libraryGrouping === mode ? 'none' : mode;
+  const changeLibraryGrouping = (next: 'none' | 'collections' | 'series') => {
     setLibraryGrouping(next);
     try {
       localStorage.setItem('aegis.lib.grouping', next);
     } catch {
       // ignore
     }
+  };
+  // Фильтр групп: игры из коллекций, из серий, одиночные (несколько пунктов сразу).
+  // Group filter: games from collections, from series, single games (any mix).
+  const [libraryGroupFilter, setLibraryGroupFilter] = useState<LibraryGroupFilter>(() => loadGroupFilter());
+  const changeLibraryGroupFilter = (f: LibraryGroupFilter) => {
+    setLibraryGroupFilter(f);
+    saveGroupFilter(f);
+  };
+  // Какое медиа показывать на карточках. / Which media the cards show.
+  const [libraryMediaPrefs, setLibraryMediaPrefs] = useState<LibraryMediaPrefs>(() => loadMediaPrefs());
+  const changeLibraryMediaPrefs = (p: LibraryMediaPrefs) => {
+    setLibraryMediaPrefs(p);
+    saveMediaPrefs(p);
   };
   const [collectionModalLeadId, setCollectionModalLeadId] = useState<string | null>(null);
 
@@ -1327,6 +1361,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
           ...r,
           boxArtUrl: isDeadOrLocalBlobUrl(r.boxArtUrl) ? undefined : r.boxArtUrl,
           videoUrl: isDeadOrLocalBlobUrl(r.videoUrl) ? undefined : r.videoUrl,
+          media: stripBlobMedia(r.media),
         }));
         const newDbId = `db_file_${Date.now()}`;
         const pathHint = parsed?.libraryPath || libraryPath || file.name;
@@ -1382,6 +1417,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
           : undefined,
         boxArtUrl: isDeadOrLocalBlobUrl(g.boxArtUrl) ? undefined : g.boxArtUrl,
         videoUrl: isDeadOrLocalBlobUrl(g.videoUrl) ? undefined : g.videoUrl,
+        media: stripBlobMedia(g.media),
       })),
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
@@ -1541,6 +1577,16 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     return list;
   }, [enrichedGamesSource, sidebarGroupBy, t, activeCollator]);
 
+  // Принадлежность к коллекциям и сериям по всей Библиотеке (только когда фильтр включён).
+  // Collection and series membership over the whole Library (only while the filter is on).
+  // Галочки обновляются сразу, а пересчёт списка идёт следом. / Checkboxes update at once, the list follows.
+  const deferredGroupFilter = useDeferredValue(libraryGroupFilter);
+  const groupFilterOn = !isGroupFilterAll(deferredGroupFilter);
+  const libraryGroupMembership = React.useMemo(
+    () => (groupFilterOn ? groupMembership(enrichedGamesSource) : null),
+    [enrichedGamesSource, groupFilterOn]
+  );
+
   const filteredGames = React.useMemo(() => {
     const q = deferredSearchQuery.trim().toLowerCase();
     const hasQuery = q.length > 0;
@@ -1566,6 +1612,9 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       if (libraryModFilter !== 'all') {
         const grp = modGroup((g.modKind as RomModKind) || 'original');
         if (libraryModFilter === 'modded' ? grp === 'original' : grp !== libraryModFilter) continue;
+      }
+      if (libraryGroupMembership && !passesGroupFilter(g.id, libraryGroupMembership, deferredGroupFilter)) {
+        continue;
       }
       if (hasQuery) {
         const hit =
@@ -1625,12 +1674,13 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     });
 
     return filtered;
-  }, [enrichedGamesSource, activeSidebarFilterKey, sidebarGroupBy, deferredSearchQuery, librarySortBy, libraryModFilter, t, activeCollator]);
+  }, [enrichedGamesSource, activeSidebarFilterKey, sidebarGroupBy, deferredSearchQuery, librarySortBy, libraryModFilter, libraryGroupMembership, deferredGroupFilter, t, activeCollator]);
 
   // В редакторе (таблица файлов) нужны все файлы, поэтому там коллекции не сворачиваются.
+  // Внутри одной консоли сворачивание тоже работает (регионы, ревизии, хаки, части серии).
   // The editor (file table) needs every file, so collections are not collapsed there.
-  const collectionsActive =
-    libraryGrouping !== 'none' && activeSidebarFilterKey === 'ALL' && selectedConcept !== 'concept_c_workbench';
+  // Collapsing also works inside one console (regions, revisions, hacks, parts of a series).
+  const collectionsActive = libraryGrouping !== 'none' && selectedConcept !== 'concept_c_workbench';
 
   const groupedLibraryView = React.useMemo(() => {
     if (!collectionsActive) return null;
@@ -2252,35 +2302,24 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     ))}
                   </select>
 
-                  {/* Collections / Series toggles (mutually exclusive) */}
-                  <button
-                    type="button"
-                    onClick={() => toggleLibraryGrouping('collections')}
-                    aria-pressed={libraryGrouping === 'collections'}
-                    title={t('coll.toggleHint')}
-                    className={`h-8 px-2.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
-                      libraryGrouping === 'collections'
-                        ? 'bg-accent text-white border-accent'
-                        : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
-                    }`}
-                  >
-                    <Layers className="w-3.5 h-3.5" />
-                    <span>{t('coll.toggle')}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => toggleLibraryGrouping('series')}
-                    aria-pressed={libraryGrouping === 'series'}
-                    title={t('series.toggleHint')}
-                    className={`h-8 px-2.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
-                      libraryGrouping === 'series'
-                        ? 'bg-accent text-white border-accent'
-                        : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
-                    }`}
-                  >
-                    <LibraryBig className="w-3.5 h-3.5" />
-                    <span>{t('series.toggle')}</span>
-                  </button>
+                  {/* Группы: сворачивание и фильтр коллекций/серий / Groups: collapsing and collection/series filter */}
+                  <LibraryGroupsControl
+                    grouping={libraryGrouping}
+                    onGrouping={changeLibraryGrouping}
+                    groupingDisabled={selectedConcept === 'concept_c_workbench'}
+                    filter={libraryGroupFilter}
+                    onFilter={changeLibraryGroupFilter}
+                  />
+
+                  {/* Медиа на карточках / Media on cards */}
+                  {selectedConcept !== 'concept_c_workbench' && (
+                    <LibraryMediaControl
+                      prefs={libraryMediaPrefs}
+                      onChange={changeLibraryMediaPrefs}
+                      view={selectedConcept === 'concept_a_sidebar' ? 'grid' : 'compact'}
+                      games={filteredGames}
+                    />
+                  )}
 
                   {/* Sorting Dropdown */}
                   <div className="flex items-center gap-1.5 text-xs">
@@ -2472,6 +2511,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                 }
                 collections={groupedLibraryView?.badges}
                 onOpenCollection={setCollectionModalLeadId}
+                mediaPrefs={libraryMediaPrefs}
                 checkedGameIds={checkedGameIds}
                 onSelectGame={handleSelectGame}
                 onToggleCheck={toggleCheckGame}

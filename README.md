@@ -37,6 +37,7 @@ The app scans your collection and identifies games by checksums and disc serial 
 - Add a game to a build with a single `+` button.
 - Save and open the library database so you don't have to rescan your drives.
 - **Collections**: one game released on several consoles is shown as one group; the game card shows a description from Wikidata.
+- **Groups and media**: show only collections, only series or no single games, in any mix and inside one console; pick the picture the cards show (box art, screenshot, title screen, banner), all cards the same size, thumbnails in the list.
 - **Play** `beta`: the built-in emulator (EmulatorJS) runs a game right in the app window, no emulator install needed. Sega CD and PC Engine CD take their BIOS from the BIOS section.
 
 | List | Editor |

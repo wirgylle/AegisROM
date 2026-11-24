@@ -202,6 +202,15 @@ import {
   type RomModInfo,
 } from './utils/romHacks';
 import { isPatchFileName, readPatchInfo } from './utils/romPatcher';
+import {
+  MEDIA_KINDS,
+  MediaKindIndex,
+  classifyMediaUrl,
+  preferredCoverUrl,
+  readImageSize,
+  stripBlobMedia,
+  type MediaSet,
+} from './utils/mediaKinds';
 import { HackMoveModal, type HackMoveCandidate } from './components/HackMoveModal';
 
 interface ConsoleMeta {
@@ -664,6 +673,8 @@ interface ScannedRomFile {
   scrapedSnapUrl?: string;
   scrapedMarqueeUrl?: string;
   scrapedVideoUrl?: string;
+  // Локальные картинки по видам (blob:), см. utils/mediaKinds.ts. / Local images by kind (blob:).
+  localMedia?: MediaSet;
   mediaStatus: string;
   discNumber?: number | null;
   discCount?: number;
@@ -1536,6 +1547,20 @@ function deduplicateAcrossSubfolders(
   return cloned;
 }
 
+// Картинки рома по видам: локальные файлы и ссылки скраппера. / ROM images by kind: local files and scraper URLs.
+function scannedRomMediaSet(r: ScannedRomFile): MediaSet | undefined {
+  const set: MediaSet = { ...(r.localMedia || {}) };
+  const remote = (url: string | undefined, fallback: keyof MediaSet) => {
+    if (!url || url.startsWith('blob:')) return;
+    const kind = classifyMediaUrl(url) || fallback;
+    if (!set[kind]) set[kind] = url;
+  };
+  remote(r.scrapedBoxArtUrl, 'boxart');
+  remote(r.scrapedSnapUrl, 'snap');
+  remote(r.scrapedMarqueeUrl, 'marquee');
+  return Object.keys(set).length > 0 ? set : undefined;
+}
+
 function expandMultiDiscScannedRoms(items: ScannedRomFile[]): ScannedRomFile[] {
   const expanded: ScannedRomFile[] = [];
   for (const item of items) {
@@ -1547,6 +1572,7 @@ function expandMultiDiscScannedRoms(items: ScannedRomFile[]): ScannedRomFile[] {
           scrapedSnapUrl: d.scrapedSnapUrl || item.scrapedSnapUrl,
           scrapedMarqueeUrl: d.scrapedMarqueeUrl || item.scrapedMarqueeUrl,
           scrapedVideoUrl: d.scrapedVideoUrl || item.scrapedVideoUrl,
+          localMedia: d.localMedia || item.localMedia,
         });
       }
     } else {
@@ -1670,6 +1696,7 @@ function collapseMultiDiscScannedRoms(
       scrapedVideoUrl: videoUrl,
       scrapedMarqueeUrl: marqueeUrl,
       scrapedSnapUrl: snapUrl,
+      localMedia: updatedDiscs.find((d) => d.localMedia)?.localMedia || first.localMedia,
       mediaStatus: tfStatic('app.multi.inlineBadge', {
         discs: tfStatic('lib.multiDiscCount', { count: updatedDiscs.length }),
         path: `${effectiveFolderName}/${effectiveM3uName}`,
@@ -2157,15 +2184,36 @@ export function App() {
 
           let imgFile: File | undefined;
           let vidFile: File | undefined;
-          for (const k of [oldStem, cleanStem, r.title.toLowerCase(), titleNorm]) {
+          const stemKeys = [oldStem, cleanStem, r.title.toLowerCase(), titleNorm];
+          for (const k of stemKeys) {
             if (!k) continue;
             if (!imgFile && mediaIdx.imagesByStem.has(k)) imgFile = mediaIdx.imagesByStem.get(k);
             if (!vidFile && mediaIdx.videosByStem.has(k)) vidFile = mediaIdx.videosByStem.get(k);
           }
+          // Картинки по видам; обложкой становится боксарт. / Images by kind; box art becomes the cover.
+          let media: MediaSet | undefined = stripBlobMedia(r.media);
+          if (imgFile) {
+            const files = await mediaIdx.kinds.lookup(stemKeys, readImageSize);
+            const local: MediaSet = {};
+            const urlOf = new Map<File, string>();
+            for (const kind of MEDIA_KINDS) {
+              const f = files[kind];
+              if (!f) continue;
+              let u = urlOf.get(f);
+              if (!u) {
+                u = URL.createObjectURL(f);
+                urlOf.set(f, u);
+              }
+              local[kind] = u;
+            }
+            if (Object.keys(local).length > 0) media = { ...(media || {}), ...local };
+          }
           if (imgFile || vidFile) {
+            const cover = media ? preferredCoverUrl(media) : undefined;
             afterNative[i] = {
               ...r,
-              boxArtUrl: imgFile ? URL.createObjectURL(imgFile) : r.boxArtUrl,
+              media,
+              boxArtUrl: cover || (imgFile ? URL.createObjectURL(imgFile) : r.boxArtUrl),
               videoUrl: vidFile ? URL.createObjectURL(vidFile) : r.videoUrl,
             };
           }
@@ -2935,7 +2983,9 @@ export function App() {
   const registerLocalMediaFile = (
     file: File,
     imgMap: Map<string, File>,
-    vidMap: Map<string, File>
+    vidMap: Map<string, File>,
+    kindIndex?: MediaKindIndex<File>,
+    dirName?: string
   ) => {
     const dot = file.name.lastIndexOf('.');
     if (dot === -1) return;
@@ -2976,13 +3026,15 @@ export function App() {
         targetMap.set(k, file);
       }
     }
+    if (isImg && kindIndex) kindIndex.addFile(keys, file.name, dirName, file);
   };
 
-  const attachLocalMediaToRom = (
+  const attachLocalMediaToRom = async (
     rom: ScannedRomFile,
     imgMap: Map<string, File>,
-    vidMap: Map<string, File>
-  ): ScannedRomFile => {
+    vidMap: Map<string, File>,
+    kindIndex?: MediaKindIndex<File>
+  ): Promise<ScannedRomFile> => {
     const baseNoExt = rom.fileName.replace(/\.[^/.]+$/, '').trim().toLowerCase();
     const coreKey = extractCoreNumberKey(rom.fileName)?.toLowerCase();
     const candidateKeys = [
@@ -3003,8 +3055,36 @@ export function App() {
     let boxArtUrl = rom.scrapedBoxArtUrl;
     let videoUrl = rom.scrapedVideoUrl;
     let mediaStatus = rom.mediaStatus;
+    let localMedia: MediaSet | undefined;
+    let coverFromKinds = false;
 
-    if (matchedImgFile) {
+    // Картинки по видам: боксарт, скриншот, баннер… Обложкой берём боксарт, а не первую попавшуюся.
+    // Images by kind: box art, screenshot, banner… The cover is box art, not the first image found.
+    if (kindIndex && kindIndex.size > 0) {
+      const files = await kindIndex.lookup(candidateKeys, readImageSize);
+      const set: MediaSet = {};
+      const urlOf = new Map<File, string>();
+      for (const kind of MEDIA_KINDS) {
+        const f = files[kind];
+        if (!f) continue;
+        let u = urlOf.get(f);
+        if (!u) {
+          u = URL.createObjectURL(f);
+          urlOf.set(f, u);
+        }
+        set[kind] = u;
+      }
+      if (Object.keys(set).length > 0) {
+        localMedia = set;
+        const cover = preferredCoverUrl(set);
+        if (cover) {
+          boxArtUrl = cover;
+          coverFromKinds = true;
+        }
+      }
+    }
+
+    if (matchedImgFile && !coverFromKinds) {
       boxArtUrl = URL.createObjectURL(matchedImgFile);
     }
     if (matchedVidFile) {
@@ -3022,6 +3102,7 @@ export function App() {
       ...rom,
       scrapedBoxArtUrl: boxArtUrl,
       scrapedVideoUrl: videoUrl,
+      localMedia,
       mediaStatus,
     };
   };
@@ -3622,6 +3703,7 @@ export function App() {
     }> = [];
     const localImageFilesMap = new Map<string, File>();
     const localVideoFilesMap = new Map<string, File>();
+    const localMediaKinds = new MediaKindIndex<File>();
     // Файлы патчей из папок patch/. / Patch files from patch/ folders.
     const discoveredPatches: Array<{ file: File; relPath: string }> = [];
 
@@ -3635,7 +3717,7 @@ export function App() {
           if (mEntry.kind === 'file') {
             try {
               const mFile = await mEntry.getFile();
-              registerLocalMediaFile(mFile, localImageFilesMap, localVideoFilesMap);
+              registerLocalMediaFile(mFile, localImageFilesMap, localVideoFilesMap, localMediaKinds, mediaDirHandle.name);
             } catch {}
           }
         }
@@ -3661,9 +3743,18 @@ export function App() {
           if (
             OFFICIAL_R36S_MEDIA_DIRS.has(lowerName) ||
             Boolean(PHANTOM_MEDIA_DIR_KEYS[lowerName]) ||
-            ['images', 'videos', 'marquees', 'snap', 'boxart', 'downloaded_images', 'download_images'].includes(
-              lowerName
-            )
+            [
+              'images',
+              'videos',
+              'marquees',
+              'snap',
+              'boxart',
+              'downloaded_images',
+              'download_images',
+              'banners',
+              'screenshots',
+              'logos',
+            ].includes(lowerName)
           ) {
             await walkMediaFolderHandle(entry);
             continue;
@@ -3673,7 +3764,6 @@ export function App() {
               '_duplicates_1g1r',
               '_baddumps_junk',
               '_quarantine_1g1r_clones',
-              'banners',
               'system volume information',
               '$recycle.bin',
             ].includes(lowerName)
@@ -3704,7 +3794,7 @@ export function App() {
           ) {
             try {
               const mFile = await entry.getFile();
-              registerLocalMediaFile(mFile, localImageFilesMap, localVideoFilesMap);
+              registerLocalMediaFile(mFile, localImageFilesMap, localVideoFilesMap, localMediaKinds, dirHandle.name);
             } catch {}
           }
         }
@@ -3758,7 +3848,7 @@ export function App() {
           entry.pairedFormatExt
         );
         if (item) {
-          inspected.push(attachLocalMediaToRom(item, localImageFilesMap, localVideoFilesMap));
+          inspected.push(await attachLocalMediaToRom(item, localImageFilesMap, localVideoFilesMap, localMediaKinds));
         }
         if (pairedDiscovered.length > 0) {
           setProgressPct(Math.round(((i + 1) / pairedDiscovered.length) * 100));
@@ -3883,6 +3973,7 @@ export function App() {
     const gamelistByFolder = new Map<string, Map<string, string>>();
     const localImageFilesMap = new Map<string, File>();
     const localVideoFilesMap = new Map<string, File>();
+    const localMediaKinds = new MediaKindIndex<File>();
 
     for (const f of files) {
       const lowerName = f.name.toLowerCase();
@@ -3898,7 +3989,15 @@ export function App() {
         const dot = lowerName.lastIndexOf('.');
         const ext = dot !== -1 ? lowerName.slice(dot) : '';
         if (['.png', '.jpg', '.jpeg', '.bmp', '.webp', '.mp4', '.webm'].includes(ext)) {
-          registerLocalMediaFile(f, localImageFilesMap, localVideoFilesMap);
+          const relMedia = (f as any).webkitRelativePath || f.name;
+          const relParts = relMedia.split('/');
+          registerLocalMediaFile(
+            f,
+            localImageFilesMap,
+            localVideoFilesMap,
+            localMediaKinds,
+            relParts.length > 1 ? relParts[relParts.length - 2] : ''
+          );
         }
       }
     }
@@ -3959,7 +4058,7 @@ export function App() {
         entry.pairedFormatExt
       );
       if (item) {
-        inspected.push(attachLocalMediaToRom(item, localImageFilesMap, localVideoFilesMap));
+        inspected.push(await attachLocalMediaToRom(item, localImageFilesMap, localVideoFilesMap, localMediaKinds));
       }
       if (i % 5 === 0 || i === pairedDiscovered.length - 1) {
         setProgressPct(Math.round(((i + 1) / Math.max(1, pairedDiscovered.length)) * 100));
@@ -9313,6 +9412,7 @@ export function App() {
       status: r.mediaStatus || r.reason,
       boxArtUrl: r.scrapedBoxArtUrl,
       videoUrl: r.scrapedVideoUrl,
+      media: scannedRomMediaSet(r),
       fileObj: r.fileObj,
       companionFiles: r.companionFiles,
       cueText: r.cueText,
