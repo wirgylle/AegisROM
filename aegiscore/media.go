@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func RenameCompanionCueBin(romDir, oldBase, newBase, ext string) (oldCompanionPath string, newCompanionPath string) {
@@ -430,12 +431,9 @@ func RelocateExistingMediaForRom(oldRomDir, newRomDir, oldBase, newBase string) 
 		{"snap", "videos", ".mp4"},
 	}
 
-	// Also rename companion .srm save file if present
-	oldSrm := filepath.Join(oldRomDir, oldBase+".srm")
-	newSrm := filepath.Join(newRomDir, newBase+".srm")
-	if _, err := os.Stat(oldSrm); err == nil && !strings.EqualFold(oldSrm, newSrm) {
-		_ = os.Rename(oldSrm, newSrm)
-	}
+	// Сохранения (.srm, .sav, .state…) и их история едут вместе с ромом, см. saves.go.
+	// Saves (.srm, .sav, .state…) and their history follow the ROM, see saves.go.
+	MoveRomSaves(oldRomDir, newRomDir, oldBase, newBase, time.Now())
 
 	for _, ms := range mediaSpecs {
 		src := filepath.Join(oldRomDir, ms.srcSubDir, oldBase+ms.suffix)

@@ -113,6 +113,19 @@ export const BuildExportOptionsModal: React.FC<BuildExportOptionsModalProps> = (
             <p className="text-slate-500 dark:text-slate-400 pl-6">{t('bx.skipHint')}</p>
           </div>
 
+          <div className="space-y-1">
+            <label className="flex items-start gap-2 cursor-pointer font-semibold">
+              <input
+                type="checkbox"
+                className="mt-0.5 w-3.5 h-3.5 accent-emerald-600"
+                checked={opts.syncSaves}
+                onChange={(e) => setOpts((prev) => ({ ...prev, syncSaves: e.target.checked }))}
+              />
+              <span>{t('sv.bx.sync')}</span>
+            </label>
+            <p className="text-slate-500 dark:text-slate-400 pl-6">{t('sv.bx.syncHint')}</p>
+          </div>
+
           {supportsGamelist && (
             <div className="space-y-1">
               <label className="flex items-start gap-2 cursor-pointer font-semibold">

@@ -203,6 +203,7 @@ import {
   type RomModInfo,
 } from './utils/romHacks';
 import { isPatchFileName, readPatchInfo } from './utils/romPatcher';
+import { carryRomSaves, countSavesForRom, looksLikeSaveFile, romStem } from './utils/saveFiles';
 import {
   MEDIA_KINDS,
   MediaKindIndex,
@@ -670,6 +671,10 @@ interface ScannedRomFile {
   status: 'verified' | 'duplicate_clone' | 'junk_bad_dump';
   is1G1RWinner: boolean;
   reason: string;
+  // Чей дубль (id оставленного рома): к нему 1G1R переносит сохранения. / Kept ROM id for duplicates.
+  keptId?: string;
+  // Сколько видов сохранений лежит рядом (скан). / How many save kinds sit next to it (scan).
+  saveCount?: number;
   scrapedBoxArtUrl?: string;
   scrapedSnapUrl?: string;
   scrapedMarqueeUrl?: string;
@@ -1424,6 +1429,7 @@ function deduplicateAcrossSubfolders(
     ...it,
     status: JUNK_REGEX.test(it.fileName) ? 'junk_bad_dump' : 'verified',
     is1G1RWinner: !JUNK_REGEX.test(it.fileName),
+    keptId: undefined,
     reason: JUNK_REGEX.test(it.fileName)
       ? tStatic('app.scan.badDumpReason')
       : tStatic('app.scan.keep1g1rReason'),
@@ -1440,11 +1446,13 @@ function deduplicateAcrossSubfolders(
       if (scoreRomCandidate(item, priorityList) > scoreRomCandidate(first, priorityList)) {
         first.status = 'duplicate_clone';
         first.is1G1RWinner = false;
+        first.keptId = item.id;
         first.reason = tfStatic('app.scan.dupCrcReason', { folder: item.sourceSubfolder });
         seenCrc.set(key, i);
       } else {
         item.status = 'duplicate_clone';
         item.is1G1RWinner = false;
+        item.keptId = first.id;
         item.reason = tfStatic('app.scan.dupCrcReason', { folder: first.sourceSubfolder });
       }
     } else {
@@ -1497,6 +1505,7 @@ function deduplicateAcrossSubfolders(
       } else {
         item.is1G1RWinner = false;
         item.status = 'duplicate_clone';
+        item.keptId = best.id;
         item.reason = tfStatic('app.scan.dupFolderReason', {
           src: item.sourceSubfolder,
           best: best.sourceSubfolder,
@@ -1533,11 +1542,13 @@ function deduplicateAcrossSubfolders(
           if (scoreRomCandidate(itemB, priorityList) > scoreRomCandidate(itemA, priorityList)) {
             itemA.status = 'duplicate_clone';
             itemA.is1G1RWinner = false;
+            itemA.keptId = itemB.id;
             itemA.reason = tfStatic('app.scan.repeatReason', { kept: itemB.fileName });
             break;
           } else {
             itemB.status = 'duplicate_clone';
             itemB.is1G1RWinner = false;
+            itemB.keptId = itemA.id;
             itemB.reason = tfStatic('app.scan.repeatReason', { kept: itemA.fileName });
           }
         }
@@ -3709,6 +3720,9 @@ export function App() {
     const localMediaKinds = new MediaKindIndex<File>();
     // Файлы патчей из папок patch/. / Patch files from patch/ folders.
     const discoveredPatches: Array<{ file: File; relPath: string }> = [];
+    // Сохранения (.srm, .sav, .state…) по папкам: имена в нижнем регистре.
+    // Saves (.srm, .sav, .state…) per folder: lower-case names.
+    const saveNamesByDir = new Map<string, Set<string>>();
 
     const rootFolderTitle = rootHandle.name.toLowerCase();
     const prefixStart = CONSOLE_CATALOG[rootFolderTitle] ? rootHandle.name : '';
@@ -3780,7 +3794,12 @@ export function App() {
           const ext = dot !== -1 ? entry.name.slice(dot).toLowerCase() : '';
           const relCandidate = prefix ? `${prefix}/${entry.name}` : entry.name;
           const isPortScript = ext === '.sh' && relCandidate.toLowerCase().includes('port');
-          if (isPatchFileName(entry.name) && isInPatchFolder(relCandidate)) {
+          if (looksLikeSaveFile(entry.name) && !EXT_TO_DEFAULT_CONSOLE[ext]) {
+            const key = prefix.toLowerCase();
+            const set = saveNamesByDir.get(key) || new Set<string>();
+            set.add(entry.name.toLowerCase());
+            saveNamesByDir.set(key, set);
+          } else if (isPatchFileName(entry.name) && isInPatchFolder(relCandidate)) {
             try {
               discoveredPatches.push({ file: await entry.getFile(), relPath: relCandidate });
             } catch {}
@@ -3859,6 +3878,24 @@ export function App() {
       }
 
       await linkScannedPatches(inspected, discoveredPatches);
+
+      // Сохранения рядом с ромами: число видов у каждой игры и итог в журнал.
+      // Saves next to ROMs: how many kinds each game has, plus a log summary.
+      if (saveNamesByDir.size > 0) {
+        let gamesWithSaves = 0;
+        let saveFiles = 0;
+        for (const it of inspected) {
+          const rel = it.relativePath || it.fileName;
+          const dirKey = (rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '').toLowerCase();
+          const n = countSavesForRom(saveNamesByDir.get(dirKey), it.fileName);
+          if (n > 0) {
+            it.saveCount = n;
+            gamesWithSaves++;
+            saveFiles += n;
+          }
+        }
+        if (gamesWithSaves > 0) addLog(tf('sv.scanFound', { games: gamesWithSaves, files: saveFiles }));
+      }
 
       const deduplicatedIncoming = deduplicateAcrossSubfolders(
         inspected,
@@ -4252,19 +4289,9 @@ export function App() {
             await writable.close();
             await r.parentHandle.removeEntry(r.fileName);
 
-            // Переименовываем также файл сохранения .srm рядом с ромом, если он есть
-            try {
-              const oldSrmHandle = await r.parentHandle.getFileHandle(`${oldBaseNoExt}.srm`);
-              const srmFile = await oldSrmHandle.getFile();
-              const srmBuf = await srmFile.arrayBuffer();
-              const newSrmHandle = await r.parentHandle.getFileHandle(`${safeBase}.srm`, {
-                create: true,
-              });
-              const sw = await newSrmHandle.createWritable();
-              await sw.write(srmBuf);
-              await sw.close();
-              await r.parentHandle.removeEntry(`${oldBaseNoExt}.srm`);
-            } catch {}
+            // Сохранения (.srm, .sav, .state…) и их история едут за ромом (utils/saveFiles.ts).
+            // Saves (.srm, .sav, .state…) and their history follow the ROM (utils/saveFiles.ts).
+            await carryRomSaves(r.parentHandle, r.parentHandle, oldBaseNoExt, safeBase);
 
             // В заводском XML R36S обложки, -marquee.png и -thumb.png лежат внутри папки images/!
             const mediaPairs: Array<{ folder: string; suffixes: string[] }> = [
@@ -4453,6 +4480,16 @@ export function App() {
             }
             renamedInFolder++;
 
+            // Сохранения рядом с ромом едут за ним. / Saves next to the ROM follow it.
+            try {
+              await carryRomSaves(
+                rootDirHandle,
+                rootDirHandle,
+                foundDiskName.replace(/\.[^/.]+$/, ''),
+                m.proposedFileName.replace(/\.[^/.]+$/, '')
+              );
+            } catch {}
+
             const mediaCandidateStems = Array.from(
               new Set([
                 m.stem,
@@ -4587,7 +4624,11 @@ export function App() {
         );
       }
 
-      lines.push(`if exist "${oldStem}.srm" ren "${oldStem}.srm" "${newStem}.srm"`);
+      // Сохранения и папка их истории .aegis-saves. / Saves and their history folder.
+      for (const sfx of ['.srm', '.sav', '.rtc', '.state', '.state.auto', '_1.mcd', '_2.mcd']) {
+        lines.push(`if exist "${oldStem}${sfx}" ren "${oldStem}${sfx}" "${newStem}${sfx}"`);
+      }
+      lines.push(`if exist ".aegis-saves\\${oldStem}" ren ".aegis-saves\\${oldStem}" "${newStem}"`);
       lines.push(`if exist "images\\${oldStem}.png" ren "images\\${oldStem}.png" "${newStem}.png"`);
       lines.push(`if exist "images\\${oldStem}.bmp" ren "images\\${oldStem}.bmp" "${newStem}.bmp"`);
       lines.push(
@@ -5737,7 +5778,7 @@ export function App() {
     }
   };
 
-  // Helper to move companion media files (.srm, images/, marquees/, videos/) on rename without blocking UI
+  // Helper to move companion files (saves via utils/saveFiles.ts, images/, marquees/, videos/) on rename without blocking UI
   const renameMediaAndSavesForRom = async (
     srcConsoleDir: any,
     destConsoleDir: any,
@@ -5749,20 +5790,18 @@ export function App() {
       if (await isSameDirHandle(srcConsoleDir, destConsoleDir)) return;
     }
 
+    // Сохранения и их история: копия в историю, при конфликте остаётся более новое.
+    // Saves and their history: copied into history first; on conflict the newer one stays current.
     try {
-      const movedSrm = await tryFastMoveFile(
-        srcConsoleDir,
-        `${oldBaseNoExt}.srm`,
-        destConsoleDir,
-        `${newBaseNoExt}.srm`
-      );
-      if (!movedSrm) {
-        const oldSrm = await srcConsoleDir.getFileHandle(`${oldBaseNoExt}.srm`);
-        const f = await oldSrm.getFile();
-        await streamWriteFileToDir(f, destConsoleDir, `${newBaseNoExt}.srm`);
-        try {
-          await srcConsoleDir.removeEntry(`${oldBaseNoExt}.srm`);
-        } catch {}
+      const moved = await carryRomSaves(srcConsoleDir, destConsoleDir, oldBaseNoExt, newBaseNoExt);
+      if (moved.moved > 0) {
+        addLog(
+          tf(moved.conflicts > 0 ? 'sv.carryConflictLog' : 'sv.carryLog', {
+            from: oldBaseNoExt,
+            to: newBaseNoExt,
+            count: moved.moved,
+          })
+        );
       }
     } catch {}
 
@@ -5797,6 +5836,31 @@ export function App() {
         }
       } catch {}
     }
+  };
+
+  // 1G1R и замена версии (JP → RU): сохранения убранного дубля переезжают к оставленной версии.
+  // Если оставленную не найти, они уезжают вместе с дублем в карантин (fallbackDir).
+  // 1G1R and version replacement: a removed duplicate's saves move to the kept version,
+  // or along with the duplicate into quarantine when the kept one is unknown.
+  const carryDuplicateSaves = async (
+    r: ScannedRomFile,
+    pool: ScannedRomFile[],
+    fallback?: { dir: any; base: string }
+  ) => {
+    if (!r.parentHandle) return;
+    const kept = r.keptId ? pool.find((x) => x.id === r.keptId) : undefined;
+    try {
+      if (kept && kept.parentHandle && kept.fileName) {
+        const c = await carryRomSaves(r.parentHandle, kept.parentHandle, romStem(r.fileName), romStem(kept.fileName));
+        if (c.moved > 0 || c.conflicts > 0) {
+          addLog(tf('sv.keptLog', { from: r.fileName, to: kept.fileName, count: c.moved }));
+        }
+        return;
+      }
+      if (fallback?.dir) {
+        await carryRomSaves(r.parentHandle, fallback.dir, romStem(r.fileName), fallback.base);
+      }
+    } catch {}
   };
 
   const handleOrganizeCatalog = async (
@@ -5843,6 +5907,7 @@ export function App() {
           if (r.status === 'verified' || !r.parentHandle || !r.fileObj) continue;
 
           if (deleteJunkPermanently) {
+            await carryDuplicateSaves(r, updatedRoms);
             try {
               await r.parentHandle.removeEntry(r.fileName);
               for (const cf of r.companionFiles || []) {
@@ -5865,6 +5930,7 @@ export function App() {
             0,
             6
           )}${normalizeDiskOutputExt(r.extension)}`;
+          await carryDuplicateSaves(r, updatedRoms, { dir: targetDirHandle, base: romStem(dupFileName) });
           await writeRomWithCompanionsToDir(r, targetDirHandle, dupFileName, true);
 
           newUndoBatch.push({
@@ -6108,6 +6174,7 @@ export function App() {
 
         try {
           if (deleteJunkPermanently) {
+            await carryDuplicateSaves(r, deduped);
             await r.parentHandle.removeEntry(r.fileName);
             for (const cf of r.companionFiles || []) {
               try {
@@ -6126,6 +6193,7 @@ export function App() {
               0,
               6
             )}${normalizeDiskOutputExt(r.extension)}`;
+            await carryDuplicateSaves(r, deduped, { dir: targetDirHandle, base: romStem(dupFileName) });
             await writeRomWithCompanionsToDir(r, targetDirHandle, dupFileName, true);
             newUndoBatch.push({
               fromDirHandle: targetDirHandle,
@@ -6752,6 +6820,13 @@ export function App() {
 
         const newFileName = computeCanonicalNameForRom(r, filenameConfig);
         await writeRomWithCompanionsToDir(r, destDirHandle, newFileName);
+        // Сохранения из буфера едут в библиотеку вместе с ромом (копией или переносом, как сам ром).
+        // Saves from the buffer go to the library with the ROM (copied or moved, like the ROM).
+        try {
+          await carryRomSaves(r.parentHandle, destDirHandle, romStem(r.fileName), romStem(newFileName), {
+            mode: combineMoveMode === 'move' ? 'move' : 'copy',
+          });
+        } catch {}
 
         if (
           combineMoveMode === 'move' &&
@@ -9437,6 +9512,7 @@ export function App() {
       modTag: modTag(r.mod) || undefined,
       modLang: r.mod?.language,
       modNote: describeRomMod(r.mod, tf) || undefined,
+      saveCount: r.saveCount || undefined,
     };
     if (!r.dbRow) return row;
     // Ром взят из базы без скана: поля, которых у рома нет (жанр, год, ручные правки, PortMaster),
@@ -9472,6 +9548,7 @@ export function App() {
       modTag: row.modTag,
       modLang: row.modLang,
       modNote: row.modNote,
+      saveCount: row.saveCount,
     };
   };
 
