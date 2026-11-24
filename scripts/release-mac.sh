@@ -5,7 +5,7 @@
 #     через lipo, кладёт в AegisROM.app, подписывает ad-hoc (без аккаунта Apple)
 #     и упаковывает в public/downloads/AegisROM-v<версия>-macOS-universal.dmg.
 # EN: Builds AegisROM for macOS (`npm run release:mac`). Runs on a Mac only
-#     (macos-14 runner in CI): needs Xcode Command Line Tools, Go, Node.
+#     (macos-latest runner in CI): needs Xcode Command Line Tools, Go, Node.
 #     Builds the frontend, arm64 and amd64 binaries (cgo), merges them into a
 #     universal binary with lipo, wraps it in AegisROM.app, signs it ad-hoc (no
 #     Apple account) and packs public/downloads/AegisROM-v<version>-macOS-universal.dmg.
