@@ -8,6 +8,7 @@ import {
   CheckSquare,
   Square,
   FolderOutput,
+  Wifi,
   Cpu,
   ArrowRight,
   Layers,
@@ -75,6 +76,8 @@ import {
 } from '../utils/syncAndBuildsStorage';
 import { SyncDiffModal } from './SyncDiffModal';
 import { BuildExportOptionsModal } from './BuildExportOptionsModal';
+import { WifiTransferModal } from './WifiTransferModal';
+import { buildRomSubfolder, joinLocalPath, rememberLastBuildFolder } from '../utils/wifiTransfer';
 import {
   DirCache,
   copyFileToDir,
@@ -646,6 +649,10 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
   const [copyBiosToBuild, setCopyBiosToBuild] = useState<boolean>(() => loadBuildCopyBiosPref());
   // Окно параметров выгрузки (медиа, пропуск готовых) / Export settings dialog (media, skipping)
   const [exportOptionsOpen, setExportOptionsOpen] = useState(false);
+  // Заливка по Wi-Fi: окно и папка последней выгруженной сборки (если путь известен).
+  // Wi-Fi upload: the window and the folder of the last exported build (when the path is known).
+  const [wifiOpen, setWifiOpen] = useState(false);
+  const [wifiBuildDir, setWifiBuildDir] = useState('');
 
   const conversionPlanRows = useMemo(() => {
     return queuedGames.map((g) => {
@@ -1984,6 +1991,14 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
       onUpdateLiveProgress?.(false, 100, summaryMsg);
       onAddLog?.(summaryMsg);
       onAddLog?.(tf('bx.log.time', { time: formatDuration(Date.now() - startedAt) }));
+      // Путь на диске есть только у папок через Go: тогда сразу предлагаем залить по Wi-Fi.
+      // Only Go-backed folders have a disk path: then offer the Wi-Fi upload right away.
+      const rootPath = typeof targetRootHandle?.path === 'string' && targetRootHandle.__aegisNativeFs ? targetRootHandle.path : '';
+      if (rootPath) {
+        const dir = joinLocalPath(rootPath, buildRomSubfolder(selectedProfile.id));
+        rememberLastBuildFolder(dir);
+        setWifiBuildDir(dir);
+      }
     } catch (err) {
       const errMsg = tf('builds.conv.exportErrLog', { err: String(err) });
       onUpdateLiveProgress?.(false, 0, errMsg);
@@ -2981,7 +2996,29 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
                   <FolderOutput className="w-4 h-4" />
                   <span>{t('builds.conv.exportNowBtn')}</span>
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => setWifiOpen(true)}
+                  className="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-emerald-400 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 font-bold text-xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Wifi className="w-3.5 h-3.5" />
+                  <span>{t('wifi.btn')}</span>
+                </button>
               </div>
+              {wifiBuildDir && !activeRunning && (
+                <div className="w-full flex flex-wrap items-center gap-2 text-xs text-emerald-800 dark:text-emerald-200 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl px-3 py-2">
+                  <Wifi className="w-3.5 h-3.5 shrink-0" />
+                  <span className="flex-1 min-w-0">{t('wifi.afterExport')}</span>
+                  <button
+                    type="button"
+                    onClick={() => setWifiOpen(true)}
+                    className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold cursor-pointer"
+                  >
+                    {t('wifi.btn')}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -3346,6 +3383,13 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
         currentLibraryRows={allEnrichedGames}
         targetBuild={syncModalBuild}
         onExecuteBuildSync={handleExecuteBuildSync}
+        onAddLog={onAddLog}
+      />
+
+      <WifiTransferModal
+        isOpen={wifiOpen}
+        onClose={() => setWifiOpen(false)}
+        initialLocalDir={wifiBuildDir || undefined}
         onAddLog={onAddLog}
       />
 

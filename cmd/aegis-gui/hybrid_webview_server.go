@@ -1023,6 +1023,9 @@ func runHybridModernDesktopApp() bool {
 		PickFolder:   func(title string) (string, error) { return promptSelectFolderDialog(title, "") },
 		PreferNative: useNativeWindow(appDir),
 	})
+	// Заливка сборки по Wi-Fi (SFTP, SMB), пароли в Windows Credential Manager.
+	// Wi-Fi build upload (SFTP, SMB), passwords in Windows Credential Manager.
+	aegisapi.RegisterTransferRoutes(mux, appDir, touch, aegisapi.TransferOptions{})
 
 	// 6. Serve Embedded React 19 + Tailwind CSS SPA directly from memory with explicit anti-cache MIME headers
 	mux.Handle("/", aegisapi.SPAHandler(webAssets, indexBytes, touch))
