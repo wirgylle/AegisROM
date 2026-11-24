@@ -11,6 +11,7 @@ import { IT } from './locales/it';
 import { SETUP_STRINGS } from './locales/setup';
 import { BIOS_STRINGS } from './biosStrings';
 import { COLLECTION_STRINGS } from './collectionStrings';
+import { LIBRARY_VIEW_STRINGS } from './libraryViewStrings';
 import { EDITOR_STRINGS } from './editorStrings';
 import { SAVE_STRINGS } from './saveStrings';
 import { DONATE_STRINGS } from './donateStrings';
@@ -83,10 +84,10 @@ export function detectSystemLanguage(): SupportedLanguage {
 
 // Отдельные файлы строк (мастер настройки, BIOS) подмешиваются сюда.
 // Separate string files (setup wizard, BIOS) are merged here.
-const EN_ALL = { ...EN, ...SETUP_STRINGS.en, ...BIOS_STRINGS.en, ...COLLECTION_STRINGS.en, ...SAVE_STRINGS.en, ...EDITOR_STRINGS.en, ...DONATE_STRINGS.en, ...SETTINGS_STRINGS.en, ...SCOPE_STRINGS.en, ...SCRAPE_STRINGS.en };
+const EN_ALL = { ...EN, ...SETUP_STRINGS.en, ...BIOS_STRINGS.en, ...COLLECTION_STRINGS.en, ...LIBRARY_VIEW_STRINGS.en, ...SAVE_STRINGS.en, ...EDITOR_STRINGS.en, ...DONATE_STRINGS.en, ...SETTINGS_STRINGS.en, ...SCOPE_STRINGS.en, ...SCRAPE_STRINGS.en };
 
 const DICTS: Record<SupportedLanguage, TranslationDict> = {
-  ru: { ...RU, ...SETUP_STRINGS.ru, ...BIOS_STRINGS.ru, ...COLLECTION_STRINGS.ru, ...SAVE_STRINGS.ru, ...EDITOR_STRINGS.ru, ...DONATE_STRINGS.ru, ...SETTINGS_STRINGS.ru, ...SCOPE_STRINGS.ru, ...SCRAPE_STRINGS.ru },
+  ru: { ...RU, ...SETUP_STRINGS.ru, ...BIOS_STRINGS.ru, ...COLLECTION_STRINGS.ru, ...LIBRARY_VIEW_STRINGS.ru, ...SAVE_STRINGS.ru, ...EDITOR_STRINGS.ru, ...DONATE_STRINGS.ru, ...SETTINGS_STRINGS.ru, ...SCOPE_STRINGS.ru, ...SCRAPE_STRINGS.ru },
   en: EN_ALL,
   de: { ...DE, ...SETUP_STRINGS.de, ...BIOS_STRINGS.de, ...COLLECTION_STRINGS.de, ...EDITOR_STRINGS.de, ...DONATE_STRINGS.de, ...SCRAPE_STRINGS.en },
   es: { ...ES, ...SETUP_STRINGS.es, ...BIOS_STRINGS.es, ...COLLECTION_STRINGS.es, ...EDITOR_STRINGS.es, ...DONATE_STRINGS.es, ...SCRAPE_STRINGS.en },
