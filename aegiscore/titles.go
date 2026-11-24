@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
@@ -742,6 +743,12 @@ func CountLettersInString(s string) int {
 
 // Strip leading catalog index numbers (e.g. "001 - Super Mario", "02. Contra"), EXCEPT when the number is "007"
 // OR when stripping the number would leave no real alphabetic title (preventing "000001 (World)" -> "(World)" bug)!
+var (
+	fileExtRegex     = regexp.MustCompile(`\.(?:7z|[a-z][a-z0-9]{0,4}|[A-Z][A-Z0-9]{0,4})$`)
+	titleYearRegex   = regexp.MustCompile(`^(19|20)\d\d$`)
+	leadingZeroRegex = regexp.MustCompile(`^[\s\[\(#]*0\d`)
+)
+
 func stripLeadingIndexExcept007(s string) string {
 	if IsJamesBond007Game(s) {
 		return s
@@ -752,6 +759,19 @@ func stripLeadingIndexExcept007(s string) string {
 			numStr := s[m[2]:m[3]]
 			if numStr == "007" {
 				// Preserve "007" prefix for Agent 007 games!
+				break
+			}
+			// Та же логика, что в src/utils/romTitle.ts (ключи сравнения должны совпадать):
+			// «1943 - The Battle of Midway», «2020 Super Baseball» — год не номер;
+			// номер только с пробелом («10 Yard Fight») режем лишь с ведущим нулём («001 Contra»).
+			// Same rules as src/utils/romTitle.ts (comparison keys must match): a year is not an index;
+			// a number followed only by a space is cut only with a leading zero.
+			prefix := s[m[0]:m[1]]
+			leadingZero := leadingZeroRegex.MatchString(prefix)
+			if titleYearRegex.MatchString(numStr) && !leadingZero {
+				break
+			}
+			if strings.TrimSpace(strings.TrimLeft(prefix, " [(#0123456789")) == "" && !leadingZero {
 				break
 			}
 			remainder := strings.TrimSpace(s[m[1]:])
@@ -814,18 +834,24 @@ func BuildComparisonKey(cleanTitle string) string {
 }
 
 func ExtractCleanTitle(fileName string) string {
-	ext := filepath.Ext(fileName)
-	rawBase := strings.TrimSpace(strings.TrimSuffix(fileName, ext))
+	// Только настоящее расширение: у названий из DAT его нет, и filepath.Ext резал
+	// «E.T. The Extra-Terrestrial (USA)» до «E.T». / Only a real extension; DAT names have none.
+	rawBase := strings.TrimSpace(fileExtRegex.ReplaceAllString(fileName, ""))
 
 	// First strip region/bracket tags like "(World)" or "(USA)" BEFORE checking if it's a pure number!
 	withoutTags := strings.TrimSpace(TagStripRegex.ReplaceAllString(rawBase, " "))
+	// Имя из одних тегов («(USA)») — названия нет; раньше возвращалось «(USA)» и регион дописывался снова.
+	// A tag-only name ("(USA)") has no title; it used to come back as "(USA)" and get the region again.
+	if withoutTags == "" {
+		return ""
+	}
 	if PureNumberRegex.MatchString(strings.ToLower(withoutTags)) {
 		return withoutTags
 	}
 
 	base := stripLeadingIndexExcept007(withoutTags)
 	base = strings.ReplaceAll(base, "_", " ")
-	base = strings.ReplaceAll(base, ".", " ")
+	// Точки не трогаем: «Dr. Mario», «E.T.», «Super Mario Bros. 3». / Keep dots.
 
 	tokens := strings.Fields(base)
 	// "World" здесь не вырезаем: это часть многих названий (Super Mario World, Wario World),
