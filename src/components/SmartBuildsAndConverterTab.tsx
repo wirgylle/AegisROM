@@ -87,6 +87,7 @@ import {
   throttle,
   type CopyOutcome,
 } from '../utils/buildCopy';
+import { romStem, syncRomSavesWithDevice } from '../utils/saveFiles';
 import {
   MediaSourceIndex,
   buildGamelistXml,
@@ -1066,6 +1067,8 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
     let noFileCount = 0;
     let mediaFilesCount = 0;
     let mediaMissingCount = 0;
+    // Сохранения со сборкой (шаг 7 плана 0.6.0). / Saves with the build (0.6.0 plan, step 7).
+    const savesSync = { toDevice: 0, fromDevice: 0, conflicts: 0 };
     const totalItems = conversionPlanRows.length;
     const exportedManifestItems: any[] = new Array(totalItems);
 
@@ -1622,6 +1625,19 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
             writtenRelativePath = res.writtenRelPath;
             actualResultStatus = res.resultStatus;
             romWritten = true;
+            if (opts.syncSaves && item.game.parentHandle) {
+              try {
+                const sv = await syncRomSavesWithDevice(
+                  item.game.parentHandle,
+                  romStem(fileObj.name),
+                  currDir,
+                  romStem(res.entryFileName)
+                );
+                savesSync.toDevice += sv.toDevice;
+                savesSync.fromDevice += sv.fromDevice;
+                savesSync.conflicts += sv.conflicts;
+              } catch {}
+            }
           } catch (itemErr: any) {
             errorCount++;
             actualResultStatus = `error: ${String(itemErr?.message || itemErr)}`;
@@ -1734,6 +1750,9 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
       }
       if (noFileCount > 0) {
         onAddLog?.(tf('bx.log.noFileSummary', { count: noFileCount }));
+      }
+      if (savesSync.toDevice + savesSync.fromDevice > 0) {
+        onAddLog?.(`💾 ${tf('sv.bx.log', savesSync)}`);
       }
 
       // ----------------------------------------------------------------------

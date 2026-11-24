@@ -24,6 +24,8 @@ export interface BuildExportOptions {
   skipExisting: boolean;
   /** gamelist.xml для профилей EmulationStation. / gamelist.xml for EmulationStation profiles. */
   writeGamelist: boolean;
+  /** Сохранения (.srm, .sav…) туда и обратно, см. utils/saveFiles.ts. / Saves both ways. */
+  syncSaves: boolean;
 }
 
 export const DEFAULT_BUILD_EXPORT_OPTIONS: BuildExportOptions = {
@@ -31,6 +33,7 @@ export const DEFAULT_BUILD_EXPORT_OPTIONS: BuildExportOptions = {
   mediaKinds: { thumbnail: true, image: true, marquee: true, video: false },
   skipExisting: true,
   writeGamelist: true,
+  syncSaves: true,
 };
 
 const OPTIONS_KEY = 'aegisrom_build_export_options_v1';
@@ -45,6 +48,7 @@ export function loadBuildExportOptions(): BuildExportOptions {
       mediaKinds: { ...DEFAULT_BUILD_EXPORT_OPTIONS.mediaKinds, ...(v.mediaKinds || {}) },
       skipExisting: typeof v.skipExisting === 'boolean' ? v.skipExisting : DEFAULT_BUILD_EXPORT_OPTIONS.skipExisting,
       writeGamelist: typeof v.writeGamelist === 'boolean' ? v.writeGamelist : DEFAULT_BUILD_EXPORT_OPTIONS.writeGamelist,
+      syncSaves: typeof v.syncSaves === 'boolean' ? v.syncSaves : DEFAULT_BUILD_EXPORT_OPTIONS.syncSaves,
     };
   } catch {
     return { ...DEFAULT_BUILD_EXPORT_OPTIONS, mediaKinds: { ...DEFAULT_BUILD_EXPORT_OPTIONS.mediaKinds } };
