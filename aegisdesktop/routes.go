@@ -338,6 +338,12 @@ func handleChd(w http.ResponseWriter, r *http.Request, chdman string) {
 		}
 	}()
 	targetExt := strings.ToLower(strings.TrimSpace(r.FormValue("targetExt")))
+	// outDir: результат сразу в папку сборки. / outDir: output straight into the build folder.
+	outDir, err := aegisapi.ConverterOutDir(r)
+	if err != nil {
+		http.Error(w, "outDir: "+err.Error(), http.StatusForbidden)
+		return
+	}
 	baseName := filepath.Base(strings.ReplaceAll(strings.TrimSpace(r.FormValue("baseName")), `\`, `/`))
 	if baseName == "" || baseName == "." || baseName == "/" {
 		baseName = "Converted_Game"
@@ -386,7 +392,9 @@ func handleChd(w http.ResponseWriter, r *http.Request, chdman string) {
 		}
 	}
 	runChdman := func(args ...string) bool {
-		cmd := exec.Command(chdman, args...)
+		// Контекст запроса: отмена на странице (таймаут, «Стоп») завершает chdman.
+		// Request context: a cancel on the page (timeout, Stop) kills chdman.
+		cmd := exec.CommandContext(r.Context(), chdman, args...)
 		cmd.Dir = tmpDir
 		if out, err := cmd.CombinedOutput(); err != nil {
 			http.Error(w, "chdman "+args[0]+" error: "+err.Error()+"\n"+string(out), http.StatusInternalServerError)
@@ -395,6 +403,10 @@ func handleChd(w http.ResponseWriter, r *http.Request, chdman string) {
 		return true
 	}
 	sendFile := func(p, name string) {
+		if outDir != "" {
+			aegisapi.SendConverterOutputs(w, tmpDir, outDir, []string{filepath.Base(p)})
+			return
+		}
 		f, err := os.Open(p)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -449,6 +461,10 @@ func handleChd(w http.ResponseWriter, r *http.Request, chdman string) {
 		cue := filepath.Join(tmpDir, baseName+".cue")
 		bin := filepath.Join(tmpDir, baseName+".bin")
 		if !runChdman("extractcd", "-f", "-i", entry, "-o", cue, "-ob", bin) {
+			return
+		}
+		if outDir != "" {
+			aegisapi.SendConverterOutputs(w, tmpDir, outDir, []string{baseName + ".bin", baseName + ".cue"})
 			return
 		}
 		w.Header().Set("Content-Type", "application/zip")

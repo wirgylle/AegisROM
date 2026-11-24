@@ -80,7 +80,7 @@ The app scans your collection and identifies games by checksums and disc serial 
 - Ready-made themed collections: by age (6+, 10+, 14+, 18+), by mood, by genre and bitness. Or your own build via filters.
 - Fitting to SD card size: 16, 32, 64, 128, 256 GB, leaving room for firmware and BIOS.
 - Syncing a build with the main library, showing the differences.
-- **Fast export**: several ROMs are copied at once and files already there with the same size are skipped, so a repeated export only copies what's new. Media (box art, image, banner, video) and a `gamelist.xml` with titles and descriptions go with the build, laid out for your device.
+- **Fast export**: several ROMs are copied at once and files already there with the same size are skipped, so a repeated export only copies what's new. Media (box art, image, banner, video) and a `gamelist.xml` with titles and descriptions go with the build, laid out for your device. Copying and disc conversion run side by side, a stuck file is skipped after a time limit and listed in the report, and an export can be stopped and resumed into the same folder.
 - **Upload over Wi-Fi** `beta`: SFTP or SMB straight to the handheld, no need to take the card out. Only new and changed files are sent, an interrupted upload resumes. Ready-made profiles for ArkOS, muOS, Knulli, Batocera, Onion, TrimUI and Steam Deck; passwords are kept in the system password store. Details: [docs/wifi-transfer.md](docs/wifi-transfer.md).
 - **Saves with the build**: when exporting to a folder or SD card, saves can go along and newer saves from the card come back.
 - **Image converter**: `.cue/.bin`, `.iso`, `.gdi` → `.chd` (via `chdman`), plus `.pbp` and `.cso`.
