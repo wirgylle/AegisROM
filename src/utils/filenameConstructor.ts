@@ -147,6 +147,14 @@ export function sanitizeWindowsSafeStem(raw: string): string {
     .trim();
 }
 
+function sanitizeTitleToken(raw: string): string {
+  return raw
+    .replace(/[<>:"/\\|?*]/g, ' - ')
+    .replace(/\s+/g, ' ')
+    .replace(/^\.+/, '')
+    .trim();
+}
+
 function wrapTokenValue(val: string, wrap: FilenameTokenItem['wrap']): string {
   if (!val) return '';
   if (wrap === 'parens') return `(${val})`;
@@ -171,7 +179,11 @@ export function formatRomStemByConfig(
   input: FilenameFormatInput,
   config: FilenameConstructorConfig
 ): string {
-  const titleVal = sanitizeWindowsSafeStem(input.cleanTitle || 'Unknown_Game');
+  // Точки в конце названия не режем («E.T.» оставалось «E.T»): Windows запрещает точку только в конце
+  // всего имени, а его мы чистим ниже. Пустое название не пропускаем, иначе выйдет «(USA).zip».
+  // Trailing dots stay in the title ("E.T." used to become "E.T"): Windows forbids a dot only at the end
+  // of the whole name, which is cleaned below. An empty title is never skipped, or "(USA).zip" comes out.
+  const titleVal = sanitizeTitleToken(input.cleanTitle || '') || 'Unknown_Game';
   const yearVal = input.year ? String(input.year).trim() : '';
   const regionVal = normalizeRegionTag(input.region, input.isRussian);
   const bitVal = (input.bitness || '').trim();

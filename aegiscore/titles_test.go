@@ -17,6 +17,19 @@ func TestExtractCleanTitle(t *testing.T) {
 		"0001.pbp":                           "0001",
 		"007 - GoldenEye (USA).z64":          "007 - GoldenEye",
 		"Tekken_3_RUS.bin":                   "Tekken 3",
+		// Названия с точками и цифрами, названия из DAT без расширения, имя из одних тегов.
+		// Titles with dots and numbers, DAT names without an extension, tag-only names.
+		"E.T. (USA).zip":                        "E.T.",
+		"E.T. The Extra-Terrestrial (USA)":      "E.T. The Extra-Terrestrial",
+		"Dr. Mario (Japan, USA)":                "Dr. Mario",
+		"Super Mario Bros. 3 (USA)":             "Super Mario Bros. 3",
+		"1942 (USA).zip":                        "1942",
+		"1943 - The Battle of Midway (USA).zip": "1943 - The Battle of Midway",
+		"2020 Super Baseball (USA).sfc":         "2020 Super Baseball",
+		"10 Yard Fight (USA).nes":               "10 Yard Fight",
+		"001 Contra.nes":                        "Contra",
+		"(USA).zip":                             "",
+		"(USA) (USA).zip":                       "",
 	}
 	for in, want := range cases {
 		if got := ExtractCleanTitle(in); got != want {
