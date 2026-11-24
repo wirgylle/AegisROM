@@ -9377,6 +9377,7 @@ export function App() {
           fileObj: d.fileObj,
           companionFiles: d.companionFiles,
           cueText: d.cueText,
+          parentHandle: d.parentHandle,
         }))
       : undefined;
 
@@ -9415,6 +9416,7 @@ export function App() {
       media: scannedRomMediaSet(r),
       fileObj: r.fileObj,
       companionFiles: r.companionFiles,
+      parentHandle: r.parentHandle,
       cueText: r.cueText,
       totalBytes: r.fileSize,
       trackCount: r.companionFiles?.length,

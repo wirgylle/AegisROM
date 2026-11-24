@@ -1719,12 +1719,18 @@ export async function streamCopyFileToWritable(
   writable: FileSystemWritableFileStream,
   onProgress?: (pct: number) => void
 ): Promise<number> {
-  const CHUNK_SIZE = 8 * 1024 * 1024;
+  // Срезы Blob пишутся браузером напрямую, без копии в ArrayBuffer; файл до 256 МБ — одним вызовом.
+  // Blob slices are written by the browser directly, without an ArrayBuffer copy; files up to 256 MB in one call.
+  if (file.size <= 256 * 1024 * 1024) {
+    await writable.write(file);
+    onProgress?.(100);
+    return file.size;
+  }
+  const CHUNK_SIZE = 64 * 1024 * 1024;
   let offset = 0;
   while (offset < file.size) {
     const end = Math.min(file.size, offset + CHUNK_SIZE);
-    const sliceBuf = await file.slice(offset, end).arrayBuffer();
-    await writable.write(sliceBuf);
+    await writable.write(file.slice(offset, end));
     offset = end;
     onProgress?.(Math.round((offset / Math.max(1, file.size)) * 100));
   }
