@@ -175,16 +175,25 @@ func EmulatorSaveDirs(emus []string) []string {
 			continue
 		}
 		e = filepath.FromSlash(e)
+		// macOS: бандл .app не хранит сохранения, их папки — в ~/Library (ниже).
+		// macOS: a .app bundle holds no saves; their folders are in ~/Library (below).
+		if strings.EqualFold(filepath.Ext(e), ".app") {
+			continue
+		}
 		if st, err := os.Stat(e); err == nil && !st.IsDir() {
 			e = filepath.Dir(e)
 		}
 		roots = append(roots, e)
 	}
 	if home, err := os.UserHomeDir(); err == nil {
+		macSupport := filepath.Join(home, "Library", "Application Support")
 		roots = append(roots,
 			filepath.Join(home, "Documents", "DuckStation"),
 			filepath.Join(home, "Documents", "PCSX2"),
 			filepath.Join(home, ".config", "retroarch"),
+			filepath.Join(macSupport, "RetroArch"),
+			filepath.Join(macSupport, "DuckStation"),
+			filepath.Join(macSupport, "PCSX2"),
 		)
 	}
 	for _, r := range roots {

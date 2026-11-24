@@ -1,4 +1,4 @@
-name: Release (Windows 11 x64)
+name: Release (Windows 11 x64 + macOS)
 
 # RU: Публикация релиза. Actions → «Release (Windows 11 x64)» → Run workflow,
 #     ветка main, в поле version впиши версию из package.json (например 0.5.5).
@@ -39,9 +39,53 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  build-macos:
+    name: Build AegisROM macOS universal (.dmg)
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve dev build version
+        if: github.ref == 'refs/heads/dev'
+        run: |
+          PKG="$(node -p "require('./package.json').version")"
+          echo "AEGIS_BUILD_VERSION=${PKG}+${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build AegisROM.app & .dmg
+        env:
+          SS_DEV_ID: ${{ secrets.SS_DEV_ID }}
+          SS_DEV_PASSWORD: ${{ secrets.SS_DEV_PASSWORD }}
+        run: npm run release:mac
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AegisROM-macOS-dmg
+          retention-days: 14
+          path: public/downloads/AegisROM-v*-macOS-universal.dmg
+
   build-win11:
     name: Build AegisROM Win11 x64 (.exe + .zip)
     runs-on: ubuntu-latest
+    needs: build-macos
+    # RU: Windows публикуется, даже если Mac-сборка упала (проверка для vX.Y.Z — ниже).
+    # EN: Windows publishes even if the Mac build failed (vX.Y.Z is checked below).
+    if: ${{ !cancelled() }}
 
     steps:
       - name: Checkout repository
@@ -124,6 +168,20 @@ jobs:
             public/downloads/AegisROM-v*-Win11-x64.zip
             public/downloads/version.json
 
+      - name: Download macOS .dmg
+        id: macdmg
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: AegisROM-macOS-dmg
+          path: public/downloads
+
+      - name: Require macOS .dmg for a release
+        if: steps.rel.outputs.tag != ''
+        run: |
+          ls public/downloads/AegisROM-v*-macOS-universal.dmg >/dev/null 2>&1 \
+            || { echo "macOS build failed: no .dmg / Mac-сборка не удалась"; exit 1; }
+
       # RU: Заметки к релизу берутся из docs/releases/<тег>.md, если файл есть.
       # EN: Release notes come from docs/releases/<tag>.md when the file exists.
       - name: Find release notes
@@ -154,6 +212,13 @@ jobs:
             public/downloads/aegis-scanner-win11-x64.exe
             public/downloads/AegisROM-v*-Win11-x64.zip
             public/downloads/version.json
+
+      - name: Attach macOS .dmg to release
+        if: steps.rel.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: gh release upload "$TAG" public/downloads/AegisROM-v*-macOS-universal.dmg --repo "$GITHUB_REPOSITORY"
 
       - name: Publish release
         if: steps.rel.outputs.tag != ''
@@ -186,6 +251,17 @@ jobs:
             public/downloads/aegis-scanner-win11-x64.exe
             public/downloads/AegisROM-v*-Win11-x64.zip
             public/downloads/version.json
+
+      - name: Attach macOS .dmg to dev pre-release
+        if: steps.devver.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.devver.outputs.tag }}
+        run: |
+          for f in public/downloads/AegisROM-v*-macOS-universal.dmg; do
+            [ -f "$f" ] || { echo "no macOS .dmg, skipping / нет .dmg, пропускаю"; exit 0; }
+            gh release upload "$TAG" "$f" --repo "$GITHUB_REPOSITORY"
+          done
 
       - name: Publish dev pre-release
         if: steps.devver.outputs.tag != ''

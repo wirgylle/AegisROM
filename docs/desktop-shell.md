@@ -66,6 +66,10 @@
 - macOS 15 и новее: запустить один раз, затем «Системные настройки» → «Конфиденциальность и безопасность» → «Всё равно открыть».
 - Или в Терминале: `xattr -dr com.apple.quarantine /Applications/AegisROM.app`.
 
+### Статус этапов 4–6
+
+Этапы 4–6 сделаны отдельным приложением `cmd/aegis-mac` и пакетом `aegisdesktop/`: Windows-код (`cmd/aegis-gui`) не тронут. Сборка `.dmg` идёт в release-workflow (job `build-macos`). Подробно, включая что проверено, — [macos.md](macos.md).
+
 ### Что нужно от владельца
 
 - Mac для проверки этапов 5–6. Без него эти этапы собираются в CI, но запуск не проверен.
@@ -135,6 +139,10 @@ Without an Apple Developer account macOS flags a downloaded app as unverified. W
 - macOS 14 and older: right-click `AegisROM.app` → Open → Open.
 - macOS 15 and newer: launch once, then System Settings → Privacy & Security → Open Anyway.
 - Or in Terminal: `xattr -dr com.apple.quarantine /Applications/AegisROM.app`.
+
+### Status of stages 4–6
+
+Stages 4–6 are a separate app, `cmd/aegis-mac`, plus the `aegisdesktop/` package; the Windows code (`cmd/aegis-gui`) is untouched. The `.dmg` is built by the release workflow (`build-macos` job). Details, including what is verified: [macos.md](macos.md).
 
 ### Needed from the owner
 
