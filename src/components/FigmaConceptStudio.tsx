@@ -76,7 +76,6 @@ import { EditorToolbar, GameEditModal, useManualEditsVersion } from './LibraryEd
 import { applyManualEditToRow, exportManualEdits, importManualEdits } from '../utils/manualEdits';
 import { CollectionModal } from './CollectionModal';
 import { GameRelationsPanel } from './GameRelationsPanel';
-<<<<<<< HEAD
 import {
   buildCollections,
   buildSeries,
@@ -97,8 +96,6 @@ import {
   saveMediaPrefs,
   type LibraryMediaPrefs,
 } from './LibraryViewControls';
-=======
-import { buildCollections, buildSeries, indexCollections, seriesSiblings } from '../utils/gameCollections';
 import { OperationScopeModal } from './OperationScopeModal';
 import { ScrapeOptionsPanel } from './ScrapeOptionsPanel';
 import {
@@ -110,7 +107,6 @@ import {
 } from '../utils/scrapeOptions';
 import { describeScope, type ScopeOperation } from '../utils/operationScope';
 import { markProcessed } from '../utils/operationScopeStore';
->>>>>>> origin/dev
 import { inferPortMasterPcTestPlan } from '../utils/portMasterEngine';
 import {
   SUPPORTED_LANGUAGES,
