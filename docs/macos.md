@@ -5,7 +5,7 @@
 <a id="ru"></a>
 ## RU
 
-**Статус: тестовая версия.** Собирается в CI на `macos-14`, на настоящем Mac пока никто не запускал. Всё, что ниже помечено «не проверено», проверено только сборкой и тестами Go.
+**Статус: тестовая версия.** Собирается в CI на `macos-latest`, на настоящем Mac пока никто не запускал. Всё, что ниже помечено «не проверено», проверено только сборкой и тестами Go.
 
 ### Что внутри
 
@@ -45,8 +45,8 @@ OpenEmu не поддерживается: у него нет запуска к�
 
 | Что | Проверено |
 |---|---|
-| Сборка arm64 + amd64 с cgo, `lipo`, `.app`, ad-hoc подпись, `.dmg` (`hdiutil verify`) | CI на `macos-14` |
-| `go vet` и `go test` пакетов `aegisdesktop`, `aegisapi`, `aegiscore`, `aegistransfer` на macOS | CI на `macos-14` |
+| Сборка arm64 + amd64 с cgo, `lipo`, `.app`, ad-hoc подпись, `.dmg` (`hdiutil verify`) | CI на `macos-latest` |
+| `go vet` и `go test` пакетов `aegisdesktop`, `aegisapi`, `aegiscore`, `aegistransfer` на macOS | CI на `macos-latest` |
 | Поиск `.app`, `Info.plist`, ядра `.dylib`, аргументы запуска, отказ запускать чужой путь, chdman, медиа | тесты Go (Linux и macOS) |
 | Окно открывается, страница грузится, POST-запросы и Range (видео, большие файлы) через WKWebView | **не проверено** |
 | Системное окно выбора папки и файла | **не проверено** |
@@ -68,7 +68,7 @@ OpenEmu не поддерживается: у него нет запуска к�
 <a id="en"></a>
 ## EN
 
-**Status: test version.** Built in CI on `macos-14`; nobody has run it on a real Mac yet. Everything marked "not verified" below is checked by the build and Go tests only.
+**Status: test version.** Built in CI on `macos-latest`; nobody has run it on a real Mac yet. Everything marked "not verified" below is checked by the build and Go tests only.
 
 ### What's inside
 
@@ -108,8 +108,8 @@ OpenEmu is not supported: it cannot start a specific game from the command line.
 
 | What | Verified |
 |---|---|
-| arm64 + amd64 cgo build, `lipo`, `.app`, ad-hoc signature, `.dmg` (`hdiutil verify`) | CI on `macos-14` |
-| `go vet` and `go test` of `aegisdesktop`, `aegisapi`, `aegiscore`, `aegistransfer` on macOS | CI on `macos-14` |
+| arm64 + amd64 cgo build, `lipo`, `.app`, ad-hoc signature, `.dmg` (`hdiutil verify`) | CI on `macos-latest` |
+| `go vet` and `go test` of `aegisdesktop`, `aegisapi`, `aegiscore`, `aegistransfer` on macOS | CI on `macos-latest` |
 | `.app` lookup, `Info.plist`, `.dylib` cores, launch arguments, refusing foreign paths, chdman, media | Go tests (Linux and macOS) |
 | Window opens, page loads, POST and Range requests (video, large files) through WKWebView | **not verified** |
 | Native folder and file pickers | **not verified** |

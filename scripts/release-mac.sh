@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # RU: Сборка AegisROM для macOS (`npm run release:mac`). Запускается только на Mac
-#     (в CI — runner macos-14): нужны Xcode Command Line Tools, Go, Node.
+#     (в CI — runner macos-latest): нужны Xcode Command Line Tools, Go, Node.
 #     Собирает фронтенд, бинарники arm64 и amd64 (cgo), склеивает их в universal
 #     через lipo, кладёт в AegisROM.app, подписывает ad-hoc (без аккаунта Apple)
 #     и упаковывает в public/downloads/AegisROM-v<версия>-macOS-universal.dmg.
