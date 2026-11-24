@@ -109,7 +109,11 @@ mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 rm -f "$OUT_DIR"/AegisROM-v*-macOS-universal.dmg
-hdiutil create -volname "AegisROM" -srcfolder "$STAGE" -ov -format UDZO "$OUT_DIR/$DMG_NAME"
+# RU: Размер задаём явно: оценка hdiutil по -srcfolder бывает мала («No space left on device»).
+# EN: Size is explicit: hdiutil's -srcfolder estimate can be too small ("No space left on device").
+STAGE_MB="$(du -sm "$STAGE" | cut -f1)"
+DMG_MB=$((STAGE_MB + STAGE_MB / 5 + 20))
+hdiutil create -volname "AegisROM" -srcfolder "$STAGE" -fs HFS+ -size "${DMG_MB}m" -ov -format UDZO "$OUT_DIR/$DMG_NAME"
 hdiutil verify "$OUT_DIR/$DMG_NAME"
 ls -lh "$OUT_DIR/$DMG_NAME"
 echo "Done: public/downloads/$DMG_NAME"
