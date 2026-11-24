@@ -153,7 +153,8 @@ export function countManualEdits(): number {
   return Object.keys(edits).length;
 }
 
-function normalizeValue(field: EditField, value: string): string | null {
+// Приводит значение поля к виду, в котором оно хранится (null — пусто). / Normalizes a value as stored (null: empty).
+export function normalizeEditValue(field: EditField, value: string): string | null {
   const v = field === 'desc' ? value.replace(/\r\n/g, '\n').trim() : value.replace(/\s+/g, ' ').trim();
   // Пустое текстовое поле — вернуть автоматическое. Пустое медиа — убрать медиа.
   // Empty text field returns to automatic. Empty media removes the media.
@@ -189,7 +190,7 @@ export function applyManualEdits(changes: ManualEditChange[], label: string): nu
       for (const f of EDIT_FIELDS) {
         if (!(f in patch)) continue;
         const raw = patch[f];
-        const v = raw == null ? null : normalizeValue(f, raw);
+        const v = raw == null ? null : normalizeEditValue(f, raw);
         if (v == null) delete next[f];
         else next[f] = v;
       }

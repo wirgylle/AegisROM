@@ -97,6 +97,7 @@ import {
   type LibraryMediaPrefs,
 } from './LibraryViewControls';
 import { OperationScopeModal } from './OperationScopeModal';
+import { GameDataFormatPicker, GameDataPanel, exportGameData, loadGameDataFormat, saveGameDataFormat } from './GameDataPanel';
 import { ScrapeOptionsPanel } from './ScrapeOptionsPanel';
 import { ScrapeSourcesPanel } from './ScrapeSourcesPanel';
 import {
@@ -1483,6 +1484,10 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   // Ref: запуск берёт выбор, сделанный уже в открытом окне. / The run reads the choice made in the open window.
   const scrapeOptsRef = useRef(scrapeOpts);
   scrapeOptsRef.current = scrapeOpts;
+  // Формат выгрузки данных игр, выбирается в окне области. / Game data export format, chosen in the scope window.
+  const [gameDataFormat, setGameDataFormat] = useState(loadGameDataFormat);
+  const gameDataFormatRef = useRef(gameDataFormat);
+  gameDataFormatRef.current = gameDataFormat;
   const scopeRows: UnifiedGameRow[] = !isBuiltinDb && activeDbEntry ? activeDbEntry.rows : scannedRows;
   const openScope = (op: ScopeOperation, run: (ids?: string[]) => void) => {
     if (scopeRows.length === 0) {
@@ -2652,6 +2657,21 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       </button>
                     </div>
                   </div>
+
+                  {/* Данные игр: CSV / XML туда и обратно. / Game data: CSV / XML out and back in. */}
+                  <GameDataPanel
+                    games={enrichedGamesSource}
+                    busy={activeRunning}
+                    onExport={() =>
+                      openScope('gameData', (ids) => {
+                        const set = ids ? new Set(ids) : null;
+                        const rows = set ? enrichedGamesSource.filter((g) => set.has(g.id)) : enrichedGamesSource;
+                        const file = exportGameData(rows, gameDataFormatRef.current);
+                        onAddLog?.(tf('gameData.log.export', { count: rows.length, file }));
+                      })
+                    }
+                    onAddLog={onAddLog}
+                  />
 
                   {/* Smart Media Scraper Banner (~1.5KB placeholder check) */}
                   <div className="bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/70 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
@@ -4181,6 +4201,14 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
               <div className="border-t border-slate-200 dark:border-slate-800" />
               <ScrapeOptionsPanel value={scrapeOpts} onChange={setScrapeOpts} />
             </div>
+          ) : scopeRequest?.op === 'gameData' ? (
+            <GameDataFormatPicker
+              value={gameDataFormat}
+              onChange={(f) => {
+                setGameDataFormat(f);
+                saveGameDataFormat(f);
+              }}
+            />
           ) : undefined
         }
         hasMedia={scopeRequest?.op === 'scrape' ? (row) => rowHasScrapeMedia(row as any, scrapeOpts.slots) : undefined}
