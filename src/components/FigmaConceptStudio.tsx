@@ -156,6 +156,7 @@ import {
 import { WorkbenchContextPanel, type HoveredTool } from './WorkbenchContextPanel';
 import { QuickTestModal, type QuickTestRequest } from './QuickTestModal';
 import { DonateModal } from './DonateModal';
+import { RomSavesPanel } from './RomSavesPanel';
 import { SettingsModal } from './SettingsModal';
 import { loadAppSettings, subscribeAppSettings } from '../utils/appSettings';
 import { resolveQuickTestCore, pickCueDataTrack, pickBiosForRegion, fileExt } from '../utils/quickTest';
@@ -231,6 +232,8 @@ export interface UnifiedGameRow {
   modTag?: string;
   modLang?: string;
   modNote?: string;
+  // Сколько видов сохранений нашёл скан рядом с ромом. / Save kinds found next to the ROM by the scan.
+  saveCount?: number;
   title: string;
   oldFile: string;
   cleanFile: string;
@@ -3808,6 +3811,17 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
               ? qtDisc.cleanFile || qtDisc.oldFile
               : selectedGame.oldFile || selectedGame.cleanFile;
             const qtCore = resolveQuickTestCore(selectedGame.consoleShort, qtFileName);
+            // В десктопе ром лежит на диске: и файл, и сохранения берём по этому адресу.
+            // Desktop: the ROM is on disk, both the file and its saves are found by this address.
+            const romDiskRef = isNativeDesktopHost
+              ? {
+                  romFileName: qtFileName,
+                  relativePath: (qtDisc ? qtDisc.relativePath : selectedGame.relativePath) || '',
+                  consoleCode: selectedGame.consoleShort,
+                  libraryPath: effectiveLibraryPath || '',
+                  sdCardPath: selectedFolderName || '',
+                }
+              : null;
             const handleQuickTest = async () => {
               if (!qtCore) return;
               // BIOS из раздела «BIOS»: только проверенные по MD5. Запрос доступа к папке
@@ -3826,16 +3840,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
               if (file && fileExt(file.name) === 'cue') {
                 file = pickCueDataTrack(src.cueText, src.companionFiles);
               }
-              // В десктопе ром лежит на диске: и файл, и сохранения берём по этому адресу.
-              const romRef = isNativeDesktopHost
-                ? {
-                    romFileName: qtFileName,
-                    relativePath: (qtDisc ? qtDisc.relativePath : selectedGame.relativePath) || '',
-                    consoleCode: selectedGame.consoleShort,
-                    libraryPath: effectiveLibraryPath || '',
-                    sdCardPath: selectedFolderName || '',
-                  }
-                : null;
+              const romRef = romDiskRef;
               setQuickTestReq({
                 title: selectedGame.title,
                 consoleShort: selectedGame.consoleShort,
@@ -4137,6 +4142,19 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     </button>
                   )}
                 </div>
+
+                {/* Сохранения рядом с ромом: текущие, история, импорт и папки эмуляторов. */}
+                {/* Saves next to the ROM: current, history, import and emulator folders. */}
+                <RomSavesPanel
+                  romRef={romDiskRef}
+                  title={selectedGame.title}
+                  emulatorPaths={Array.from(
+                    new Set([resolvedEmu.exePath, ...Object.values(emulatorCustomPaths || {})].filter(Boolean))
+                  )}
+                  scanCount={selectedGame.saveCount}
+                  refreshKey={quickTestReq ? 'playing' : 'idle'}
+                  onAddLog={onAddLog}
+                />
               </>
             );
           })()}
