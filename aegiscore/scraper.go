@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -80,16 +80,17 @@ func LoadLibretroIndex(libretroSystem string) ([]libretroEntry, error) {
 	return entries, err
 }
 
-// fetchLibretroIndex качает список с одним повтором: сетевой сбой не должен
-// сразу записывать все ромы консоли в «не найдено».
-// fetchLibretroIndex retries once: one network hiccup must not fail a whole console.
+// fetchLibretroIndex: GitHub (libretro-thumbnails) → старый сервер, с кэшем на диске (thumbs_index.go).
+// fetchLibretroIndex: GitHub (libretro-thumbnails) → old server, with a disk cache (thumbs_index.go).
 func fetchLibretroIndex(libretroSystem string) ([]libretroEntry, error) {
-	entries, err := fetchLibretroIndexOnce(libretroSystem)
-	if err != nil && isRetryableIndexError(err) {
-		time.Sleep(libretroIndexRetryDelay)
-		entries, err = fetchLibretroIndexOnce(libretroSystem)
+	d, err := loadIndexData(libretroSystem)
+	if err != nil {
+		return nil, err
 	}
-	return entries, err
+	cacheMu.Lock()
+	libretroIndexInfo[libretroSystem] = d
+	cacheMu.Unlock()
+	return d.entries(), nil
 }
 
 type httpStatusError struct{ code int }
@@ -106,44 +107,6 @@ func isRetryableIndexError(err error) bool {
 		return se.code >= 500
 	}
 	return true
-}
-
-func fetchLibretroIndexOnce(libretroSystem string) ([]libretroEntry, error) {
-	indexURL := fmt.Sprintf("%s/%s/Named_Boxarts/", libretroThumbnailsBase, url.PathEscape(libretroSystem))
-	client := &http.Client{Timeout: libretroIndexTimeout}
-	resp, err := client.Get(indexURL)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, httpStatusError{resp.StatusCode}
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	matches := hrefPngRegex.FindAllStringSubmatch(string(body), -1)
-	var entries []libretroEntry
-	for _, m := range matches {
-		if len(m) < 2 {
-			continue
-		}
-		decoded, err := url.QueryUnescape(m[1])
-		if err != nil {
-			continue
-		}
-		noExt := strings.TrimSuffix(decoded, ".png")
-		clean := ExtractCleanTitle(noExt)
-		entries = append(entries, libretroEntry{
-			FileName: noExt,
-			NormKey:  BuildComparisonKey(clean),
-			Tokens:   tokenizeNormalized(clean),
-		})
-	}
-	return entries, nil
 }
 
 // GetOrLoadLibretroIndex — как LoadLibretroIndex, но без ошибки (nil при сбое).
@@ -181,17 +144,26 @@ type TitleMatch struct {
 
 // MatchLibretroTitle ищет название рома в индексе обложек Libretro и объясняет, если не нашёл.
 func MatchLibretroTitle(libretroSystem, cleanTitle, compKey, preferredRegion string) TitleMatch {
+	return MatchLibretroRom(libretroSystem, "", cleanTitle, compKey, preferredRegion)
+}
+
+// MatchLibretroRom: сначала точное имя файла рома (после переименования по DAT оно совпадает с
+// именем картинки), потом название. Номерные названия («1942») ищутся только точно, без нечёткого поиска.
+// MatchLibretroRom: exact ROM file name first (after a DAT rename it equals the image name), then the
+// title. Number-only titles ("1942") are matched exactly only, never fuzzily.
+func MatchLibretroRom(libretroSystem, fileStem, cleanTitle, compKey, preferredRegion string) TitleMatch {
 	if strings.TrimSpace(libretroSystem) == "" {
 		return TitleMatch{Reason: "для этой консоли нет индекса Libretro", ReasonCode: MissNoSystem}
 	}
-	if IsPureNumberOrGenericTitle(cleanTitle) {
+	numeric := IsPureNumberOrGenericTitle(cleanTitle)
+	if numeric && strings.TrimSpace(fileStem) == "" && !looksLikeRealNumberTitle(cleanTitle) {
 		return TitleMatch{Reason: "нет исходного названия для поиска (имя файла — номер)", ReasonCode: MissNoTitle}
 	}
 	entries, err := LoadLibretroIndex(libretroSystem)
 	if err != nil {
 		code := MissNetwork
 		if se, ok := err.(httpStatusError); ok && se.code == http.StatusNotFound {
-			// Такой папки на сервере Libretro нет: консоль не поддерживается, это не сеть.
+			// Такой папки/репозитория у Libretro нет: консоль не поддерживается, это не сеть.
 			code = MissNoSystem
 		}
 		return TitleMatch{Reason: "индекс Libretro недоступен: " + err.Error(), ReasonCode: code}
@@ -199,7 +171,55 @@ func MatchLibretroTitle(libretroSystem, cleanTitle, compKey, preferredRegion str
 	if len(entries) == 0 {
 		return TitleMatch{Reason: "индекс Libretro для «" + libretroSystem + "» пуст", ReasonCode: MissNoSystem}
 	}
+	if name := exactFileMatch(libretroSystem, fileStem); name != "" {
+		return TitleMatch{FileName: name, Source: TitleSourceLibretroExact, Score: 1}
+	}
+	if numeric {
+		m := matchExactOnly(entries, compKey, preferredRegion)
+		if m.FileName == "" {
+			m.Reason, m.ReasonCode = "нет исходного названия для поиска (имя файла — номер)", MissNoTitle
+		}
+		return m
+	}
 	return matchInEntries(entries, cleanTitle, compKey, preferredRegion)
+}
+
+// looksLikeRealNumberTitle: «1942», «2020 Super Baseball» — настоящие названия, а «000123» — нет.
+// looksLikeRealNumberTitle: "1942" is a real title, "000123" is not.
+func looksLikeRealNumberTitle(t string) bool {
+	t = strings.TrimSpace(t)
+	return len(t) >= 2 && len(t) <= 5 && !strings.HasPrefix(t, "0")
+}
+
+func matchExactOnly(entries []libretroEntry, compKey, preferredRegion string) TitleMatch {
+	if strings.TrimSpace(compKey) == "" {
+		return TitleMatch{}
+	}
+	var cands []string
+	for _, e := range entries {
+		if e.NormKey == compKey {
+			cands = append(cands, e.FileName)
+		}
+	}
+	if len(cands) == 0 {
+		return TitleMatch{}
+	}
+	return TitleMatch{FileName: pickRegion(cands, preferredRegion), Source: TitleSourceLibretroExact, Score: 1}
+}
+
+func pickRegion(cands []string, preferredRegion string) string {
+	sort.Strings(cands)
+	for _, c := range cands {
+		if preferredRegion != "" && strings.Contains(strings.ToLower(c), strings.ToLower(preferredRegion)) {
+			return c
+		}
+	}
+	for _, c := range cands {
+		if strings.Contains(c, "(USA") || strings.Contains(c, "(World") {
+			return c
+		}
+	}
+	return cands[0]
 }
 
 func matchInEntries(entries []libretroEntry, cleanTitle, compKey, preferredRegion string) TitleMatch {
@@ -210,23 +230,7 @@ func matchInEntries(entries []libretroEntry, cleanTitle, compKey, preferredRegio
 		}
 	}
 	if len(exactCandidates) > 0 {
-		pick := exactCandidates[0]
-		found := false
-		for _, c := range exactCandidates {
-			if strings.Contains(strings.ToLower(c), strings.ToLower(preferredRegion)) {
-				pick, found = c, true
-				break
-			}
-		}
-		if !found {
-			for _, c := range exactCandidates {
-				if strings.Contains(c, "(USA") || strings.Contains(c, "(World") {
-					pick = c
-					break
-				}
-			}
-		}
-		return TitleMatch{FileName: pick, Source: TitleSourceLibretroExact, Score: 1}
+		return TitleMatch{FileName: pickRegion(exactCandidates, preferredRegion), Source: TitleSourceLibretroExact, Score: 1}
 	}
 
 	targetTokens := tokenizeNormalized(cleanTitle)
@@ -274,18 +278,16 @@ func matchInEntries(entries []libretroEntry, cleanTitle, compKey, preferredRegio
 	}
 }
 
-// LibretroThumbnailURLs строит ссылки на обложку, скриншот и титульный экран для имени из
-// индекса Libretro. Пустое имя (не найдено) — пустые ссылки.
-// LibretroThumbnailURLs builds box art / snap / title URLs; an empty name gives empty URLs.
-func LibretroThumbnailURLs(libretroSystem, fileName string) (boxArt, snap, title string) {
-	if strings.TrimSpace(libretroSystem) == "" || strings.TrimSpace(fileName) == "" {
-		return "", "", ""
+// LibretroThumbnailURLs строит ссылки на обложку, скриншот и «марки» (логотип, если есть, иначе
+// титульный экран) для имени из индекса Libretro. Ссылки только на существующие файлы.
+// LibretroThumbnailURLs: box art, snap and marquee (logo if any, else title screen); only existing files.
+func LibretroThumbnailURLs(libretroSystem, fileName string) (boxArt, snap, marquee string) {
+	m := LibretroMediaURLs(libretroSystem, fileName)
+	marquee = m.Logo
+	if marquee == "" {
+		marquee = m.Title
 	}
-	sysEsc := url.PathEscape(libretroSystem)
-	fileEsc := url.PathEscape(fileName + ".png")
-	return fmt.Sprintf("%s/%s/Named_Boxarts/%s", libretroThumbnailsBase, sysEsc, fileEsc),
-		fmt.Sprintf("%s/%s/Named_Snaps/%s", libretroThumbnailsBase, sysEsc, fileEsc),
-		fmt.Sprintf("%s/%s/Named_Titles/%s", libretroThumbnailsBase, sysEsc, fileEsc)
+	return m.BoxArt, m.Snap, marquee
 }
 
 // FindBestLibretroMatch возвращает имя из индекса Libretro или "" (не найдено).

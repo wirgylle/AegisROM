@@ -12,6 +12,8 @@ interface SsConfig {
   configured: boolean;
   user?: string;
   hasDevKey?: boolean;
+  // Ключ разработчика вшит в сборку: нужны только логин и пароль. / Built-in dev key: login and password only.
+  builtinDevKey?: boolean;
 }
 
 export function ScreenScraperPanel({ disabled }: { disabled?: boolean }) {
@@ -93,6 +95,10 @@ export function ScreenScraperPanel({ disabled }: { disabled?: boolean }) {
   const btn =
     'flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 font-semibold cursor-pointer disabled:opacity-50';
   const saved = Boolean(cfg?.configured);
+  // Поля ключа разработчика нужны, только если он не вшит в сборку. / Dev key fields only without a built-in key.
+  const needDevKey = cfg ? !cfg.builtinDevKey : false;
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const devFieldsOpen = needDevKey || showAdvanced;
 
   return (
     <div data-tool="screenscraper" className="rounded-xl border border-slate-300 dark:border-slate-700 p-3 text-xs space-y-2">
@@ -107,7 +113,35 @@ export function ScreenScraperPanel({ disabled }: { disabled?: boolean }) {
       </div>
       <p className="text-slate-500 dark:text-slate-400">{t('tools.ss.desc')}</p>
       <p className="text-slate-500 dark:text-slate-400">{t('tools.ss.pace')}</p>
+      <p className="text-slate-500 dark:text-slate-400">{t(needDevKey ? 'tools.ss.needDevKey' : 'tools.ss.loginOnly')}</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <label className="space-y-0.5">
+          <span className="text-slate-600 dark:text-slate-300">{t('tools.ss.user')}</span>
+          <input className={input} value={user} autoComplete="username" onChange={(e) => setUser(e.target.value)} />
+        </label>
+        <label className="space-y-0.5">
+          <span className="text-slate-600 dark:text-slate-300">{t('tools.ss.password')}</span>
+          <input
+            className={input}
+            type="password"
+            value={password}
+            autoComplete="current-password"
+            placeholder={saved ? t('tools.ss.keep') : ''}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </label>
+      </div>
+      {!needDevKey && (
+        <button
+          type="button"
+          className="text-slate-500 dark:text-slate-400 underline cursor-pointer"
+          onClick={() => setShowAdvanced((v) => !v)}
+        >
+          {t('tools.ss.advanced')}
+        </button>
+      )}
+      {devFieldsOpen && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <label className="space-y-0.5">
           <span className="text-slate-600 dark:text-slate-300">{t('tools.ss.devId')}</span>
           <input
@@ -129,22 +163,8 @@ export function ScreenScraperPanel({ disabled }: { disabled?: boolean }) {
             onChange={(e) => setDevPassword(e.target.value)}
           />
         </label>
-        <label className="space-y-0.5">
-          <span className="text-slate-600 dark:text-slate-300">{t('tools.ss.user')}</span>
-          <input className={input} value={user} autoComplete="username" onChange={(e) => setUser(e.target.value)} />
-        </label>
-        <label className="space-y-0.5">
-          <span className="text-slate-600 dark:text-slate-300">{t('tools.ss.password')}</span>
-          <input
-            className={input}
-            type="password"
-            value={password}
-            autoComplete="current-password"
-            placeholder={saved ? t('tools.ss.keep') : ''}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </label>
-      </div>
+        </div>
+      )}
       <div className="flex flex-wrap gap-1.5">
         <button type="button" className={btn} disabled={disabled || busy || unavailable} onClick={() => void onSave()}>
           <KeyRound className="w-3.5 h-3.5 shrink-0" />
