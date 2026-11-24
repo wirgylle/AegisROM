@@ -638,6 +638,9 @@ interface ScannedRomFile {
   titleSource?: TitleSource;
   // Почему настоящее название не найдено (пусто, если найдено).
   titleNote?: string;
+  // Запись базы, из которой взят ром без скана (поля, которых нет у рома, берутся из неё).
+  // The database record this ROM came from without a scan (fields a ROM lacks are kept from it).
+  dbRow?: UnifiedGameRow;
   // Хак, перевод или пропатченный ром (см. utils/romHacks.ts).
   // Hack, translation or patched ROM (see utils/romHacks.ts).
   mod?: RomModInfo;
@@ -1502,6 +1505,15 @@ function scoreRomCandidate(r: ScannedRomFile, priority: string[]): number {
   return score;
 }
 
+/** Id из области + id дисков выбранных многодисковых игр. / Scope ids plus disc ids of chosen multi-disc games. */
+function expandScopeIds(items: ScannedRomFile[], ids: string[]): Set<string> {
+  const out = new Set(ids);
+  for (const it of items) {
+    if (out.has(it.id) && Array.isArray(it.discs)) for (const d of it.discs) out.add(d.id);
+  }
+  return out;
+}
+
 function deduplicateAcrossSubfolders(
   items: ScannedRomFile[],
   priorityList: string[]
@@ -1785,6 +1797,12 @@ export function App() {
   const [rootDirHandle, setRootDirHandle] = useState<any>(null);
   const [roms, setRoms] = useState<ScannedRomFile[]>([]);
   const romsRef = useRef<ScannedRomFile[]>([]);
+  // Открытая база и ромы сеанса, взятые из неё без скана (см. ensureSessionRoms).
+  // The open database and session ROMs taken from it without a scan (see ensureSessionRoms).
+  const activeDbRef = useRef<{ id: string; rows: UnifiedGameRow[]; builtin: boolean } | null>(null);
+  const [sessionSource, setSessionSource] = useState<{ dbId: string; ids: Set<string> } | null>(null);
+  const sessionSourceRef = useRef<{ dbId: string; ids: Set<string> } | null>(null);
+  sessionSourceRef.current = sessionSource;
   const [lastScanMode, setLastScanMode] = useState<'append' | 'replace'>('append');
   const [scanRevision, setScanRevision] = useState<number>(0);
   const scanModeRef = useRef<'append' | 'replace'>('append');
@@ -3212,7 +3230,22 @@ export function App() {
         await handleUpdateDbState(nextDb);
         addLog(tf('app.lib.pathSelectedLog', { path: newLibPath }));
 
-        // Сканируем ромы и локальные обложки/видео внутри выбранной папки библиотеки
+        // База уже есть: выбор папки только выдаёт доступ (обложки, операции), без полного скана.
+        // Ромы для операций потом берутся из базы (ensureSessionRoms). Скан только для новой библиотеки.
+        // A database already exists: picking the folder only grants access (covers, operations),
+        // no full scan. Operations later take ROMs from the database. Scan only for a new library.
+        const active = activeDbRef.current;
+        const hasDb =
+          (nextDb.records?.length || 0) > 0 || Boolean(active && !active.builtin && active.rows.length > 0);
+        if (hasDb) {
+          const msg = tf('app.lib.accessOnlyLog', { name: dirHandle.name });
+          setCurrentActionText(msg);
+          addLog(msg);
+          return;
+        }
+
+        // Новая библиотека: сканируем ромы и локальные обложки/видео внутри выбранной папки
+        // New library: scan ROMs and local covers/videos inside the chosen folder
         await scanDirectoryHandleRecursively(dirHandle);
         return;
       } catch (err: any) {
@@ -3620,6 +3653,11 @@ export function App() {
     mode: 'append' | 'replace' = scanModeRef.current
   ) => {
     stopRequestedRef.current = false;
+    if (mode === 'replace') {
+      // Полный скан заменяет ромы, взятые из базы. / A full scan replaces ROMs taken from the database.
+      sessionSourceRef.current = null;
+      setSessionSource(null);
+    }
     setIsScanning(true);
     setProgressPct(5);
     const startScanMsg =
@@ -5274,6 +5312,15 @@ export function App() {
     if (activeTargetHandle) {
       // If active target handle differs from scanned rootDirHandle or roms are empty, scan it first
       let workingRoms = romsRef.current;
+      // Папка библиотеки и база уже есть: ромы из базы, без полного скана.
+      // Library folder and database exist: ROMs from the database, no full scan.
+      const sameAsLibrary = !sortTargetDirHandle || sortTargetDirHandle === rootDirHandle;
+      if (workingRoms.length === 0 && sameAsLibrary && activeDbRef.current && !activeDbRef.current.builtin) {
+        if (await ensureSessionRoms()) {
+          await nextFrame();
+          return latestOpsRef.current.handleApplySortRulesInFolder(renameUsingConstructor);
+        }
+      }
       if (workingRoms.length === 0 || (sortTargetDirHandle && sortTargetDirHandle !== rootDirHandle)) {
         setRootDirHandle(activeTargetHandle);
         setSelectedFolderName(activeTargetHandle.name);
@@ -5953,9 +6000,12 @@ export function App() {
   // =========================================================================
   // 1G1R: ТОЛЬКО ОТБОР ДУБЛЕЙ (без сортировки, переименования и скрапинга)
   // =========================================================================
-  const handleRun1G1R = async () => {
+  const handleRun1G1R = async (onlyIds?: string[]) => {
     if (isAnyProcessRunning) return;
     const activeRoms = romsRef.current;
+    // Область: дубли считаем по всей библиотеке, а переносим только выбранные.
+    // Scope: duplicates are found across the whole library, only the chosen ones are moved.
+    const scopeIds = onlyIds ? expandScopeIds(activeRoms, onlyIds) : null;
     if (activeRoms.length === 0) {
       const msg = t('app.g1r.noRoms');
       setCurrentActionText(msg);
@@ -5988,7 +6038,7 @@ export function App() {
       // Пересчитываем дубли по текущей библиотеке: статусы могли устареть после переименований.
       const expanded = expandMultiDiscScannedRoms(activeRoms);
       const deduped = deduplicateAcrossSubfolders(expanded, getPriorityArray(priorityPreset));
-      const losers = deduped.filter((r) => r.status !== 'verified');
+      const losers = deduped.filter((r) => r.status !== 'verified' && (!scopeIds || scopeIds.has(r.id)));
       const keptCount = deduped.length - losers.length;
 
       for (let i = 0; i < losers.length; i++) {
@@ -7182,48 +7232,312 @@ export function App() {
     return deletedCount;
   };
 
-  // Скраппер из «Инструментов». После перезапуска библиотека открыта из базы, а ромов в сеансе нет:
-  // раньше кнопка показывала имитацию прогресса и ничего не качала. Теперь сначала сканируем
-  // папку библиотеки (нужны ссылки на папки консолей, чтобы писать images/ и gamelist.xml).
-  // Scraper from Tools. After a restart the library comes from the database and the session has no
-  // ROMs: the button used to show a fake progress bar and download nothing. Now the library folder
-  // is scanned first (console folder handles are needed to write images/ and gamelist.xml).
-  const handleScrapeLibraryMedia = async () => {
-    if (isAnyProcessRunning) return;
-    const hasScanned = romsRef.current.some((r) => r.status === 'verified');
-    let root: any = libraryDirHandle || rootDirHandle || null;
-    if (!hasScanned && !root) {
-      for (const key of ['library_root', 'scan_root']) {
-        const rec = await loadDirectoryHandleRecord(key);
-        if (rec?.handle && (await checkOrRequestHandlePermission(rec.handle, 'readwrite', true)) === 'granted') {
-          root = rec.handle;
-          applyGrantedHandle(rec);
-          setPendingRestoreHandles((prev) => prev.filter((h) => h.key !== rec.key));
-          break;
-        }
+  // ---------------------------------------------------------------------------------------------
+  // Ромы сеанса из базы без полного скана.
+  // После перезапуска библиотека открыта из базы, а у операций (переименование, 1G1R, скраппер,
+  // перенос) нет ссылок на файлы. Раньше для этого требовался полный скан с чтением и хешем
+  // каждого файла (часы на большой библиотеке). Теперь берём всё из записей базы: названия,
+  // консоли, CRC, регионы. С диска читаем только списки файлов в папках, где лежат ромы базы.
+  //
+  // Session ROMs from the database without a full scan.
+  // After a restart the library comes from the database and operations (rename, 1G1R, scraper,
+  // moves) have no file references. That used to need a full scan that reads and hashes every
+  // file (hours on a big library). Now everything comes from the database records: titles,
+  // consoles, CRC, regions. From disk only the file lists of folders holding database ROMs are read.
+  // ---------------------------------------------------------------------------------------------
+
+  const handleActiveDbChange = (id: string, rows: UnifiedGameRow[], builtin: boolean) => {
+    activeDbRef.current = { id, rows, builtin };
+    // Открыли другую базу: ромы сеанса от прежней больше не годятся.
+    // Another database was opened: session ROMs from the previous one no longer apply.
+    const src = sessionSourceRef.current;
+    if (src && src.dbId !== id) {
+      sessionSourceRef.current = null;
+      setSessionSource(null);
+      romsRef.current = [];
+      setRoms([]);
+    }
+  };
+
+  /** Папка библиотеки с разрешением: из сеанса или из сохранённых (запрос по жесту). */
+  /** The library folder with permission: from the session or from saved handles (asked on a gesture). */
+  const resolveLibraryRootWithPermission = async (): Promise<any> => {
+    const live = rootDirHandle || libraryDirHandle;
+    if (live) return live;
+    for (const key of ['scan_root', 'library_root']) {
+      const rec = await loadDirectoryHandleRecord(key);
+      if (rec?.handle && (await checkOrRequestHandlePermission(rec.handle, 'readwrite', true)) === 'granted') {
+        applyGrantedHandle(rec);
+        setPendingRestoreHandles((prev) => prev.filter((h) => h.key !== rec.key));
+        setMediaAccessVersion((v) => v + 1);
+        return rec.handle;
       }
     }
-    const plan = planScrapeStart(hasScanned, Boolean(root));
-    if (plan === 'scrape') {
-      await handleScrapeR36SMedia(romsRef.current);
-      return;
+    return null;
+  };
+
+  const hydrateRomsFromDbRows = async (root: any, rows: UnifiedGameRow[]) => {
+    // Папки, где по базе лежат ромы. / Folders that hold ROMs according to the database.
+    const dirOf = (p: string) => {
+      const s = p.replace(/\\/g, '/');
+      const i = s.lastIndexOf('/');
+      return i > 0 ? s.slice(0, i) : '';
+    };
+    const dirs = new Set<string>();
+    for (const r of rows) {
+      if (r.relativePath) dirs.add(dirOf(r.relativePath));
+      for (const d of r.discs || []) if (d.relativePath) dirs.add(dirOf(d.relativePath));
     }
-    if (plan === 'needFolder') {
+
+    // Путь записи может начинаться с имени корня (скан папки одной консоли).
+    // A record path may start with the root name (scan of a single console folder).
+    const dirCache = new Map<string, any>();
+    dirCache.set('', root);
+    const resolveDir = async (path: string): Promise<any> => {
+      if (dirCache.has(path)) return dirCache.get(path);
+      const slash = path.lastIndexOf('/');
+      const parentPath = slash > 0 ? path.slice(0, slash) : '';
+      const name = slash > 0 ? path.slice(slash + 1) : path;
+      const parent = await resolveDir(parentPath);
+      let h: any = null;
+      if (parent) {
+        try {
+          h = await parent.getDirectoryHandle(name);
+        } catch {
+          if (parent === root && name.toLowerCase() === String(root.name).toLowerCase()) h = root;
+        }
+      }
+      dirCache.set(path, h);
+      return h;
+    };
+
+    const discovered: DiscoveredScanEntry[] = [];
+    let walked = 0;
+    for (const dir of dirs) {
+      if (stopRequestedRef.current) break;
+      walked++;
+      if (walked % 5 === 0 || walked === dirs.size) {
+        setCurrentActionText(tf('app.session.readingDirs', { i: walked, total: dirs.size, dir: dir || root.name }));
+        setProgressPct(Math.round((walked / Math.max(1, dirs.size)) * 90));
+      }
+      const handle = await resolveDir(dir);
+      if (!handle) continue;
+      try {
+        for await (const entry of handle.values()) {
+          if (entry.kind !== 'file' || entry.name.startsWith('.')) continue;
+          const dot = entry.name.lastIndexOf('.');
+          const ext = dot !== -1 ? entry.name.slice(dot).toLowerCase() : '';
+          const rel = dir ? `${dir}/${entry.name}` : entry.name;
+          const isPortScript = ext === '.sh' && rel.toLowerCase().includes('port');
+          if (!EXT_TO_DEFAULT_CONSOLE[ext] && !isPortScript) continue;
+          try {
+            discovered.push({ file: await entry.getFile(), relPath: rel, parentHandle: handle });
+          } catch {}
+        }
+      } catch {}
+    }
+
+    const paired = await pairDiscCueAndTrackFiles(discovered);
+    const byPath = new Map<string, DiscoveredScanEntry>();
+    for (const e of paired) byPath.set(e.relPath.replace(/\\/g, '/').toLowerCase(), e);
+    const findEntry = (p?: string) => (p ? byPath.get(p.replace(/\\/g, '/').toLowerCase()) : undefined);
+
+    const fromRow = (
+      row: Pick<UnifiedGameRow, 'id' | 'title' | 'oldFile' | 'cleanFile' | 'crc32' | 'relativePath'> &
+        Partial<UnifiedGameRow>,
+      entry: DiscoveredScanEntry,
+      parentRow: UnifiedGameRow
+    ): ScannedRomFile => {
+      const consoleCode = String(parentRow.consoleShort || '').toLowerCase();
+      const meta = CONSOLE_CATALOG[consoleCode] || CONSOLE_CATALOG.psx;
+      const relativePath = entry.relPath;
+      const fileName = entry.file.name;
+      const dot = fileName.lastIndexOf('.');
+      const extension = entry.pairedFormatExt || (dot !== -1 ? fileName.slice(dot).toLowerCase() : '');
+      const title = parentRow.title || extractCleanTitle(fileName);
+      const region = String(parentRow.region || '');
+      const isRussian = /\bRU(S)?\b/i.test(region);
+      const { sourceSubfolder, isTopFolder } = analyzeSubfolderContext(relativePath);
+      const fileSize =
+        entry.file.size + (entry.companionFiles || []).reduce((s, f) => s + f.size, 0);
+      const crc = String(row.crc32 || parentRow.crc32 || '');
+      return {
+        id: row.id,
+        relativePath,
+        sourceSubfolder,
+        fileName,
+        cleanTitle: title,
+        extractedInternalTitle: title,
+        isNumberedName: false,
+        comparisonKey: buildComparisonKey(title),
+        canonicalName: row.cleanFile || fileName,
+        extension,
+        consoleCode: CONSOLE_CATALOG[consoleCode] ? consoleCode : EXT_TO_DEFAULT_CONSOLE[extension] || consoleCode,
+        generationFolder: meta.generationFolder,
+        generationShort: parentRow.bitness || meta.generationShort,
+        fileSize,
+        crc32: String(parentRow.serial || crc),
+        headerlessCrc32: crc,
+        region,
+        isRussian,
+        isFromTopFolder: isTopFolder,
+        revision: '',
+        status: 'verified',
+        is1G1RWinner: true,
+        reason: t('app.session.fromDbReason'),
+        scrapedBoxArtUrl: parentRow.boxArtUrl,
+        scrapedVideoUrl: parentRow.videoUrl,
+        mediaStatus: parentRow.status || '',
+        discNumber: row.discNumber ?? null,
+        fileObj: entry.file,
+        companionFiles: entry.companionFiles,
+        cueText: entry.cueText,
+        parentHandle: entry.parentHandle,
+        titleSource: parentRow.titleSource as TitleSource | undefined,
+        titleNote: parentRow.titleNote,
+        mod: detectRomMod(fileName, relativePath),
+        dbRow: parentRow,
+      };
+    };
+
+    const singles: ScannedRomFile[] = [];
+    const multis: ScannedRomFile[] = [];
+    let missing = 0;
+    for (const row of rows) {
+      if (row.isMultiDisc && Array.isArray(row.discs) && row.discs.length > 1) {
+        const discs: ScannedRomFile[] = [];
+        for (const d of row.discs) {
+          const e = findEntry(d.relativePath);
+          if (e) discs.push({ ...fromRow(d, e, row), discNumber: d.discNumber, canonicalName: d.cleanFile });
+        }
+        if (discs.length === 0) {
+          missing++;
+          continue;
+        }
+        multis.push({
+          ...discs[0],
+          id: row.id,
+          canonicalName: row.m3uFileName || discs[0].canonicalName,
+          fileSize: discs.reduce((s, d) => s + d.fileSize, 0),
+          isMultiDisc: true,
+          discCount: discs.length,
+          multiDiscFolderName: row.multiDiscFolderName,
+          m3uFileName: row.m3uFileName,
+          discs,
+          dbRow: row,
+        });
+        continue;
+      }
+      const e = findEntry(row.relativePath);
+      if (!e) {
+        missing++;
+        continue;
+      }
+      singles.push(fromRow(row, e, row));
+    }
+
+    // Дубли и мусор считаем по данным базы, как после скана. / Duplicates and junk from DB data, as after a scan.
+    const deduped = deduplicateAcrossSubfolders(singles, getPriorityArray(priorityPreset));
+    return { roms: [...deduped, ...multis], missing, onDisk: discovered.length };
+  };
+
+  /**
+   * Готовит ромы для операции. Если ромов в сеансе нет, берёт их из открытой базы, без скана.
+   * Возвращает false, если операцию запускать не на чем.
+   * Prepares ROMs for an operation. With no ROMs in the session, takes them from the open
+   * database without a scan. Returns false when there is nothing to run on.
+   */
+  const ensureSessionRoms = async (): Promise<boolean> => {
+    if (romsRef.current.some((r) => r.status === 'verified')) return true;
+    const active = activeDbRef.current;
+    if (!active || active.builtin || active.rows.length === 0) {
+      const msg = t('app.session.noDb');
+      setCurrentActionText(msg);
+      addLog(msg);
+      return false;
+    }
+    const root = await resolveLibraryRootWithPermission();
+    if (!root) {
       const msg = t('app.scrape.needFolder');
       setCurrentActionText(msg);
       addLog(msg);
-      return;
+      return false;
     }
-    addLog(tf('app.scrape.scanFirst', { name: root.name }));
-    await scanDirectoryHandleRecursively(root, 'replace');
-    if (stopRequestedRef.current) return;
-    if (!romsRef.current.some((r) => r.status === 'verified')) {
-      const msg = tf('app.scrape.noRomsInFolder', { name: root.name });
+    stopRequestedRef.current = false;
+    setIsScanning(true);
+    setProgressPct(2);
+    const startMsg = tf('app.session.start', { count: active.rows.length, name: root.name });
+    setCurrentActionText(startMsg);
+    addLog(startMsg);
+    try {
+      const { roms: hydrated, missing, onDisk } = await hydrateRomsFromDbRows(root, active.rows);
+      if (stopRequestedRef.current) return false;
+      // Только записи, найденные на диске: остальные база сохранит как есть.
+      // Only records found on disk: the database keeps the others as they are.
+      const src = { dbId: active.id, ids: new Set(hydrated.map((r) => r.id)) };
+      sessionSourceRef.current = src;
+      setSessionSource(src);
+      romsRef.current = hydrated;
+      setRoms(hydrated);
+      const doneMsg = tf('app.session.done', { count: hydrated.length, missing, files: onDisk });
+      setCurrentActionText(doneMsg);
+      addLog(doneMsg);
+      if (missing > 0) addLog(t('app.session.missingHint'));
+      return hydrated.length > 0;
+    } finally {
+      setIsScanning(false);
+      setProgressPct(100);
+    }
+  };
+
+  // Последние версии обработчиков: после ensureSessionRoms состояние обновится на следующем
+  // рендере, и операция должна увидеть новые ромы и папки, а не старое замыкание.
+  // Latest handler versions: after ensureSessionRoms the state updates on the next render, and the
+  // operation must see the new ROMs and folders, not a stale closure.
+  const latestOpsRef = useRef<Record<string, (...args: any[]) => any>>({});
+  const renderCountRef = useRef(0);
+  // Ждём следующий рендер (до ~1 с), чтобы latestOpsRef указывал на обработчики с новым состоянием.
+  // Wait for the next render (up to ~1 s) so latestOpsRef points at handlers with the new state.
+  const nextFrame = async () => {
+    const start = renderCountRef.current;
+    for (let i = 0; i < 60 && renderCountRef.current === start; i++) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 16));
+    }
+  };
+  const runWithSessionRoms = async (name: string, ...args: any[]) => {
+    if (isAnyProcessRunning) return;
+    const hadRoms = romsRef.current.some((r) => r.status === 'verified');
+    if (!hadRoms) {
+      const ok = await ensureSessionRoms();
+      if (!ok) return;
+      await nextFrame();
+    }
+    return latestOpsRef.current[name]?.(...args);
+  };
+
+  // Скраппер из «Инструментов». После перезапуска библиотека открыта из базы, а ромов в сеансе нет:
+  // ромы берутся из записей базы без полного скана (ensureSessionRoms). onlyIds сужает область.
+  // Scraper from Tools. After a restart the library comes from the database and the session has no
+  // ROMs: they are taken from database records without a full scan (ensureSessionRoms). onlyIds narrows the scope.
+  const handleScrapeLibraryMedia = async (onlyIds?: string[]) => {
+    if (isAnyProcessRunning) return;
+    const hasScanned = romsRef.current.some((r) => r.status === 'verified');
+    const plan = planScrapeStart(hasScanned, true);
+    if (plan !== 'scrape') {
+      // Ромы берём из базы, без полного скана. / ROMs come from the database, without a full scan.
+      if (!(await ensureSessionRoms())) return;
+      await nextFrame();
+      return latestOpsRef.current.handleScrapeLibraryMedia(onlyIds);
+    }
+    const ids = onlyIds ? new Set(onlyIds) : null;
+    const list = ids ? romsRef.current.filter((r) => ids.has(r.id)) : romsRef.current;
+    if (ids && list.length === 0) {
+      const msg = t('scope.emptyResult');
       setCurrentActionText(msg);
       addLog(msg);
       return;
     }
-    await handleScrapeR36SMedia(romsRef.current, false, root);
+    await handleScrapeR36SMedia(list, false, rootDirHandle || libraryDirHandle || null);
   };
 
   const handleScrapeR36SMedia = async (
@@ -7726,9 +8040,10 @@ export function App() {
     };
   };
 
-  const handleOnlineRenameRoms = async () => {
+  const handleOnlineRenameRoms = async (onlyIds?: string[]) => {
     const activeList = romsRef.current;
     if (activeList.length === 0 || isAnyProcessRunning) return;
+    const scopeIds = onlyIds ? expandScopeIds(activeList, onlyIds) : null;
 
     stopRequestedRef.current = false;
     setIsRenamingNumbered(true);
@@ -7736,7 +8051,7 @@ export function App() {
     addLog(t('app.rename.onlineStart'));
 
     try {
-      const targets = activeList.filter((r) => r.status === 'verified');
+      const targets = activeList.filter((r) => r.status === 'verified' && (!scopeIds || scopeIds.has(r.id)));
       const updated = [...activeList];
       let renamed = 0;
       const ONLINE_LOG_LIMIT = 30;
@@ -8824,7 +9139,7 @@ export function App() {
     const localizedBitness =
       r.generationShort === 'Handheld' ? t('cat.portableGen') : r.generationShort;
 
-    return {
+    const row: UnifiedGameRow = {
       id: r.id,
       title: displayTitle,
       oldFile: isMulti
@@ -8864,6 +9179,56 @@ export function App() {
       modLang: r.mod?.language,
       modNote: describeRomMod(r.mod, tf) || undefined,
     };
+    if (!r.dbRow) return row;
+    // Ром взят из базы без скана: поля, которых у рома нет (жанр, год, ручные правки, PortMaster),
+    // сохраняем из записи, а меняем только то, что операции могли поменять у файла.
+    // ROM taken from the database without a scan: fields the ROM lacks (genre, year, manual edits,
+    // PortMaster) are kept from the record; only what operations may change on the file is replaced.
+    return {
+      ...r.dbRow,
+      id: row.id,
+      title: row.title,
+      oldFile: row.oldFile,
+      cleanFile: row.cleanFile,
+      relativePath: row.relativePath,
+      size: row.size,
+      totalBytes: row.totalBytes,
+      crc32: row.crc32 || r.dbRow.crc32,
+      boxArtUrl: row.boxArtUrl,
+      videoUrl: row.videoUrl,
+      status: row.status || r.dbRow.status,
+      fileObj: row.fileObj,
+      companionFiles: row.companionFiles,
+      cueText: row.cueText,
+      trackCount: row.trackCount,
+      sourceExt: row.sourceExt,
+      isMultiDisc: row.isMultiDisc,
+      discCount: row.discCount,
+      discs: row.discs,
+      multiDiscFolderName: row.multiDiscFolderName,
+      m3uFileName: row.m3uFileName,
+      titleSource: row.titleSource || r.dbRow.titleSource,
+      titleNote: row.titleNote,
+      modKind: row.modKind,
+      modTag: row.modTag,
+      modLang: row.modLang,
+      modNote: row.modNote,
+    };
+  };
+
+  renderCountRef.current++;
+  latestOpsRef.current = {
+    handleRun1G1R,
+    handleOnlineRenameRoms,
+    handleScrapeLibraryMedia,
+    handleScanPhantomFolders,
+    handleGroupMultiDiscFolders,
+    handleMassDeleteRoms,
+    handleMassMoveRoms,
+    handleMassSplitRoms,
+    handleApplySortRulesInFolder,
+    handleEditorWriteGamelist,
+    handleEditorScrapeMedia,
   };
 
   const unifiedScannedRows = useMemo(() => {
@@ -8925,6 +9290,8 @@ export function App() {
         onExportLibrary={handleExportLibrary}
         romsCount={roms.length || dbState.records.length || 630}
         scannedRows={unifiedScannedRows}
+        sessionSource={sessionSource}
+        onActiveDbChange={handleActiveDbChange}
         isAnyProcessRunning={isAnyProcessRunning}
         progressPct={progressPct}
         currentActionText={currentActionText || logs[logs.length - 1] || ''}
@@ -8941,26 +9308,26 @@ export function App() {
         onScanExternalSourceForDiff={scanExternalSourceForDiff}
         lastScanMode={lastScanMode}
         scanRevision={scanRevision}
-        onOrganizeCatalog={() => handleRun1G1R()}
-        onGroupMultiDiscFolders={handleGroupMultiDiscFolders}
+        onOrganizeCatalog={(ids?: string[]) => void runWithSessionRoms('handleRun1G1R', ids)}
+        onGroupMultiDiscFolders={() => void runWithSessionRoms('handleGroupMultiDiscFolders')}
         autoGroupMultiDisc={autoGroupMultiDisc}
         onChangeAutoGroupMultiDisc={setAutoGroupMultiDisc}
-        onScrapeMedia={() => void handleScrapeLibraryMedia()}
-        onOnlineRename={() => handleOnlineRenameRoms()}
+        onScrapeMedia={(ids?: string[]) => void handleScrapeLibraryMedia(ids)}
+        onOnlineRename={(ids?: string[]) => void runWithSessionRoms('handleOnlineRenameRoms', ids)}
         scrapeReport={scrapeReport}
         datSystems={datSystems}
-        onScanPhantomFolders={handleScanPhantomFolders}
+        onScanPhantomFolders={() => void runWithSessionRoms('handleScanPhantomFolders')}
         onRepairSdCard={(fw) => handleRepairR36SSDCard(fw as any)}
         sdTargetFolderName={sdTargetFolderName}
         onSelectSdFolder={handleSelectSdFolder}
         onScanSdFolder={handleScanSdFolder}
         sdFirmwareId={sdFirmwareId}
         onChangeSdFirmwareId={(fw) => setSdFirmwareId(fw as any)}
-        onMassDeleteRoms={handleMassDeleteRoms}
-        onMassMoveRoms={handleMassMoveRoms}
-        onEditorWriteGamelist={(ids) => void handleEditorWriteGamelist(ids)}
-        onEditorScrapeMedia={handleEditorScrapeMedia}
-        onMassSplitRoms={handleMassSplitRoms}
+        onMassDeleteRoms={(ids: string[]) => void runWithSessionRoms('handleMassDeleteRoms', ids)}
+        onMassMoveRoms={(ids: string[]) => void runWithSessionRoms('handleMassMoveRoms', ids)}
+        onEditorWriteGamelist={(ids) => void runWithSessionRoms('handleEditorWriteGamelist', ids)}
+        onEditorScrapeMedia={(ids) => void runWithSessionRoms('handleEditorScrapeMedia', ids)}
+        onMassSplitRoms={(mode) => void runWithSessionRoms('handleMassSplitRoms', mode)}
         onUndo={handleUndo}
         canUndo={undoStack.length > 0}
         catalogMode={catalogMode}
