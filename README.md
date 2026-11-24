@@ -43,8 +43,8 @@ The app scans your collection and identifies games by checksums and disc serial 
 - **Play** `beta`: the built-in emulator (EmulatorJS) runs a game right in the app window, no emulator install needed. Sega CD and PC Engine CD take their BIOS from the BIOS section.
 - **Saves** `beta`: games from Play save as files next to the ROM (`.srm`, `.state`, named like RetroArch). The game card shows the saves, a history of the last 10 versions with restore, and saves found in emulator folders. When a ROM is renamed, moved or removed as a 1G1R duplicate, its saves follow it.
 - **Your own collections and series**: group games by hand, take a game out of an automatic group, and accept or reject suggestions the app makes after a scan ("Suggestions" button).
-- **"Add to a collection or series" button** on a ROM card (tiles, list, editor, inspector): search groups by name, pick one or create a new one right from the search, see where the game already is, undo.
 - **Studio**: group and sort the library by developer or publisher.
+- **"Add to a collection or series" button** on a ROM card (tiles, list, editor, inspector): search groups by name, pick one or create a new one right from the search, see where the game already is, undo.
 - **Game data in CSV / XML**: export titles, genre, year, developer, publisher, players, rating and description to a spreadsheet, edit them and load them back with a preview of every change. `gamelist.xml` from ES, ES-DE and Skraper is read too.
 
 | List | Editor |
