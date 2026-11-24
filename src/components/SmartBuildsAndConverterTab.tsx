@@ -1803,7 +1803,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
 
         const pmReadmeLines: string[] = [
           '==================================================================',
-          `AegisROM v0.6.0 (Beta) — PortMaster (${selectedProfile.shortName})`,
+          `AegisROM v0.6.1-dev (Beta) — PortMaster (${selectedProfile.shortName})`,
           '==================================================================',
           consoleLaunchNote,
           '',
@@ -2018,7 +2018,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
       '@echo off',
       'chcp 65001 >nul',
       'echo ============================================================================',
-      'echo  AegisROM v0.6.0 (Beta) - Real Build Converter & Folder Hierarchy Export',
+      'echo  AegisROM v0.6.1-dev (Beta) - Real Build Converter & Folder Hierarchy Export',
       `echo  Build: ${customBuildName} (${conversionPlanRows.length})`,
       `echo  Target: ${selectedProfile.name}`,
       'echo  NOTE: Never performs fake extension renaming!',
