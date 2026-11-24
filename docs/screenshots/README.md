@@ -10,5 +10,13 @@
 | `environment.png` | Среда эмуляторов |
 | `bios.png` | Среда → BIOS |
 | `build-view.png` | Сборки → «Посмотреть сборку» |
+| `settings.png` | Окно «Настройки» |
+| `library-media.png`, `library-groups.png` | Библиотека: выбор медиа и панель «Группы» |
+| `manual-groups.png` | Свои коллекции и серии, вкладка «Предложения» |
+| `scope-scraper.png` | Окно области и источников скраппера |
+| `saves-panel.png` | Блок «Сохранения» в карточке (RU, снят вручную) |
+| `wifi/*.png` | Заливка по Wi-Fi (RU, сняты вручную) |
 
 Чтобы обновить скриншот, замените файл с тем же именем. Ширина 1920 px.
+
+Автоматически (EN, 1920x1080): `npm run dev:api`, `npx vite --port 5179`, затем `node scripts/readme-screenshots.cjs`.
