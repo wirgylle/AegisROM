@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { HardDriveDownload, X } from 'lucide-react';
 import { useI18n } from '../i18n/translations';
 import {
@@ -7,6 +7,7 @@ import {
   type BuildMediaKind,
   type MediaLayout,
 } from '../utils/buildMedia';
+import type { BuildPlanSummary } from '../utils/buildQueue';
 
 // Окно перед выгрузкой сборки: медиа (какие типы), пропуск готовых файлов, gamelist.xml.
 // Dialog before a build export: media (which kinds), skipping finished files, gamelist.xml.
@@ -19,6 +20,10 @@ interface BuildExportOptionsModalProps {
   supportsGamelist: boolean;
   gameCount: number;
   totalSizeLabel: string;
+  /** Предварительный анализ: что копируется, что конвертируется. / Pre-analysis: what is copied, what is converted. */
+  plan?: BuildPlanSummary;
+  /** Проверка медиа рядом с ромами. / Checks media next to the ROMs. */
+  checkMedia?: () => Promise<{ found: number; total: number }>;
   onConfirm: (opts: BuildExportOptions) => void;
   onClose: () => void;
 }
@@ -30,6 +35,8 @@ export const BuildExportOptionsModal: React.FC<BuildExportOptionsModalProps> = (
   supportsGamelist,
   gameCount,
   totalSizeLabel,
+  plan,
+  checkMedia,
   onConfirm,
   onClose,
 }) => {
@@ -39,6 +46,19 @@ export const BuildExportOptionsModal: React.FC<BuildExportOptionsModalProps> = (
     mediaKinds: { ...initial.mediaKinds },
   }));
   const mediaSupported = mediaLayout !== 'none';
+  const [mediaStat, setMediaStat] = useState<{ found: number; total: number } | null>(null);
+  useEffect(() => {
+    if (!checkMedia || !mediaSupported) return;
+    let alive = true;
+    checkMedia()
+      .then((r) => alive && setMediaStat(r))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const gb = (mb: number) => (mb / 1024).toFixed(1);
   const anyKind = BUILD_MEDIA_KINDS.some((k) => opts.mediaKinds[k]);
 
   const setKind = (k: BuildMediaKind, v: boolean) =>
@@ -67,6 +87,50 @@ export const BuildExportOptionsModal: React.FC<BuildExportOptionsModalProps> = (
         </div>
 
         <div className="overflow-y-auto px-5 py-4 space-y-4 text-xs text-slate-700 dark:text-slate-200">
+          {plan && (
+            <div className="space-y-1 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/40 px-3 py-2.5">
+              <p className="font-semibold text-sm">{t('bq.planTitle')}</p>
+              <ul className="space-y-0.5 list-disc pl-4">
+                <li>{tf('bq.planCopy', { count: plan.copy.count, gb: gb(plan.copy.mb) })}</li>
+                <li>
+                  {plan.convert.count > 0
+                    ? tf('bq.planConvert', {
+                        count: plan.convert.count,
+                        gb: gb(plan.convert.mb),
+                        formats: Object.entries(plan.convert.byTarget)
+                          .map(([ext, n]) => `${ext}: ${n}`)
+                          .join(', '),
+                      })
+                    : t('bq.planNoConvert')}
+                </li>
+                {plan.chdmanMissing > 0 && (
+                  <li className="text-amber-700 dark:text-amber-400">
+                    {tf('bq.planNoChdman', { count: plan.chdmanMissing })}
+                  </li>
+                )}
+                {plan.noFile > 0 && (
+                  <li className="text-amber-700 dark:text-amber-400">{tf('bq.planNoFile', { count: plan.noFile })}</li>
+                )}
+                {mediaSupported && checkMedia && (
+                  <li
+                    className={
+                      mediaStat && mediaStat.total > 0 && mediaStat.found === 0
+                        ? 'text-amber-700 dark:text-amber-400'
+                        : ''
+                    }
+                  >
+                    {!mediaStat
+                      ? t('bq.planMediaChecking')
+                      : mediaStat.total > 0 && mediaStat.found === 0
+                      ? t('bq.planMediaNone')
+                      : tf('bq.planMedia', mediaStat)}
+                  </li>
+                )}
+              </ul>
+              <p className="text-slate-500 dark:text-slate-400">{t('bq.planOrder')}</p>
+            </div>
+          )}
+
           {mediaSupported ? (
             <div className="space-y-2">
               <label className="flex items-start gap-2 cursor-pointer font-semibold text-sm">

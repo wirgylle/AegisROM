@@ -50,6 +50,7 @@ import {
   ZIP_PKG_FILENAME,
 } from '../version';
 import { SmartBuildsAndConverterTab } from './SmartBuildsAndConverterTab';
+import { requestBuildStop } from '../utils/buildQueue';
 import {
   EnvironmentEmulatorsTab,
   resolvePriorityEmulatorForConsole,
@@ -1896,6 +1897,9 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     setSimRunning(false);
     setSimProgress(0);
     setSimActionText(`⏹ ${t('status.stoppedByUser')}`);
+    // Выгрузка сборки живёт в своей вкладке: раньше СТОП только прятал её прогресс.
+    // The build export lives in its own tab: STOP used to only hide its progress.
+    requestBuildStop();
     onEmergencyStop?.();
   };
 

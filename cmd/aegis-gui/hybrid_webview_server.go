@@ -657,6 +657,12 @@ func runHybridModernDesktopApp() bool {
 		}()
 
 		targetExt := strings.ToLower(strings.TrimSpace(r.FormValue("targetExt")))
+		// outDir: результат сразу в папку сборки. / outDir: output straight into the build folder.
+		outDir, err := aegisapi.ConverterOutDir(r)
+		if err != nil {
+			http.Error(w, "outDir: "+err.Error(), http.StatusForbidden)
+			return
+		}
 		baseName := strings.TrimSpace(r.FormValue("baseName"))
 		if baseName == "" {
 			baseName = "Converted_Game"
@@ -742,12 +748,16 @@ func runHybridModernDesktopApp() bool {
 			}
 
 			outChd := filepath.Join(tmpDir, baseName+".chd")
-			cmd := exec.Command(chdmanExe, "createcd", "-f", "-i", chdInputPath, "-o", outChd)
+			cmd := exec.CommandContext(r.Context(), chdmanExe, "createcd", "-f", "-i", chdInputPath, "-o", outChd)
 			cmd.Dir = tmpDir
 			cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 			cmdOut, runErr := cmd.CombinedOutput()
 			if runErr != nil {
 				http.Error(w, "chdman createcd error: "+runErr.Error()+"\n"+string(cmdOut), http.StatusInternalServerError)
+				return
+			}
+			if outDir != "" {
+				aegisapi.SendConverterOutputs(w, tmpDir, outDir, []string{baseName + ".chd"})
 				return
 			}
 			outF, err := os.Open(outChd)
@@ -768,7 +778,7 @@ func runHybridModernDesktopApp() bool {
 			tmpBin := filepath.Join(tmpDir, baseName+"_tmp.bin")
 			outIso := filepath.Join(tmpDir, baseName+".iso")
 
-			cmd := exec.Command(chdmanExe, "extractcd", "-f", "-i", entryPath, "-o", tmpCue, "-ob", tmpBin)
+			cmd := exec.CommandContext(r.Context(), chdmanExe, "extractcd", "-f", "-i", entryPath, "-o", tmpCue, "-ob", tmpBin)
 			cmd.Dir = tmpDir
 			cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 			cmdOut, runErr := cmd.CombinedOutput()
@@ -778,6 +788,10 @@ func runHybridModernDesktopApp() bool {
 			}
 			if err := aegiscore.StripBin2352ToISO(tmpBin, outIso); err != nil {
 				http.Error(w, "strip bin->iso error: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if outDir != "" {
+				aegisapi.SendConverterOutputs(w, tmpDir, outDir, []string{baseName + ".iso"})
 				return
 			}
 			outF, err := os.Open(outIso)
@@ -796,12 +810,16 @@ func runHybridModernDesktopApp() bool {
 		if targetExt == ".bin+.cue" {
 			outCue := filepath.Join(tmpDir, baseName+".cue")
 			outBin := filepath.Join(tmpDir, baseName+".bin")
-			cmd := exec.Command(chdmanExe, "extractcd", "-f", "-i", entryPath, "-o", outCue, "-ob", outBin)
+			cmd := exec.CommandContext(r.Context(), chdmanExe, "extractcd", "-f", "-i", entryPath, "-o", outCue, "-ob", outBin)
 			cmd.Dir = tmpDir
 			cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 			cmdOut, runErr := cmd.CombinedOutput()
 			if runErr != nil {
 				http.Error(w, "chdman extractcd error: "+runErr.Error()+"\n"+string(cmdOut), http.StatusInternalServerError)
+				return
+			}
+			if outDir != "" {
+				aegisapi.SendConverterOutputs(w, tmpDir, outDir, []string{baseName + ".bin", baseName + ".cue"})
 				return
 			}
 
