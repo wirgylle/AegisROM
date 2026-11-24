@@ -1,5 +1,13 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
+  loadAppSettings,
+  resolveDarkMode,
+  subscribeAppSettings,
+  updateAppSettings,
+  type AppSettings,
+  type LibraryViewMode,
+} from './utils/appSettings';
+import {
   FolderOpen,
   Download,
   Sparkles,
@@ -645,6 +653,11 @@ interface ScannedRomFile {
 
 // Ключ ручной правки для рома: тот же, что у строки библиотеки (консоль + CRC без заголовка).
 // Manual edit key for a ROM: same as for its library row (console + headerless CRC).
+// Вид библиотеки из настроек → внутренний id раскладки. / Library view from settings → internal layout id.
+function conceptForViewMode(mode: LibraryViewMode): FigmaConceptId {
+  return mode === 'compact' ? 'concept_b_split' : mode === 'editor' ? 'concept_c_workbench' : 'concept_a_sidebar';
+}
+
 function romManualEditKey(r: { id: string; consoleCode: string; headerlessCrc32: string }): string {
   return manualEditKey({ id: r.id, consoleShort: r.consoleCode.toUpperCase(), crc32: r.headerlessCrc32 });
 }
@@ -1814,17 +1827,19 @@ export function App() {
   const [sdTargetFolderName, setSdTargetFolderName] = useState<string>('');
   const [sdFirmwareId, setSdFirmwareId] = useState<
     'r36s_arkos' | 'anbernic_muos' | 'anbernic_knulli' | 'rocknix' | 'miyoo_onion' | 'trimui_crossmix'
-  >('r36s_arkos');
+  >(() => loadAppSettings().sdFirmwareId);
 
   const [bufferDirHandle, setBufferDirHandle] = useState<any>(null);
   const [bufferFolderName, setBufferFolderName] = useState<string>('');
   const [bufferScannedRoms, setBufferScannedRoms] = useState<ScannedRomFile[]>([]);
   const [combineTargetDirHandle, setCombineTargetDirHandle] = useState<any>(null);
   const [combineTargetFolderName, setCombineTargetFolderName] = useState<string>('');
-  const [combineMoveMode, setCombineMoveMode] = useState<'move' | 'copy'>('move');
-  const [combineDedup1G1R, setCombineDedup1G1R] = useState<boolean>(true);
-  const [combineSortFolders, setCombineSortFolders] = useState<boolean>(true);
-  const [combineAddToLibrary, setCombineAddToLibrary] = useState<boolean>(true);
+  const [combineMoveMode, setCombineMoveMode] = useState<'move' | 'copy'>(() => loadAppSettings().combineMoveMode);
+  const [combineDedup1G1R, setCombineDedup1G1R] = useState<boolean>(() => loadAppSettings().combineDedup1G1R);
+  const [combineSortFolders, setCombineSortFolders] = useState<boolean>(() => loadAppSettings().combineSortFolders);
+  const [combineAddToLibrary, setCombineAddToLibrary] = useState<boolean>(
+    () => loadAppSettings().combineAddToLibrary
+  );
 
   const stopRequestedRef = useRef<boolean>(false);
   // Системы, для которых в libretro-database нет DAT (не спрашиваем повторно в этой сессии).
@@ -1845,13 +1860,15 @@ export function App() {
 
   const [catalogMode, setCatalogMode] = useState<
     'gen_then_console' | 'r36s_gen_direct' | 'r36s_flat_console'
-  >('r36s_flat_console');
-  const [priorityPreset, setPriorityPreset] = useState<string>('rus_first');
-  const [autoScrapeAfterSort, setAutoScrapeAfterSort] = useState(true);
-  const [scrapeShortVideos, setScrapeShortVideos] = useState(true);
-  const [deleteJunkPermanently, setDeleteJunkPermanently] = useState(false);
-  const [autoGroupMultiDisc, setAutoGroupMultiDisc] = useState(true);
-  const autoGroupMultiDiscRef = useRef<boolean>(true);
+  >(() => loadAppSettings().catalogMode);
+  const [priorityPreset, setPriorityPreset] = useState<string>(() => loadAppSettings().priorityPreset);
+  const [autoScrapeAfterSort, setAutoScrapeAfterSort] = useState(() => loadAppSettings().autoScrapeAfterSort);
+  const [scrapeShortVideos, setScrapeShortVideos] = useState(() => loadAppSettings().scrapeShortVideos);
+  const [deleteJunkPermanently, setDeleteJunkPermanently] = useState(
+    () => loadAppSettings().deleteJunkPermanently
+  );
+  const [autoGroupMultiDisc, setAutoGroupMultiDisc] = useState(() => loadAppSettings().autoGroupMultiDisc);
+  const autoGroupMultiDiscRef = useRef<boolean>(autoGroupMultiDisc);
   useEffect(() => {
     autoGroupMultiDiscRef.current = autoGroupMultiDisc;
   }, [autoGroupMultiDisc]);
@@ -1866,14 +1883,61 @@ export function App() {
   const [activeMainTab, setActiveMainTab] = useState<
     'figma_studio' | 'library' | 'r36s_tools' | 'export_builder' | 'emulators'
   >('figma_studio');
-  const [selectedFigmaConcept, setSelectedFigmaConcept] =
-    useState<FigmaConceptId>('concept_a_sidebar');
-  const [isDarkMode, setIsDarkMode] = useState<boolean>(false);
+  const [selectedFigmaConcept, setSelectedFigmaConcept] = useState<FigmaConceptId>(() =>
+    conceptForViewMode(loadAppSettings().libraryView)
+  );
+  // Тема: выбор пользователя (светлая / тёмная / как в системе) + текущая тема ОС.
+  // Theme: the user's choice (light / dark / same as system) + the current OS theme.
+  const [themePref, setThemePref] = useState<AppSettings['theme']>(() => loadAppSettings().theme);
+  const [systemPrefersDark, setSystemPrefersDark] = useState<boolean>(() => {
+    try {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    } catch {
+      return false;
+    }
+  });
+  const isDarkMode = resolveDarkMode(themePref, systemPrefersDark);
   const [isNativeDesktopHost, setIsNativeDesktopHost] = useState<boolean>(false);
 
   useEffect(() => {
+    let mq: MediaQueryList | null = null;
+    try {
+      mq = window.matchMedia('(prefers-color-scheme: dark)');
+    } catch {
+      return;
+    }
+    const onChange = (e: MediaQueryListEvent) => setSystemPrefersDark(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq?.removeEventListener('change', onChange);
+  }, []);
+
+  useEffect(() => {
     document.documentElement.classList.toggle('dark', isDarkMode);
+    document.documentElement.style.colorScheme = isDarkMode ? 'dark' : 'light';
   }, [isDarkMode]);
+
+  // Сохранили окно «Настройки» — сразу применяем новые значения и в этом сеансе.
+  // Settings saved — apply the new values to this session right away.
+  useEffect(
+    () =>
+      subscribeAppSettings(() => {
+        const s = loadAppSettings();
+        setThemePref(s.theme);
+        setSelectedFigmaConcept(conceptForViewMode(s.libraryView));
+        setCatalogMode(s.catalogMode);
+        setPriorityPreset(s.priorityPreset);
+        setAutoScrapeAfterSort(s.autoScrapeAfterSort);
+        setScrapeShortVideos(s.scrapeShortVideos);
+        setDeleteJunkPermanently(s.deleteJunkPermanently);
+        setAutoGroupMultiDisc(s.autoGroupMultiDisc);
+        setCombineMoveMode(s.combineMoveMode);
+        setCombineSortFolders(s.combineSortFolders);
+        setCombineDedup1G1R(s.combineDedup1G1R);
+        setCombineAddToLibrary(s.combineAddToLibrary);
+        setSdFirmwareId(s.sdFirmwareId);
+      }),
+    []
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -8895,6 +8959,7 @@ export function App() {
       <FigmaConceptStudio
         navigateRequest={navigateRequest}
         onOpenSetupWizard={handleOpenSetupWizard}
+        onSettingsSaved={() => addLog(t('settings.savedLog'))}
         selectedConcept={selectedFigmaConcept}
         onSelectConcept={(cid) => {
           setSelectedFigmaConcept(cid);
@@ -8911,11 +8976,10 @@ export function App() {
         }}
         isDarkMode={isDarkMode}
         onToggleDarkMode={() => {
-          setIsDarkMode((d) => {
-            const next = !d;
-            addLog(next ? `🌙 ${t('lib.themeDarkLog')}` : `☀ ${t('lib.themeLightLog')}`);
-            return next;
-          });
+          // Кнопка в шапке запоминает выбор как тему по умолчанию. / The header button stores the choice as the default theme.
+          const next = !isDarkMode;
+          updateAppSettings({ theme: next ? 'dark' : 'light' });
+          addLog(next ? `🌙 ${t('lib.themeDarkLog')}` : `☀ ${t('lib.themeLightLog')}`);
         }}
         onOpenXmlModal={() => setXmlModalOpen(true)}
         selectedFolderName={selectedFolderName}

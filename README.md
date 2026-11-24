@@ -152,6 +152,7 @@ Open an [Issue](https://github.com/wirgylle/AegisROM/issues) and describe what y
 | **before 0.6.0** | The app's own window instead of Edge or Chrome, with settings stored on disk. A macOS version: one `.dmg` for Intel and Apple Silicon, games launched through Mac emulators. PortMaster on Windows through a Linux environment (WSL). |
 | **0.6.0** | Save manager (`.srm`, `.state`, memory cards) with version history. First step is in `dev`: games from the built-in Play save as files next to the ROM. Uploading builds to the console over Wi-Fi (SFTP / SMB / WebDAV) without removing the card. |
 | **0.7.0** | RetroAchievements: checking achievement support by ROM hash. PDF manuals, walkthrough maps and a soundtrack player in the game card. |
+| **after 1.0** | After the move to a server + client setup: streaming to local media servers such as Plex and Kodi, play in the browser, and an optional ready-made hosted server by subscription. |
 
 Details in [docs/ROADMAP.md](docs/ROADMAP.md) (in Russian). Plans may change.
 
