@@ -79,6 +79,14 @@ import { CollectionModal } from './CollectionModal';
 import { GameRelationsPanel } from './GameRelationsPanel';
 import { buildCollections, buildSeries, indexCollections, seriesSiblings } from '../utils/gameCollections';
 import { OperationScopeModal } from './OperationScopeModal';
+import { ScrapeOptionsPanel } from './ScrapeOptionsPanel';
+import {
+  defaultScrapeOptions,
+  loadScrapeOptions,
+  rowHasScrapeMedia,
+  saveScrapeOptions,
+  type ScrapeOptions,
+} from '../utils/scrapeOptions';
 import { describeScope, type ScopeOperation } from '../utils/operationScope';
 import { markProcessed } from '../utils/operationScopeStore';
 import { inferPortMasterPcTestPlan } from '../utils/portMasterEngine';
@@ -282,7 +290,7 @@ interface FigmaConceptStudioProps {
   onGroupMultiDiscFolders?: () => void;
   autoGroupMultiDisc?: boolean;
   onChangeAutoGroupMultiDisc?: (val: boolean) => void;
-  onScrapeMedia?: (ids?: string[]) => void;
+  onScrapeMedia?: (ids?: string[], opts?: ScrapeOptions) => void;
   onOnlineRename?: (ids?: string[]) => void;
   // Итог последнего скраппера (null — ещё не запускали). / Last scraper run (null: not run yet).
   scrapeReport?: ScrapeReport | null;
@@ -1422,6 +1430,12 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     op: ScopeOperation;
     run: (ids: string[]) => void;
   } | null>(null);
+  // Типы медиа и повтор промахов для скраппера: показываются внутри окна области.
+  // Scraper media types and miss retry: shown inside the scope window.
+  const [scrapeOpts, setScrapeOpts] = useState<ScrapeOptions>(() => loadScrapeOptions(defaultScrapeOptions(scrapeShortVideos)));
+  // Ref: запуск берёт выбор, сделанный уже в открытом окне. / The run reads the choice made in the open window.
+  const scrapeOptsRef = useRef(scrapeOpts);
+  scrapeOptsRef.current = scrapeOpts;
   const scopeRows: UnifiedGameRow[] = !isBuiltinDb && activeDbEntry ? activeDbEntry.rows : scannedRows;
   const openScope = (op: ScopeOperation, run: (ids?: string[]) => void) => {
     if (scopeRows.length === 0) {
@@ -2604,7 +2618,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       onClick={() => {
                         // Без ромов в сеансе App берёт их из базы, без скана. / Without session ROMs App takes them from the database, no scan.
                         if (onScrapeMedia) {
-                          openScope('scrape', onScrapeMedia);
+                          openScope('scrape', (ids) => onScrapeMedia?.(ids, scrapeOptsRef.current));
                         } else {
                           startSimulatedProgressTask(t('tools.lib.scraperTitle'), []);
                         }
@@ -2935,7 +2949,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       type="button"
                       onClick={() => {
                         if (onScrapeMedia) {
-                          openScope('scrape', onScrapeMedia);
+                          openScope('scrape', (ids) => onScrapeMedia?.(ids, scrapeOptsRef.current));
                         } else {
                           startSimulatedProgressTask(t('tools.sd.scraperBtn'), []);
                         }
@@ -4095,11 +4109,14 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         operation={scopeRequest?.op || 'other'}
         rows={scopeRows}
         busy={activeRunning}
+        extra={scopeRequest?.op === 'scrape' ? <ScrapeOptionsPanel value={scrapeOpts} onChange={setScrapeOpts} /> : undefined}
+        hasMedia={scopeRequest?.op === 'scrape' ? (row) => rowHasScrapeMedia(row as any, scrapeOpts.slots) : undefined}
         onClose={() => setScopeRequest(null)}
         onConfirm={(ids, scope) => {
           const req = scopeRequest;
           setScopeRequest(null);
           if (!req) return;
+          if (req.op === 'scrape') saveScrapeOptions(scrapeOpts);
           markProcessed(req.op, ids);
           onAddLog?.(
             tf('scope.log', { op: t(`scope.op.${req.op}`), scope: describeScope(scope), count: ids.length })

@@ -19,7 +19,19 @@ const BASE_VERSION = String(pkg.version || '0.0.0').trim();
 const VERSION = String(process.env.AEGIS_BUILD_VERSION || BASE_VERSION).trim();
 // '+' в именах файлов на GitHub неудобен / '+' is awkward in GitHub asset names.
 const FILE_VERSION = VERSION.replace(/\+/g, '.');
-const GO_VERSION_FLAG = `-X aegisgui/cmd/winsetup.AppVersion=${VERSION}`;
+// RU: Ключ разработчика ScreenScraper берётся из секретов CI (SS_DEV_ID / SS_DEV_PASSWORD) и вшивается
+// в exe, чтобы пользователю хватало логина и пароля. Без секретов сборка проходит, ключ вводится вручную.
+// EN: The ScreenScraper developer key comes from CI secrets (SS_DEV_ID / SS_DEV_PASSWORD) and is baked into
+// the exe so users only need their login and password. Without the secrets the build still works.
+const ssFlag = (name, value) => {
+  const v = String(value || '').trim();
+  if (!v) return '';
+  if (!/^[A-Za-z0-9_.@+-]+$/.test(v)) throw new Error(`${name}: unsupported characters for -ldflags`);
+  return ` -X aegisgui/aegisapi.${name}=${v}`;
+};
+const GO_SS_FLAGS =
+  ssFlag('ssBuiltinDevID', process.env.SS_DEV_ID) + ssFlag('ssBuiltinDevPassword', process.env.SS_DEV_PASSWORD);
+const GO_VERSION_FLAG = `-X aegisgui/cmd/winsetup.AppVersion=${VERSION}${GO_SS_FLAGS}`;
 
 const DOWNLOADS_DIR = path.join(ROOT, 'public', 'downloads');
 const DIST_DIR = path.join(ROOT, 'dist');

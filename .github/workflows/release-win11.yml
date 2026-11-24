@@ -106,6 +106,10 @@ jobs:
         run: npm run lint
 
       - name: Build Setup.exe, Portable.exe & ZIP
+        env:
+          # RU: ключ разработчика ScreenScraper (необязательно). EN: ScreenScraper developer key (optional).
+          SS_DEV_ID: ${{ secrets.SS_DEV_ID }}
+          SS_DEV_PASSWORD: ${{ secrets.SS_DEV_PASSWORD }}
         run: npm run release:win
 
       - name: Upload build artifacts

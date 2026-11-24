@@ -85,6 +85,16 @@ import {
   type MediaSlot,
 } from './utils/scrapePlan';
 import {
+  defaultScrapeOptions,
+  fetchScrapeMisses,
+  loadScrapeOptions,
+  needsScrape,
+  saveScrapeMisses,
+  skipKnownMiss,
+  type ScrapeMiss,
+  type ScrapeOptions,
+} from './utils/scrapeOptions';
+import {
   findGamelistEntry,
   indexGamelistEntries,
   normalizeGamelistPath,
@@ -1739,6 +1749,8 @@ export function App() {
   const [priorityPreset, setPriorityPreset] = useState<string>(() => loadAppSettings().priorityPreset);
   const [autoScrapeAfterSort, setAutoScrapeAfterSort] = useState(() => loadAppSettings().autoScrapeAfterSort);
   const [scrapeShortVideos, setScrapeShortVideos] = useState(() => loadAppSettings().scrapeShortVideos);
+  // Окно перед скраппером: типы медиа и повтор прошлых промахов; ids — выбранная область.
+  // Pre-scrape window: media types and retrying misses; ids is the chosen scope.
   const [deleteJunkPermanently, setDeleteJunkPermanently] = useState(
     () => loadAppSettings().deleteJunkPermanently
   );
@@ -7107,13 +7119,35 @@ export function App() {
         } else if (entry.kind === 'file') {
           const dot = entry.name.lastIndexOf('.');
           const ext = dot !== -1 ? entry.name.slice(dot).toLowerCase() : '';
-          if (EXT_TO_DEFAULT_CONSOLE[ext]) {
+          // Любой файл рядом считается ромом (не только известные расширения: .7z, .ws, .ngp…).
+          // Any file here counts as a ROM, not only known extensions (.7z, .ws, .ngp…).
+          if (EXT_TO_DEFAULT_CONSOLE[ext] || (ext && !['.xml', '.txt', '.cfg', '.srm', '.state', '.dat'].includes(ext))) {
             const base = entry.name.slice(0, dot).toLowerCase();
             activeRomBases.add(base);
             activeRomNorms.add(buildComparisonKey(extractCleanTitle(entry.name)));
           }
         }
       }
+      // Папки многодисковых игр: медиа называется по имени папки.
+      // Multi-disc game folders: media is named after the folder.
+      for (const sub of subDirHandles) {
+        activeRomBases.add(String(sub.name).toLowerCase());
+        activeRomNorms.add(buildComparisonKey(extractCleanTitle(sub.name)));
+      }
+      // Медиа, на которое ссылается gamelist.xml, не сирота, даже если названо не по имени рома.
+      // Раньше такое медиа удалялось после каждой сортировки.
+      // Media referenced by gamelist.xml is not an orphan even if named differently; it used to be
+      // deleted after every sort.
+      const referencedMedia = new Set<string>();
+      try {
+        const gl = await (await (await dirHandle.getFileHandle('gamelist.xml')).getFile()).text();
+        for (const e of parseGamelistEntries(gl)) {
+          for (const k of ['image', 'thumbnail', 'marquee', 'video', 'fanart', 'wheel', 'boxart', 'screenshot']) {
+            const v = (e.fields as Record<string, string | undefined>)[k];
+            if (v) referencedMedia.add(unescapeXml(v).split(/[\\/]/).pop()!.toLowerCase());
+          }
+        }
+      } catch {}
 
       for (const mFolder of subMediaHandles) {
         const toDelete: string[] = [];
@@ -7134,6 +7168,7 @@ export function App() {
             }
           }
 
+          if (referencedMedia.has(mEntry.name.toLowerCase())) continue;
           const hasExactRom = activeRomBases.has(stripped.toLowerCase());
           const hasNormRom = activeRomNorms.has(buildComparisonKey(extractCleanTitle(stripped)));
 
@@ -7447,7 +7482,7 @@ export function App() {
   // ромы берутся из записей базы без полного скана (ensureSessionRoms). onlyIds сужает область.
   // Scraper from Tools. After a restart the library comes from the database and the session has no
   // ROMs: they are taken from database records without a full scan (ensureSessionRoms). onlyIds narrows the scope.
-  const handleScrapeLibraryMedia = async (onlyIds?: string[]) => {
+  const handleScrapeLibraryMedia = async (onlyIds?: string[], opts: ScrapeOptions | null = null) => {
     if (isAnyProcessRunning) return;
     const hasScanned = romsRef.current.some((r) => r.status === 'verified');
     const plan = planScrapeStart(hasScanned, true);
@@ -7455,7 +7490,7 @@ export function App() {
       // Ромы берём из базы, без полного скана. / ROMs come from the database, without a full scan.
       if (!(await ensureSessionRoms())) return;
       await nextFrame();
-      return latestOpsRef.current.handleScrapeLibraryMedia(onlyIds);
+      return latestOpsRef.current.handleScrapeLibraryMedia(onlyIds, opts);
     }
     const ids = onlyIds ? new Set(onlyIds) : null;
     const list = ids ? romsRef.current.filter((r) => ids.has(r.id)) : romsRef.current;
@@ -7465,15 +7500,21 @@ export function App() {
       addLog(msg);
       return;
     }
-    await handleScrapeR36SMedia(list, false, rootDirHandle || libraryDirHandle || null);
+    await handleScrapeR36SMedia(list, false, rootDirHandle || libraryDirHandle || null, opts);
   };
 
   const handleScrapeR36SMedia = async (
     targetList: ScannedRomFile[] = romsRef.current,
     exportBatAfter = false,
     // Папка, только что найденная в этом же вызове: в state её ещё нет. / A folder found in this same call: not in state yet.
-    rootOverride: any = null
+    rootOverride: any = null,
+    // Типы медиа и повтор прошлых промахов (окно перед запуском). Без него — как раньше.
+    // Media types and retrying past misses (the start dialog). Without it: the old behaviour.
+    opts: ScrapeOptions | null = null
   ) => {
+    const runOpts = opts || defaultScrapeOptions(scrapeShortVideos);
+    const wantVideo = runOpts.slots.includes('video');
+    const wantedSlots = new Set<MediaSlot>(runOpts.slots);
     const winners = targetList.filter((r) => r.status === 'verified');
     if (winners.length === 0 || isScraping) return;
 
@@ -7490,6 +7531,15 @@ export function App() {
     addLog(startScrapeMsg);
 
     try {
+      // Ромы, для которых медиа не нашлось раньше: по умолчанию не ищем их заново.
+      // ROMs with no media found earlier are not searched again by default.
+      let ssConfigured = false;
+      try {
+        ssConfigured = Boolean((await (await fetch('/api/screenscraper/config')).json()).configured);
+      } catch {}
+      const knownMisses = await fetchScrapeMisses();
+      let skippedKnownMissCount = 0;
+
       // Phase 1: Smart Placeholder Audit on disk before scraping!
       const statsCache = new Map<string, FolderMediaSignatureStats>();
       const romsNeedingScrape: ScannedRomFile[] = [];
@@ -7519,6 +7569,10 @@ export function App() {
       for (let i = 0; i < winners.length; i++) {
         if (stopRequestedRef.current) break;
         const w = winners[i];
+        if (skipKnownMiss(knownMisses[romManualEditKey(w)], runOpts.retryMisses, ssConfigured)) {
+          skippedKnownMissCount++;
+          continue;
+        }
         const consoleDirHandle = w.targetDirHandle || w.parentHandle;
 
         if (consoleDirHandle) {
@@ -7531,7 +7585,7 @@ export function App() {
             consoleDirHandle,
             romBaseNoExt,
             w.cleanTitle,
-            scrapeShortVideos,
+            wantVideo,
             statsCache
           );
           // Медиа, на которое ссылается gamelist.xml, тоже считается рабочим.
@@ -7553,9 +7607,9 @@ export function App() {
             if (audit.video.status !== 'valid' && vRef && (await relativeFileExists(consoleDirHandle, vRef))) {
               audit.video = { status: 'valid', reason: 'gamelist.xml', fileName: unescapeXml(vRef) };
             }
-            audit.isFullyValid =
-              audit.image.status === 'valid' && (!scrapeShortVideos || audit.video.status === 'valid');
           }
+          // «Всё на месте» — по выбранным типам медиа. / "All present" by the chosen media types.
+          audit.isFullyValid = !needsScrape(audit, runOpts.slots);
           auditsById.set(w.id, audit);
           if (audit.isFullyValid) {
             skippedRealMediaCount++;
@@ -7573,7 +7627,7 @@ export function App() {
           if (
             w.scrapedBoxArtUrl &&
             !isDeadOrLocalBlobUrl(w.scrapedBoxArtUrl) &&
-            (!scrapeShortVideos || w.scrapedVideoUrl)
+            (!wantVideo || w.scrapedVideoUrl)
           ) {
             skippedRealMediaCount++;
           } else {
@@ -7602,6 +7656,7 @@ export function App() {
           missing: missingMediaCount,
         })
       );
+      if (skippedKnownMissCount > 0) addLog(tf('scrape.skippedKnownMisses', { count: skippedKnownMissCount }));
 
       if (romsNeedingScrape.length === 0) {
         const allOkMsg = tf('app.scrape.allOk', { count: skippedRealMediaCount });
@@ -7615,6 +7670,9 @@ export function App() {
         return {
           id: w.id,
           cleanTitle: w.cleanTitle,
+          // Имя файла: после переименования по DAT совпадает с именем картинки Libretro.
+          // File name: after a DAT rename it equals the Libretro image name.
+          fileName: w.isMultiDisc ? w.multiDiscFolderName || w.m3uFileName || w.fileName : w.fileName,
           comparisonKey: w.comparisonKey,
           region: w.region,
           libretroSystem: meta.libretroSystem,
@@ -7635,10 +7693,6 @@ export function App() {
 
       // Фаза 2: промахи Libretro ищем в ScreenScraper (если пользователь его настроил).
       // Phase 2: Libretro misses go to ScreenScraper (if the user configured it).
-      let ssConfigured = false;
-      try {
-        ssConfigured = Boolean((await (await fetch('/api/screenscraper/config')).json()).configured);
-      } catch {}
       const report: ScrapeReport = emptyScrapeReport(ssConfigured);
       report.looked = romsNeedingScrape.length;
       const ssMisses = ssConfigured ? romsNeedingScrape.filter((w) => !isScrapeMatched(matchMap.get(w.id))) : [];
@@ -7684,6 +7738,9 @@ export function App() {
 
       const nextRoms = [...targetList];
       let downloadedMediaCount = 0;
+      // Учёт «медиа нет» для следующих запусков. / "No media" record for the next runs.
+      const missSet: Record<string, ScrapeMiss> = {};
+      const missClear: string[] = [];
 
       for (let i = 0; i < nextRoms.length; i++) {
         if (stopRequestedRef.current) break;
@@ -7716,7 +7773,8 @@ export function App() {
         const hasDisk = Boolean(activeRoot && consoleDirHandle);
         const saved: Partial<Record<MediaSlot, boolean>> | null = hasDisk ? {} : null;
         if (hasDisk && titleMatched && saved) {
-          const slots = slotsToDownload(auditsById.get(r.id) || null, scrapeShortVideos);
+          const slots = slotsToDownload(auditsById.get(r.id) || null, wantVideo);
+          for (const sl of Array.from(slots)) if (!wantedSlots.has(sl)) slots.delete(sl);
           const romBaseNoExt = (
             r.isMultiDisc && r.multiDiscFolderName
               ? r.multiDiscFolderName
@@ -7746,6 +7804,17 @@ export function App() {
         const savedSlots = saved ? (Object.keys(saved) as MediaSlot[]).filter((k) => saved[k]) : [];
         const gotSomething = saved ? savedSlots.length > 0 : titleMatched;
         if (!titleMatched) report.missed[missReasonOf(m)]++;
+        const missKey = romManualEditKey(r);
+        if (!titleMatched) {
+          missSet[missKey] = {
+            code: missReasonOf(m),
+            at: Date.now(),
+            title: r.cleanTitle,
+            source: ssConfigured ? 'libretro+screenscraper' : 'libretro',
+          };
+        } else if (gotSomething && knownMisses[missKey]) {
+          missClear.push(missKey);
+        }
         else if (m.titleSource === 'screenscraper') report.screenscraper++;
         else report.libretro++;
         if (gotSomething) downloadedMediaCount++;
@@ -7801,6 +7870,8 @@ export function App() {
           await writeGamelistXmlToHandle(cHandle, cRoms);
         }
       }
+
+      await saveScrapeMisses(missSet, missClear);
 
       romsRef.current = allRoms;
       setRoms(allRoms);
@@ -9241,7 +9312,7 @@ export function App() {
         onGroupMultiDiscFolders={() => void runWithSessionRoms('handleGroupMultiDiscFolders')}
         autoGroupMultiDisc={autoGroupMultiDisc}
         onChangeAutoGroupMultiDisc={setAutoGroupMultiDisc}
-        onScrapeMedia={(ids?: string[]) => void handleScrapeLibraryMedia(ids)}
+        onScrapeMedia={(ids?: string[], o?: ScrapeOptions) => void handleScrapeLibraryMedia(ids, o || loadScrapeOptions(defaultScrapeOptions(scrapeShortVideos)))}
         onOnlineRename={(ids?: string[]) => void runWithSessionRoms('handleOnlineRenameRoms', ids)}
         scrapeReport={scrapeReport}
         datSystems={datSystems}

@@ -24,6 +24,10 @@ func RegisterLibraryRoutes(mux *http.ServeMux, appDir string, touch func()) {
 	dbFilePath := filepath.Join(appDir, "aegisrom-v5-db.json")
 	registerDatRoutes(mux, appDir, touch)
 	registerScreenScraperRoutes(mux, appDir, touch)
+	registerScrapeMissRoutes(mux, appDir, touch)
+	// Списки обложек libretro-thumbnails кэшируются на диске, чтобы не упираться в лимит GitHub API.
+	// Thumbnail lists are cached on disk so the GitHub API rate limit is not hit on every run.
+	aegiscore.SetLibretroIndexCacheDir(filepath.Join(appDir, "cache", "libretro-thumbs"))
 
 	// 4. Persistent AegisDB Endpoints
 	mux.HandleFunc("/api/db/state", func(w http.ResponseWriter, r *http.Request) {
@@ -287,6 +291,7 @@ func RegisterLibraryRoutes(mux *http.ServeMux, appDir string, touch func()) {
 			Items []struct {
 				ID             string `json:"id"`
 				CleanTitle     string `json:"cleanTitle"`
+				FileName       string `json:"fileName"`
 				ComparisonKey  string `json:"comparisonKey"`
 				Region         string `json:"region"`
 				LibretroSystem string `json:"libretroSystem"`
@@ -306,6 +311,7 @@ func RegisterLibraryRoutes(mux *http.ServeMux, appDir string, touch func()) {
 			SnapUrl               string `json:"snapUrl"`
 			MarqueeUrl            string `json:"marqueeUrl"`
 			VideoUrl              string `json:"videoUrl"`
+			TitleShotUrl          string `json:"titleShotUrl,omitempty"`
 			// Matched: название найдено в индексе Libretro. Если false, MatchedCanonicalTitle —
 			// исходное название (как раньше), а Reason объясняет, почему не найдено.
 			Matched     bool    `json:"matched"`
@@ -322,13 +328,20 @@ func RegisterLibraryRoutes(mux *http.ServeMux, appDir string, touch func()) {
 				prefRegion = "USA"
 			}
 			// match объясняет результат; matchedName — прежняя логика для URL обложек (индекс кэширован).
-			match := aegiscore.MatchLibretroTitle(item.LibretroSystem, item.CleanTitle, item.ComparisonKey, prefRegion)
+			// Имя файла без расширения: после переименования по DAT оно совпадает с именем картинки.
+			// File name without extension: after a DAT rename it equals the image name.
+			stem := strings.TrimSpace(item.FileName)
+			if dot := strings.LastIndex(stem, "."); dot > 0 {
+				stem = stem[:dot]
+			}
+			match := aegiscore.MatchLibretroRom(item.LibretroSystem, stem, item.CleanTitle, item.ComparisonKey, prefRegion)
 			// Ссылки на обложки даём только для найденного названия. Раньше при промахе
 			// строилась догадка «<название> (USA).png»: такой файл почти всегда 404, а клиент
 			// затирал этой ссылкой рабочую обложку.
 			// Cover URLs only for a matched title. A miss used to produce a guessed
 			// "<title> (USA).png" that is almost always a 404 and replaced a working cover.
 			boxArtURL, snapURL, marqueeURL := aegiscore.LibretroThumbnailURLs(item.LibretroSystem, match.FileName)
+			titleShotURL := aegiscore.LibretroMediaURLs(item.LibretroSystem, match.FileName).Title
 			matchedName := match.FileName
 			canonicalTitle := item.CleanTitle
 			if matchedName != "" {
@@ -353,6 +366,7 @@ func RegisterLibraryRoutes(mux *http.ServeMux, appDir string, touch func()) {
 				SnapUrl:               snapURL,
 				MarqueeUrl:            marqueeURL,
 				VideoUrl:              videoURL,
+				TitleShotUrl:          titleShotURL,
 				Matched:               match.FileName != "",
 				TitleSource:           match.Source,
 				MatchScore:            match.Score,
