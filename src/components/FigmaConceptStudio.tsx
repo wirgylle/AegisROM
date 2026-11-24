@@ -78,6 +78,9 @@ import { applyManualEditToRow, exportManualEdits, importManualEdits } from '../u
 import { CollectionModal } from './CollectionModal';
 import { GameRelationsPanel } from './GameRelationsPanel';
 import { buildCollections, buildSeries, indexCollections, seriesSiblings } from '../utils/gameCollections';
+import { OperationScopeModal } from './OperationScopeModal';
+import { describeScope, type ScopeOperation } from '../utils/operationScope';
+import { markProcessed } from '../utils/operationScopeStore';
 import { inferPortMasterPcTestPlan } from '../utils/portMasterEngine';
 import {
   SUPPORTED_LANGUAGES,
@@ -246,6 +249,11 @@ interface FigmaConceptStudioProps {
   onExportLibrary?: () => void;
   romsCount?: number;
   scannedRows?: UnifiedGameRow[];
+  /** Ромы сеанса взяты из этой базы без скана (ids — её записи на тот момент). */
+  /** Session ROMs were taken from this database without a scan (ids: its records at that time). */
+  sessionSource?: { dbId: string; ids: Set<string> } | null;
+  /** Сообщает App, какая база открыта. / Tells App which database is open. */
+  onActiveDbChange?: (id: string, rows: UnifiedGameRow[], builtin: boolean) => void;
   isAnyProcessRunning?: boolean;
   progressPct?: number;
   currentActionText?: string;
@@ -270,12 +278,12 @@ interface FigmaConceptStudioProps {
   } | null>;
   lastScanMode?: 'append' | 'replace';
   scanRevision?: number;
-  onOrganizeCatalog?: () => void;
+  onOrganizeCatalog?: (ids?: string[]) => void;
   onGroupMultiDiscFolders?: () => void;
   autoGroupMultiDisc?: boolean;
   onChangeAutoGroupMultiDisc?: (val: boolean) => void;
-  onScrapeMedia?: () => void;
-  onOnlineRename?: () => void;
+  onScrapeMedia?: (ids?: string[]) => void;
+  onOnlineRename?: (ids?: string[]) => void;
   // Итог последнего скраппера (null — ещё не запускали). / Last scraper run (null: not run yet).
   scrapeReport?: ScrapeReport | null;
   // Системы Libretro из библиотеки (для автозагрузки DAT). / Libretro systems in the library (DAT auto-download).
@@ -631,6 +639,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   onImportLibrary,
   onExportLibrary,
   scannedRows = [],
+  sessionSource = null,
+  onActiveDbChange,
   isAnyProcessRunning = false,
   progressPct = 0,
   currentActionText = '',
@@ -1110,6 +1120,39 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     if (!scannedRows || scannedRows.length === 0) return;
 
     const nowTime = new Date().toLocaleTimeString(locale, { hour12: false });
+
+    // Ромы сеанса взяты из открытой базы без скана: результаты операций пишем в ту же базу.
+    // Записи, которых не было среди ромов (файл не найден на диске), остаются как есть.
+    // Session ROMs came from the open database without a scan: operation results go into that
+    // same database. Records that were not among the ROMs (file not found on disk) stay as they are.
+    if (sessionSource && savedDatabases.some((d) => d.id === sessionSource.dbId)) {
+      setSavedDatabases((prev) => {
+        const target = prev.find((d) => d.id === sessionSource.dbId);
+        if (!target) return prev;
+        const live = new Map(scannedRows.map((r) => [r.id, r]));
+        const kept: UnifiedGameRow[] = [];
+        for (const r of target.rows) {
+          const next = live.get(r.id);
+          if (next) {
+            kept.push(next);
+            live.delete(r.id);
+          } else if (!sessionSource.ids.has(r.id)) {
+            // Не был ромом сеанса (файл не найден): не трогаем. / Was not a session ROM (file not found): untouched.
+            kept.push(r);
+          }
+        }
+        // Новые id (операция поменяла id рома) добавляются в конец.
+        // New ids (an operation changed a ROM id) go at the end.
+        const nextRows = [...kept, ...live.values()];
+        const updated = prev.map((d) =>
+          d.id === target.id ? { ...d, rows: nextRows, updatedAt: nowTime } : d
+        );
+        persistDatabasesSafely(updated);
+        return updated;
+      });
+      return;
+    }
+
     setSavedDatabases((prev) => {
       const targetId =
         lastScanMode === 'append' && prev.some((d) => d.id === activeDbId && d.id !== 'db_master_full' && d.id !== 'db_portable_retro')
@@ -1366,6 +1409,27 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
 
   const activeDbEntry =
     savedDatabases.find((d) => d.id === activeDbId) || savedDatabases[0];
+  const isBuiltinDb = !activeDbEntry || activeDbEntry.id === 'db_master_full' || activeDbEntry.id === 'db_portable_retro';
+  // Операции работают и без скана: App берёт ромы из открытой базы (ensureSessionRoms).
+  // Operations work without a scan too: App takes ROMs from the open database (ensureSessionRoms).
+  const canRunOps = scannedRows.length > 0 || (!isBuiltinDb && (activeDbEntry?.rows.length || 0) > 0);
+  useEffect(() => {
+    if (activeDbEntry) onActiveDbChange?.(activeDbEntry.id, activeDbEntry.rows, isBuiltinDb);
+  }, [activeDbEntry, isBuiltinDb]);
+
+  // Окно выбора области перед операцией. / Scope window before an operation.
+  const [scopeRequest, setScopeRequest] = useState<{
+    op: ScopeOperation;
+    run: (ids: string[]) => void;
+  } | null>(null);
+  const scopeRows: UnifiedGameRow[] = !isBuiltinDb && activeDbEntry ? activeDbEntry.rows : scannedRows;
+  const openScope = (op: ScopeOperation, run: (ids?: string[]) => void) => {
+    if (scopeRows.length === 0) {
+      run();
+      return;
+    }
+    setScopeRequest({ op, run });
+  };
 
   const defaultSampleGames = useMemo(
     () => buildSampleDefaultGames(),
@@ -2376,7 +2440,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   onEdit={setEditorEditIds}
                   onWriteGamelist={onEditorWriteGamelist}
                   onScrapeMedia={onEditorScrapeMedia}
-                  onMoveRoms={scannedRows.length > 0 ? onMassMoveRoms : undefined}
+                  onMoveRoms={canRunOps ? onMassMoveRoms : undefined}
                   onAddLog={onAddLog}
                   busy={activeRunning}
                 />
@@ -2538,9 +2602,9 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <button data-tool="scraper"
                       type="button"
                       onClick={() => {
-                        // Без отсканированных ромов App сам сканирует папку библиотеки. / Without scanned ROMs App scans the library folder itself.
+                        // Без ромов в сеансе App берёт их из базы, без скана. / Without session ROMs App takes them from the database, no scan.
                         if (onScrapeMedia) {
-                          onScrapeMedia();
+                          openScope('scrape', onScrapeMedia);
                         } else {
                           startSimulatedProgressTask(t('tools.lib.scraperTitle'), []);
                         }
@@ -2582,8 +2646,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <button data-tool="g1r"
                       type="button"
                       onClick={() => {
-                        if (scannedRows.length > 0 && onOrganizeCatalog) {
-                          onOrganizeCatalog();
+                        if (canRunOps && onOrganizeCatalog) {
+                          openScope('g1r', onOrganizeCatalog);
                         } else {
                           startSimulatedProgressTask('1G1R', [
                             t('tools.sim.g1r1'),
@@ -2602,8 +2666,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <button data-tool="onlineRename"
                       type="button"
                       onClick={() => {
-                        if (scannedRows.length > 0 && onOnlineRename) {
-                          onOnlineRename();
+                        if (canRunOps && onOnlineRename) {
+                          openScope('rename', onOnlineRename);
                         } else {
                           startSimulatedProgressTask(t('tools.lib.onlineRename'), [
                             t('tools.sim.online1'),
@@ -2642,7 +2706,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <button data-tool="cleanup"
                       type="button"
                       onClick={() => {
-                        if (scannedRows.length > 0 && onScanPhantomFolders) {
+                        if (canRunOps && onScanPhantomFolders) {
                           onScanPhantomFolders();
                         } else {
                           startSimulatedProgressTask(t('tools.lib.cleanupPhantom'), [
@@ -2661,7 +2725,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <button data-tool="multiDisc"
                       type="button"
                       onClick={() => {
-                        if (scannedRows.length > 0 && onGroupMultiDiscFolders) {
+                        if (canRunOps && onGroupMultiDiscFolders) {
                           onGroupMultiDiscFolders();
                         } else {
                           startSimulatedProgressTask(t('tools.lib.multiDiscGroup'), [
@@ -2871,7 +2935,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       type="button"
                       onClick={() => {
                         if (onScrapeMedia) {
-                          onScrapeMedia();
+                          openScope('scrape', onScrapeMedia);
                         } else {
                           startSimulatedProgressTask(t('tools.sd.scraperBtn'), []);
                         }
@@ -2886,8 +2950,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <button data-tool="g1r"
                       type="button"
                       onClick={() => {
-                        if (scannedRows.length > 0 && onOrganizeCatalog) {
-                          onOrganizeCatalog();
+                        if (canRunOps && onOrganizeCatalog) {
+                          openScope('g1r', onOrganizeCatalog);
                         } else {
                           startSimulatedProgressTask(t('tools.sd.dedupBtn'), [
                             t('tools.sim.sdDedup1'),
@@ -2905,8 +2969,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <button data-tool="onlineRename"
                       type="button"
                       onClick={() => {
-                        if (scannedRows.length > 0 && onOnlineRename) {
-                          onOnlineRename();
+                        if (canRunOps && onOnlineRename) {
+                          openScope('rename', onOnlineRename);
                         } else {
                           startSimulatedProgressTask(t('tools.sd.onlineRenameBtn'), [
                             t('tools.sim.sdOnline1'),
@@ -2933,7 +2997,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <button data-tool="cleanup"
                       type="button"
                       onClick={() => {
-                        if (scannedRows.length > 0 && onScanPhantomFolders) {
+                        if (canRunOps && onScanPhantomFolders) {
                           onScanPhantomFolders();
                         } else {
                           startSimulatedProgressTask(t('tools.sd.cleanupBtn'), [
@@ -2977,7 +3041,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <button data-tool="sdRepair"
                       type="button"
                       onClick={() => {
-                        if (onRepairSdCard && (scannedRows.length > 0 || sdTargetFolderName)) {
+                        if (onRepairSdCard && (canRunOps || sdTargetFolderName)) {
                           onRepairSdCard(sdFirmwareId);
                         } else {
                           startSimulatedProgressTask(`${t('tools.sd.repairTitle')} (${sdFirmwareId})`, [
@@ -3282,7 +3346,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                             onClick={() => {
                               const ids = massMatchedGames.map((g) => g.id);
                               setConfirmMassDelete(false);
-                              if (scannedRows.length > 0 && onMassDeleteRoms) {
+                              if (canRunOps && onMassDeleteRoms) {
                                 onMassDeleteRoms(ids);
                               } else {
                                 const idSet = new Set(ids);
@@ -3329,7 +3393,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         disabled={activeRunning || massMatchedGames.length === 0}
                         onClick={() => {
                           const ids = massMatchedGames.map((g) => g.id);
-                          if (scannedRows.length > 0 && onMassMoveRoms) {
+                          if (canRunOps && onMassMoveRoms) {
                             onMassMoveRoms(ids);
                           } else {
                             startSimulatedProgressTask(
@@ -3351,7 +3415,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         type="button"
                         disabled={activeRunning}
                         onClick={() => {
-                          if (scannedRows.length > 0 && onMassSplitRoms) {
+                          if (canRunOps && onMassSplitRoms) {
                             onMassSplitRoms(massSplitMode);
                           } else {
                             startSimulatedProgressTask(
@@ -4025,6 +4089,24 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       {settingsOpen && (
         <SettingsModal onClose={() => setSettingsOpen(false)} onSaved={() => onSettingsSaved?.()} />
       )}
+
+      <OperationScopeModal
+        open={Boolean(scopeRequest)}
+        operation={scopeRequest?.op || 'other'}
+        rows={scopeRows}
+        busy={activeRunning}
+        onClose={() => setScopeRequest(null)}
+        onConfirm={(ids, scope) => {
+          const req = scopeRequest;
+          setScopeRequest(null);
+          if (!req) return;
+          markProcessed(req.op, ids);
+          onAddLog?.(
+            tf('scope.log', { op: t(`scope.op.${req.op}`), scope: describeScope(scope), count: ids.length })
+          );
+          req.run(ids);
+        }}
+      />
 
       {quickTestReq && (
         <QuickTestModal
