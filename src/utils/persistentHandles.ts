@@ -269,6 +269,10 @@ export async function saveMultiDbsToIndexedDB(dbs: any[]): Promise<void> {
             ...r,
             fileObj: undefined,
             companionFiles: undefined,
+            parentHandle: undefined,
+            discs: Array.isArray(r.discs)
+              ? r.discs.map((d: any) => ({ ...d, parentHandle: undefined }))
+              : r.discs,
             boxArtUrl: isDeadOrLocalBlobUrl(r.boxArtUrl) ? undefined : r.boxArtUrl,
             videoUrl: isDeadOrLocalBlobUrl(r.videoUrl) ? undefined : r.videoUrl,
           }))

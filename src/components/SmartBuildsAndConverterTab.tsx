@@ -74,6 +74,39 @@ import {
   syncSavedBuildsWithServer,
 } from '../utils/syncAndBuildsStorage';
 import { SyncDiffModal } from './SyncDiffModal';
+import { BuildExportOptionsModal } from './BuildExportOptionsModal';
+import {
+  DirCache,
+  copyFileToDir,
+  createLimiter,
+  defaultCopyConcurrency,
+  runPool,
+  throttle,
+  type CopyOutcome,
+} from '../utils/buildCopy';
+import {
+  MediaSourceIndex,
+  buildGamelistXml,
+  escapeXml,
+  loadBuildExportOptions,
+  planMediaTargets,
+  profileMediaLayout,
+  saveBuildExportOptions,
+  type BuildExportOptions,
+  type BuildGamelistGame,
+  type BuildMediaKind,
+} from '../utils/buildMedia';
+import { GAMELIST_INFO_TAGS } from '../utils/gamelistXml';
+import { isNativeFsEnabled, nativeCopyFile } from '../utils/nativeFs';
+
+function formatDuration(ms: number): string {
+  const sec = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
 import {
   useI18n,
   localizeGenre,
@@ -610,6 +643,8 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
 
   // Compute full conversion plan for every game in the queue
   const [copyBiosToBuild, setCopyBiosToBuild] = useState<boolean>(() => loadBuildCopyBiosPref());
+  // Окно параметров выгрузки (медиа, пропуск готовых) / Export settings dialog (media, skipping)
+  const [exportOptionsOpen, setExportOptionsOpen] = useState(false);
 
   const conversionPlanRows = useMemo(() => {
     return queuedGames.map((g) => {
@@ -928,10 +963,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
 
       if (libRow.fileObj) {
         try {
-          const fh = await currDir.getFileHandle(outputFileName, { create: true });
-          const w = await fh.createWritable();
-          await streamCopyFileToWritable(libRow.fileObj, w);
-          await w.close();
+          await copyFileToDir(libRow.fileObj, currDir, outputFileName, { diskCopy: nativeCopyFile });
           updatedFilesCount++;
           onAddLog?.(
             tf('builds.saved.syncUpdatedFile', {
@@ -990,7 +1022,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
   // ==========================================================================
   // EXECUTE REAL EXPORT + FOLDER HIERARCHY CREATION + GENUINE FORMAT CONVERSION + PORTMASTER
   // ==========================================================================
-  const handleRunBuildExportAndConversion = async () => {
+  const handleRunBuildExportAndConversion = async (opts: BuildExportOptions) => {
     if ((conversionPlanRows.length === 0 && queuedPortMasterGames.length === 0) || activeRunning)
       return;
 
@@ -1017,12 +1049,50 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
       return;
     }
 
+    const startedAt = Date.now();
     let realConvertedCount = 0;
     let realCopiedCount = 0;
+    let skippedExistingCount = 0;
     let skippedChdCount = 0;
     let errorCount = 0;
+    let doneCount = 0;
+    let noFileCount = 0;
+    let mediaFilesCount = 0;
+    let mediaMissingCount = 0;
     const totalItems = conversionPlanRows.length;
-    const exportedManifestItems: any[] = [];
+    const exportedManifestItems: any[] = new Array(totalItems);
+
+    // Папки, медиа и gamelist.xml / Folders, media and gamelist.xml
+    const dirCache = new DirCache(targetRootHandle);
+    const mediaIndex = new MediaSourceIndex();
+    const mediaLayout = profileMediaLayout(selectedProfile.mediaFolders);
+    const wantMedia = opts.includeMedia && mediaLayout !== 'none';
+    const wantGamelist = opts.writeGamelist && selectedProfile.gamelistFormat === 'emulationstation_xml';
+    const gamelistByFolder = new Map<string, BuildGamelistGame[]>();
+    const preparedFolders = new Set<string>();
+    const nativeMode = isNativeFsEnabled();
+    const concurrency = defaultCopyConcurrency(nativeMode);
+    const copyOpts = { skipSame: opts.skipExisting, diskCopy: nativeCopyFile };
+    // Конвертации по одной, копирование параллельно. / Conversions one at a time, copies in parallel.
+    const conversionLimit = createLimiter(1);
+
+    // Прогресс не чаще 3 раз в секунду: раньше окно перерисовывалось на каждом куске файла.
+    // Progress at most 3 times a second: the window used to re-render on every file chunk.
+    const overallPct = () => Math.max(3, Math.round((doneCount / Math.max(1, totalItems)) * 95));
+    const progressText = throttle((text: string) => {
+      onUpdateLiveProgress?.(true, overallPct(), text);
+    }, 300);
+    const progressLog = throttle(() => {
+      onAddLog?.(
+        tf('bx.log.progress', {
+          done: doneCount,
+          total: totalItems,
+          copied: realCopiedCount,
+          skipped: skippedExistingCount,
+          converted: realConvertedCount,
+        })
+      );
+    }, 10000);
 
     onUpdateLiveProgress?.(
       true,
@@ -1036,33 +1106,62 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
         folder: targetRootHandle.name,
       })
     );
+    onAddLog?.(
+      tf('bx.log.mode', {
+        n: concurrency,
+        how: t(nativeMode ? 'bx.log.modeNative' : 'bx.log.modeBrowser'),
+      })
+    );
 
-    try {
-      for (let idx = 0; idx < totalItems; idx++) {
-        const item = conversionPlanRows[idx];
-        const basePct = Math.round((idx / totalItems) * 95);
-        onUpdateLiveProgress?.(
-          true,
-          Math.max(5, basePct),
-          tf('builds.conv.exportProgressItem', {
-            i: idx + 1,
-            total: totalItems,
-            title: item.game.title,
-            action: `${item.sourceExt} ➔ ${item.targetExt}`,
-          })
+    // Медиа рома: найти рядом с исходником и положить в папки устройства.
+    // A ROM's media: find it next to the source and put it into the device's folders.
+    const copyGameMedia = async (
+      item: (typeof conversionPlanRows)[number],
+      destStem: string
+    ): Promise<Partial<Record<BuildMediaKind, string>>> => {
+      const rel: Partial<Record<BuildMediaKind, string>> = {};
+      const g = item.game;
+      const srcDir = g.parentHandle || g.discs?.[0]?.parentHandle;
+      if (!srcDir) {
+        mediaMissingCount++;
+        return rel;
+      }
+      const names = [g.m3uFileName, g.multiDiscFolderName, g.discs?.[0]?.oldFile, g.isMultiDisc ? '' : g.oldFile].filter(
+        (x): x is string => Boolean(x)
+      );
+      const primary = item.isMultiDisc ? names[0] || g.title : g.oldFile;
+      const found = await mediaIndex.find(srcDir, primary, [...names, g.title]);
+      const targets = planMediaTargets(mediaLayout, selectedProfile.mediaFolders, opts.mediaKinds, found, destStem);
+      if (targets.length === 0) {
+        mediaMissingCount++;
+        return rel;
+      }
+      for (const tg of targets) {
+        try {
+          const dir = await dirCache.get(`${item.folderPath}/${tg.folder}`);
+          const file = await tg.source.getFile();
+          const outcome = await copyFileToDir(file, dir, tg.name, copyOpts);
+          if (outcome === 'copied') mediaFilesCount++;
+          rel[tg.kind] = `${tg.folder}/${tg.name}`;
+        } catch {}
+      }
+      return rel;
+    };
+
+    const processItem = async (item: (typeof conversionPlanRows)[number], idx: number) => {
+      try {
+        const currDir = await dirCache.get(item.folderPath);
+        if (!preparedFolders.has(item.folderPath)) {
+          preparedFolders.add(item.folderPath);
+          for (const mDir of selectedProfile.mediaFolders) {
+            try {
+              await dirCache.get(`${item.folderPath}/${mDir}`);
+            } catch {}
+          }
+        }
+        progressText(
+          tf('bx.prog', { done: doneCount, total: totalItems, title: item.game.title })
         );
-
-        const segments = item.folderPath.split('/').filter(Boolean);
-        let currDir = targetRootHandle;
-        for (const seg of segments) {
-          currDir = await currDir.getDirectoryHandle(seg, { create: true });
-        }
-        for (const mDir of selectedProfile.mediaFolders) {
-          try {
-            await currDir.getDirectoryHandle(mDir, { create: true });
-          } catch {}
-        }
-
         const exportSinglePayloadToDir = async (
           destDirHandle: any,
           destFolderRelPath: string,
@@ -1079,6 +1178,17 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
             await w.close();
           };
 
+          // Копия без конвертации. Строку в журнал пишем только для особых случаев (без chdman и т.п.):
+          // 12 000 строк «скопировано» перерисовывали окно на каждой игре.
+          // Copy without conversion. Only special cases (no chdman etc.) go to the log: 12 000
+          // "copied" lines re-rendered the window for every game.
+          const noteCopy = (notePrefix: string, msg: string) => {
+            if (!notePrefix.startsWith('✔')) onAddLog?.(msg);
+          };
+          const countCopy = (outcomes: CopyOutcome[]) => {
+            if (outcomes.some((o) => o === 'copied')) realCopiedCount++;
+            else skippedExistingCount++;
+          };
           const copyIntactUnit = async (notePrefix: string): Promise<{ rel: string; entry: string }> => {
             const srcLow = srcFile.name.toLowerCase();
             const isCueLikeDescriptor =
@@ -1088,79 +1198,72 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
             if (hasCompanions) {
               if (srcLow.endsWith('.cue') && !companionTracks.some((f) => /\.(img|ccd|sub)$/i.test(f.name))) {
                 const plan = buildCleanCueAndTrackPlan(stemWithRegion, companionTracks, cueText);
+                const outcomes: CopyOutcome[] = [];
                 for (let ti = 0; ti < plan.tracks.length; ti++) {
                   const tr = plan.tracks[ti];
-                  const fh = await destDirHandle.getFileHandle(tr.outputName, { create: true });
-                  const w = await fh.createWritable();
-                  await streamCopyFileToWritable(tr.file, w, (p) => {
-                    onUpdateLiveProgress?.(
-                      true,
-                      Math.max(5, basePct + Math.round((p / 100 / totalItems) * 95)),
-                      tf('builds.conv.copyingTrack', {
-                        i: idx + 1,
-                        total: totalItems,
-                        ti: ti + 1,
-                        tn: plan.tracks.length,
-                        file: tr.outputName,
-                        pct: p,
-                      })
-                    );
-                  });
-                  await w.close();
+                  outcomes.push(
+                    await copyFileToDir(tr.file, destDirHandle, tr.outputName, {
+                      ...copyOpts,
+                      onProgress: (p) =>
+                        progressText(
+                          tf('builds.conv.copyingTrack', {
+                            i: idx + 1,
+                            total: totalItems,
+                            ti: ti + 1,
+                            tn: plan.tracks.length,
+                            file: tr.outputName,
+                            pct: p,
+                          })
+                        ),
+                    })
+                  );
                 }
                 const cleanCueName = `${stemWithRegion}.cue`;
                 await writeBytesToDest(cleanCueName, plan.cueContent);
-                realCopiedCount++;
-                onAddLog?.(`${notePrefix}: ${cleanCueName} (+${plan.tracks.length})`);
+                countCopy(outcomes);
+                noteCopy(notePrefix, `${notePrefix}: ${cleanCueName} (+${plan.tracks.length})`);
                 return { rel: `${destFolderRelPath}/${cleanCueName}`, entry: cleanCueName };
               } else {
-                const mainFh = await destDirHandle.getFileHandle(srcFile.name, { create: true });
-                const mainW = await mainFh.createWritable();
-                await streamCopyFileToWritable(srcFile, mainW);
-                await mainW.close();
+                const outcomes: CopyOutcome[] = [await copyFileToDir(srcFile, destDirHandle, srcFile.name, copyOpts)];
                 for (let ti = 0; ti < companionTracks.length; ti++) {
                   const cf = companionTracks[ti];
-                  const fh = await destDirHandle.getFileHandle(cf.name, { create: true });
-                  const w = await fh.createWritable();
-                  await streamCopyFileToWritable(cf, w, (p) => {
-                    onUpdateLiveProgress?.(
-                      true,
-                      Math.max(5, basePct + Math.round((p / 100 / totalItems) * 95)),
-                      tf('builds.conv.copyingBundle', {
-                        i: idx + 1,
-                        total: totalItems,
-                        file: cf.name,
-                        pct: p,
-                      })
-                    );
-                  });
-                  await w.close();
+                  outcomes.push(
+                    await copyFileToDir(cf, destDirHandle, cf.name, {
+                      ...copyOpts,
+                      onProgress: (p) =>
+                        progressText(
+                          tf('builds.conv.copyingBundle', {
+                            i: idx + 1,
+                            total: totalItems,
+                            file: cf.name,
+                            pct: p,
+                          })
+                        ),
+                    })
+                  );
                 }
-                realCopiedCount++;
-                onAddLog?.(`${notePrefix}: ${srcFile.name} (+${companionTracks.length})`);
+                countCopy(outcomes);
+                noteCopy(notePrefix, `${notePrefix}: ${srcFile.name} (+${companionTracks.length})`);
                 return { rel: `${destFolderRelPath}/${srcFile.name}`, entry: srcFile.name };
               }
             } else {
               const origExtDot = srcFile.name.lastIndexOf('.');
               const origExt = origExtDot !== -1 ? srcFile.name.slice(origExtDot).toLowerCase() : unitSourceExt;
               const safeOutName = `${stemWithRegion}${origExt}`;
-              const fh = await destDirHandle.getFileHandle(safeOutName, { create: true });
-              const w = await fh.createWritable();
-              await streamCopyFileToWritable(srcFile, w, (p) => {
-                onUpdateLiveProgress?.(
-                  true,
-                  Math.max(5, basePct + Math.round((p / 100 / totalItems) * 95)),
-                  tf('builds.conv.copyingOrig', {
-                    i: idx + 1,
-                    total: totalItems,
-                    file: safeOutName,
-                    pct: p,
-                  })
-                );
+              const outcome = await copyFileToDir(srcFile, destDirHandle, safeOutName, {
+                ...copyOpts,
+                onProgress: (p) =>
+                  progressText(
+                    tf('builds.conv.copyingOrig', {
+                      i: idx + 1,
+                      total: totalItems,
+                      file: safeOutName,
+                      pct: p,
+                    })
+                  ),
               });
-              await w.close();
-              realCopiedCount++;
-              onAddLog?.(`${notePrefix}: ${safeOutName}`);
+              countCopy([outcome]);
+              noteCopy(notePrefix, `${notePrefix}: ${safeOutName}`);
               return { rel: `${destFolderRelPath}/${safeOutName}`, entry: safeOutName };
             }
           };
@@ -1194,9 +1297,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
               outW,
               cueText,
               (p) => {
-                onUpdateLiveProgress?.(
-                  true,
-                  Math.max(5, basePct + Math.round((p / 100 / totalItems) * 95)),
+                progressText(
                   tf('builds.conv.sectorToIsoProg', {
                     i: idx + 1,
                     total: totalItems,
@@ -1240,9 +1341,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
               outW,
               binName,
               (p) => {
-                onUpdateLiveProgress?.(
-                  true,
-                  Math.max(5, basePct + Math.round((p / 100 / totalItems) * 95)),
+                progressText(
                   tf('builds.conv.isoToBinProg', {
                     i: idx + 1,
                     total: totalItems,
@@ -1287,9 +1386,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
               binName,
               cueText,
               (p) => {
-                onUpdateLiveProgress?.(
-                  true,
-                  Math.max(5, basePct + Math.round((p / 100 / totalItems) * 95)),
+                progressText(
                   tf('builds.conv.normToBinProg', {
                     i: idx + 1,
                     total: totalItems,
@@ -1336,9 +1433,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
             for (const cf of companionTracks) {
               form.append('companionFiles', cf, cf.name);
             }
-            onUpdateLiveProgress?.(
-              true,
-              Math.max(5, basePct + 2),
+            progressText(
               tf('builds.conv.chdmanRunning', {
                 i: idx + 1,
                 total: totalItems,
@@ -1431,11 +1526,13 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
             ? `${item.folderPath}/${item.baseWithRegion}/${item.m3uFileName}`
             : `${item.folderPath}/${item.outputFileName}`;
         let actualResultStatus = 'manifest_only';
+        let romWritten = false;
+        const isConversion = item.rule.conversionKind !== 'copy';
 
         if (item.isMultiDisc && item.game.discs && item.game.discs.length > 1) {
           // Multi-disc game: dedicated subfolder + convert/copy every disc + write .m3u playlist!
-          const gameSubDir = await currDir.getDirectoryHandle(item.baseWithRegion, { create: true });
           const subRelPath = `${item.folderPath}/${item.baseWithRegion}`;
+          const gameSubDir = await dirCache.get(subRelPath);
           const m3uEntries: string[] = [];
 
           for (let dIdx = 0; dIdx < item.game.discs.length; dIdx++) {
@@ -1443,17 +1540,20 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
             const discNum = disc.discNumber || dIdx + 1;
             const discStem = `${item.baseWithRegion} (Disc ${discNum})`;
 
-            if (disc.fileObj) {
+            const discFile = disc.fileObj;
+            if (discFile) {
               try {
-                const res = await exportSinglePayloadToDir(
-                  gameSubDir,
-                  subRelPath,
-                  discStem,
-                  disc.fileObj,
-                  disc.companionFiles || [],
-                  disc.cueText,
-                  disc.sourceExt || item.sourceExt
-                );
+                const runDisc = () =>
+                  exportSinglePayloadToDir(
+                    gameSubDir,
+                    subRelPath,
+                    discStem,
+                    discFile,
+                    disc.companionFiles || [],
+                    disc.cueText,
+                    disc.sourceExt || item.sourceExt
+                  );
+                const res = isConversion ? await conversionLimit(runDisc) : await runDisc();
                 m3uEntries.push(res.entryFileName);
               } catch (discErr: any) {
                 errorCount++;
@@ -1489,6 +1589,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
             await mw.close();
             writtenRelativePath = `${subRelPath}/${m3uName}`;
             actualResultStatus = `multi_disc_${m3uEntries.length}_with_m3u`;
+            romWritten = item.game.discs.some((d) => Boolean(d.fileObj));
             onAddLog?.(
               tf('builds.conv.multiDiscDone', {
                 title: item.game.title,
@@ -1499,17 +1600,21 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
           }
         } else if (item.game.fileObj) {
           try {
-            const res = await exportSinglePayloadToDir(
-              currDir,
-              item.folderPath,
-              item.baseWithRegion,
-              item.game.fileObj,
-              item.game.companionFiles || [],
-              item.game.cueText,
-              item.sourceExt
-            );
+            const fileObj = item.game.fileObj;
+            const runRom = () =>
+              exportSinglePayloadToDir(
+                currDir,
+                item.folderPath,
+                item.baseWithRegion,
+                fileObj,
+                item.game.companionFiles || [],
+                item.game.cueText,
+                item.sourceExt
+              );
+            const res = isConversion ? await conversionLimit(runRom) : await runRom();
             writtenRelativePath = res.writtenRelPath;
             actualResultStatus = res.resultStatus;
+            romWritten = true;
           } catch (itemErr: any) {
             errorCount++;
             actualResultStatus = `error: ${String(itemErr?.message || itemErr)}`;
@@ -1522,6 +1627,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
           }
         } else {
           // Built-in catalog reference item without local ROM file loaded from disk
+          if (!item.game.id.startsWith('b_')) noFileCount++;
           if (item.cueFileName) {
             const cueFh = await currDir.getFileHandle(item.cueFileName, { create: true });
             const cw = await cueFh.createWritable();
@@ -1532,7 +1638,37 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
           }
         }
 
-        exportedManifestItems.push({
+        // Медиа и запись для gamelist.xml / Media and the gamelist.xml entry
+        if (romWritten && (wantMedia || wantGamelist)) {
+          const media = wantMedia ? await copyGameMedia(item, item.baseWithRegion) : {};
+          if (wantGamelist) {
+            const g = item.game;
+            const srcDir = g.parentHandle || g.discs?.[0]?.parentHandle;
+            const srcEntry = await mediaIndex.gamelistEntry(
+              srcDir,
+              item.isMultiDisc ? g.m3uFileName || g.discs?.[0]?.oldFile || '' : g.oldFile
+            );
+            const info: Record<string, string> = {};
+            for (const tag of GAMELIST_INFO_TAGS) {
+              if (srcEntry?.fields[tag]) info[tag] = srcEntry.fields[tag];
+            }
+            // Ручные правки редактора важнее. / Manual editor edits win.
+            if (g.desc) info.desc = escapeXml(g.desc);
+            if (g.developer) info.developer = escapeXml(g.developer);
+            if (g.publisher) info.publisher = escapeXml(g.publisher);
+            if (g.players) info.players = escapeXml(g.players);
+            if (g.rating) info.rating = escapeXml(g.rating);
+            const prefix = `${item.folderPath}/`;
+            const relInConsole = writtenRelativePath.startsWith(prefix)
+              ? writtenRelativePath.slice(prefix.length)
+              : writtenRelativePath;
+            const list = gamelistByFolder.get(item.folderPath) || [];
+            list.push({ path: relInConsole, name: g.title, media, info });
+            gamelistByFolder.set(item.folderPath, list);
+          }
+        }
+
+        exportedManifestItems[idx] = {
           gameId: item.game.id,
           title: item.game.title,
           console: item.game.consoleShort,
@@ -1548,7 +1684,49 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
           m3uFileName: item.m3uFileName,
           conversionEngine: item.rule.toolEngine,
           resultStatus: actualResultStatus,
-        });
+        };
+      } catch (err: any) {
+        errorCount++;
+        onAddLog?.(
+          tf('builds.conv.itemErrLog', {
+            title: item.game.title,
+            err: String(err?.message || err),
+          })
+        );
+      } finally {
+        doneCount++;
+        progressText(tf('bx.prog', { done: doneCount, total: totalItems, title: item.game.title }));
+        progressLog();
+      }
+    };
+
+    try {
+      await runPool(conversionPlanRows, concurrency, processItem);
+      progressText.flush();
+      progressLog.flush();
+
+      // gamelist.xml по папкам консолей / gamelist.xml per console folder
+      for (const [folder, games] of gamelistByFolder) {
+        try {
+          const dir = await dirCache.get(folder);
+          let existing: string | null = null;
+          try {
+            existing = await (await (await dir.getFileHandle('gamelist.xml')).getFile()).text();
+          } catch {}
+          const fh = await dir.getFileHandle('gamelist.xml', { create: true });
+          const w = await fh.createWritable();
+          await w.write(buildGamelistXml(games, existing));
+          await w.close();
+          onAddLog?.(tf('bx.log.gamelist', { path: `${folder}/gamelist.xml`, count: games.length }));
+        } catch (err) {
+          onAddLog?.(tf('bx.log.gamelistErr', { path: folder, err: String(err) }));
+        }
+      }
+      if (wantMedia) {
+        onAddLog?.(tf('bx.log.media', { files: mediaFilesCount, missing: mediaMissingCount }));
+      }
+      if (noFileCount > 0) {
+        onAddLog?.(tf('bx.log.noFileSummary', { count: noFileCount }));
       }
 
       // ----------------------------------------------------------------------
@@ -1706,7 +1884,8 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
       }
 
       // Persist build snapshot so user can always return & sync this build with Library!
-      const savedItems: SavedBuildItem[] = exportedManifestItems.map((m) => ({
+      const manifestItems = exportedManifestItems.filter(Boolean);
+      const savedItems: SavedBuildItem[] = manifestItems.map((m) => ({
         gameId: m.gameId,
         title: m.title,
         consoleShort: m.console,
@@ -1755,8 +1934,9 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
           portMasterDeployedCount,
           biosCopiedCount,
           skippedChdCount,
+          skippedExistingCount,
           errorCount,
-          items: exportedManifestItems,
+          items: manifestItems,
         },
         null,
         2
@@ -1784,6 +1964,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
         t('builds.conv.exportSummarySaved');
       onUpdateLiveProgress?.(false, 100, summaryMsg);
       onAddLog?.(summaryMsg);
+      onAddLog?.(tf('bx.log.time', { time: formatDuration(Date.now() - startedAt) }));
     } catch (err) {
       const errMsg = tf('builds.conv.exportErrLog', { err: String(err) });
       onUpdateLiveProgress?.(false, 0, errMsg);
@@ -2771,7 +2952,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
 
                 <button
                   type="button"
-                  onClick={handleRunBuildExportAndConversion}
+                  onClick={() => setExportOptionsOpen(true)}
                   disabled={
                     (conversionPlanRows.length === 0 && queuedPortMasterGames.length === 0) ||
                     activeRunning
@@ -3148,6 +3329,27 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
         onExecuteBuildSync={handleExecuteBuildSync}
         onAddLog={onAddLog}
       />
+
+      {exportOptionsOpen && (
+        <BuildExportOptionsModal
+          initial={loadBuildExportOptions()}
+          profileName={selectedProfile.shortName}
+          mediaLayout={profileMediaLayout(selectedProfile.mediaFolders)}
+          supportsGamelist={selectedProfile.gamelistFormat === 'emulationstation_xml'}
+          gameCount={conversionPlanRows.length}
+          totalSizeLabel={
+            totalSourceMB >= 1024 ? `${(totalSourceMB / 1024).toFixed(1)} GB` : `${totalSourceMB} MB`
+          }
+          onClose={() => setExportOptionsOpen(false)}
+          onConfirm={(o) => {
+            const prev = loadBuildExportOptions();
+            const mediaUsable = profileMediaLayout(selectedProfile.mediaFolders) !== 'none';
+            saveBuildExportOptions(mediaUsable ? o : { ...o, includeMedia: prev.includeMedia });
+            setExportOptionsOpen(false);
+            void handleRunBuildExportAndConversion(o);
+          }}
+        />
+      )}
     </div>
   );
 };

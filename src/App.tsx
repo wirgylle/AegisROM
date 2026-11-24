@@ -8809,6 +8809,7 @@ export function App() {
           fileObj: d.fileObj,
           companionFiles: d.companionFiles,
           cueText: d.cueText,
+          parentHandle: d.parentHandle,
         }))
       : undefined;
 
@@ -8846,6 +8847,7 @@ export function App() {
       videoUrl: r.scrapedVideoUrl,
       fileObj: r.fileObj,
       companionFiles: r.companionFiles,
+      parentHandle: r.parentHandle,
       cueText: r.cueText,
       totalBytes: r.fileSize,
       trackCount: r.companionFiles?.length,

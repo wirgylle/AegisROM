@@ -106,3 +106,45 @@ func TestVFSFileOperations(t *testing.T) {
 		t.Fatalf("remove empty dir: %d", rec.Code)
 	}
 }
+
+// Копирование для сборки: создаёт папки и пропускает файл того же размера.
+// Build copy: creates folders and skips a same-size file.
+func TestVFSCopyCreatesFoldersAndSkipsSameSize(t *testing.T) {
+	mux, root := newVFSTestMux(t)
+	vfsDo(mux, http.MethodPost, "/api/native/vfs/pick", `{}`)
+
+	src := filepath.Join(root, "nes", "1942 (USA).nes")
+	if err := os.MkdirAll(filepath.Dir(src), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, []byte("NESDATA"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(root, "Build", "EASYROMS", "nes", "1942 (USA).nes")
+	copyURL := "/api/native/vfs/copy?skipSame=1&from=" + q(src) + "&to=" + q(dst)
+
+	rec := vfsDo(mux, http.MethodPost, copyURL, "")
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "skipped") {
+		t.Fatalf("first copy: %d %s", rec.Code, rec.Body)
+	}
+	if got, _ := os.ReadFile(dst); string(got) != "NESDATA" {
+		t.Fatalf("copied content: %q", got)
+	}
+
+	rec = vfsDo(mux, http.MethodPost, copyURL, "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"skipped":true`) {
+		t.Fatalf("second copy should be skipped: %d %s", rec.Code, rec.Body)
+	}
+
+	// Другой размер: копируем заново. / Different size: copied again.
+	if err := os.WriteFile(src, []byte("NESDATA-V2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec = vfsDo(mux, http.MethodPost, copyURL, "")
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "skipped") {
+		t.Fatalf("changed file: %d %s", rec.Code, rec.Body)
+	}
+	if got, _ := os.ReadFile(dst); string(got) != "NESDATA-V2" {
+		t.Fatalf("recopied content: %q", got)
+	}
+}

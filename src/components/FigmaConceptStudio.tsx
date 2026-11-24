@@ -128,6 +128,9 @@ export interface MultiDiscEntry {
   fileObj?: File;
   companionFiles?: File[];
   cueText?: string;
+  // Папка диска (handle) для поиска медиа при сборке; не сохраняется.
+  // The disc's folder (handle) for finding media in builds; not stored.
+  parentHandle?: any;
 }
 
 function sanitizeDatabasesForStorage<T extends { rows: UnifiedGameRow[] }>(dbs: T[]): T[] {
@@ -138,11 +141,13 @@ function sanitizeDatabasesForStorage<T extends { rows: UnifiedGameRow[] }>(dbs: 
           ...r,
           fileObj: undefined,
           companionFiles: undefined,
+          parentHandle: undefined,
           discs: Array.isArray(r.discs)
             ? r.discs.map((d) => ({
                 ...d,
                 fileObj: undefined,
                 companionFiles: undefined,
+                parentHandle: undefined,
               }))
             : undefined,
           boxArtUrl: isDeadOrLocalBlobUrl(r.boxArtUrl) ? undefined : r.boxArtUrl,
@@ -196,6 +201,9 @@ export interface UnifiedGameRow {
   videoUrl?: string;
   fileObj?: File;
   companionFiles?: File[];
+  // Папка рома (handle): там сборка ищет gamelist.xml и медиа; не сохраняется.
+  // The ROM's folder (handle): builds look for gamelist.xml and media there; not stored.
+  parentHandle?: any;
   cueText?: string;
   totalBytes?: number;
   trackCount?: number;
@@ -1299,11 +1307,13 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         ...g,
         fileObj: undefined,
         companionFiles: undefined,
+        parentHandle: undefined,
         discs: Array.isArray(g.discs)
           ? g.discs.map((d) => ({
               ...d,
               fileObj: undefined,
               companionFiles: undefined,
+              parentHandle: undefined,
             }))
           : undefined,
         boxArtUrl: isDeadOrLocalBlobUrl(g.boxArtUrl) ? undefined : g.boxArtUrl,

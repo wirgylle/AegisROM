@@ -471,12 +471,41 @@ func RegisterVFSRoutes(mux *http.ServeMux, dataDir string, touch func(), opts VF
 		if !ok {
 			return
 		}
+		// skipSame=1: файл того же размера уже на месте, повторная сборка его не копирует.
+		// skipSame=1: a same-size file is already there, so a repeated build skips it.
+		if r.URL.Query().Get("skipSame") == "1" {
+			src, serr := os.Stat(from)
+			dst, derr := os.Stat(to)
+			if serr == nil && derr == nil && !src.IsDir() && !dst.IsDir() && src.Size() == dst.Size() {
+				writeJSONOK(w, map[string]any{"skipped": true})
+				return
+			}
+		}
+		if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+			vfsFSError(w, err)
+			return
+		}
 		if err := copyFile(from, to); err != nil {
 			vfsFSError(w, err)
 			return
 		}
 		writeJSONOK(w, nil)
 	})
+}
+
+// copyBufSize: на Windows io.Copy между файлами идёт буфером 32 КБ, крупный буфер быстрее.
+// copyBufSize: on Windows io.Copy between files uses a 32 KB buffer; a large one is faster.
+const copyBufSize = 1 << 20
+
+func copyContents(dst *os.File, src *os.File) error {
+	if runtime.GOOS != "windows" {
+		// Linux/macOS: ReadFrom использует copy_file_range/sendfile. / uses copy_file_range/sendfile.
+		_, err := io.Copy(dst, src)
+		return err
+	}
+	buf := make([]byte, copyBufSize)
+	_, err := io.CopyBuffer(struct{ io.Writer }{dst}, struct{ io.Reader }{src}, buf)
+	return err
 }
 
 // movePath renames, falling back to copy + delete across volumes.
@@ -515,7 +544,7 @@ func copyFile(from, to string) error {
 		return err
 	}
 	tmpName := tmp.Name()
-	if _, err := io.Copy(tmp, in); err != nil {
+	if err := copyContents(tmp, in); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmpName)
 		return err
