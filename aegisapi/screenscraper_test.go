@@ -132,3 +132,33 @@ func TestScreenScraperMediaProxyOnlyItsHosts(t *testing.T) {
 		}
 	}
 }
+
+// Ключ вшит в сборку — хватает логина и пароля, как на R36S.
+// A built-in key: login and password are enough, as on the R36S.
+func TestScreenScraperLoginOnlyWithBuiltinKey(t *testing.T) {
+	calls := fakeScreenScraper(t)
+	mux := http.NewServeMux()
+	registerScreenScraperRoutes(mux, t.TempDir(), func() {})
+
+	// Без вшитого ключа одних логина и пароля мало. / Without a built-in key, login alone is not enough.
+	if out := ssPost(t, mux, "/api/screenscraper/config", `{"user":"val","password":"secret"}`); out["ok"] != false {
+		t.Fatalf("saved without a dev key: %v", out)
+	}
+
+	oldID, oldPw := ssBuiltinDevID, ssBuiltinDevPassword
+	ssBuiltinDevID, ssBuiltinDevPassword = "bid", "bpw"
+	t.Cleanup(func() { ssBuiltinDevID, ssBuiltinDevPassword = oldID, oldPw })
+
+	if out := ssPost(t, mux, "/api/screenscraper/config", `{"user":"val","password":"secret"}`); out["ok"] != true {
+		t.Fatalf("login only: %v", out)
+	}
+	last := (*calls)[len(*calls)-1]
+	if last.Get("devid") != "bid" || last.Get("devpassword") != "bpw" || last.Get("ssid") != "val" {
+		t.Errorf("query: %v", last)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/screenscraper/config", nil))
+	if !strings.Contains(rec.Body.String(), `"builtinDevKey":true`) || strings.Contains(rec.Body.String(), "bpw") {
+		t.Errorf("GET: %s", rec.Body.String())
+	}
+}

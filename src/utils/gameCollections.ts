@@ -246,3 +246,48 @@ export function buildSeries<T extends CollectionInput>(games: readonly T[]): Gam
   }
   return order;
 }
+
+// ---------------------------------------------------------------------------
+// Фильтр Библиотеки по группам: что показывать — игры из коллекций, из серий, одиночные.
+// Можно отметить несколько пунктов. Принадлежность считается по всей Библиотеке, поэтому
+// фильтр работает и когда слева выбрана одна консоль.
+// Library group filter: show games from collections, from series, single games, any mix.
+// Membership is computed over the whole Library, so the filter also works inside one console.
+
+export interface LibraryGroupFilter {
+  collections: boolean;
+  series: boolean;
+  singles: boolean;
+}
+
+export const GROUP_FILTER_ALL: LibraryGroupFilter = { collections: true, series: true, singles: true };
+
+export interface GroupMembership {
+  /** id ромов, у игры которых 2+ версии (консоли, регионы, хаки). / ROM ids whose game has 2+ versions. */
+  inCollection: Set<string>;
+  /** id ромов из серий с 2+ играми. / ROM ids from series with 2+ games. */
+  inSeries: Set<string>;
+}
+
+export function groupMembership<T extends CollectionInput>(games: readonly T[]): GroupMembership {
+  const inCollection = new Set<string>();
+  const inSeries = new Set<string>();
+  for (const s of buildSeries(games)) {
+    if (s.games.length > 1) for (const m of s.members) inSeries.add(m.id);
+    for (const c of s.games) {
+      if (c.members.length > 1) for (const m of c.members) inCollection.add(m.id);
+    }
+  }
+  return { inCollection, inSeries };
+}
+
+export function isGroupFilterAll(f: LibraryGroupFilter): boolean {
+  return f.collections && f.series && f.singles;
+}
+
+export function passesGroupFilter(id: string, m: GroupMembership, f: LibraryGroupFilter): boolean {
+  if (isGroupFilterAll(f)) return true;
+  const col = m.inCollection.has(id);
+  const ser = m.inSeries.has(id);
+  return (f.collections && col) || (f.series && ser) || (f.singles && !col && !ser);
+}

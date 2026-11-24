@@ -6,6 +6,7 @@
 
 import { MULTI_DBS_DISK_KEY, writeDiskValue } from './nativeStorage';
 import { reviveNativeHandle } from './nativeFs';
+import { MediaKindIndex, stripBlobMedia, stripMediaSuffix } from './mediaKinds';
 
 const IDB_NAME = 'AegisROM_FS_Handles_v5';
 const IDB_STORE = 'directory_handles';
@@ -172,6 +173,8 @@ function normalizeStemKey(name: string): string {
 export interface HydratedMediaIndex {
   imagesByStem: Map<string, File>;
   videosByStem: Map<string, File>;
+  /** Картинки по видам (боксарт, скриншот, баннер…). / Images by kind (box art, screenshot, banner…). */
+  kinds: MediaKindIndex<File>;
 }
 
 /**
@@ -184,8 +187,9 @@ export async function collectLocalMediaFromHandle(
 ): Promise<HydratedMediaIndex> {
   const imagesByStem = new Map<string, File>();
   const videosByStem = new Map<string, File>();
+  const kinds = new MediaKindIndex<File>();
 
-  const registerFile = (file: File) => {
+  const registerFile = (file: File, dirName: string) => {
     const low = file.name.toLowerCase();
     const isImg = /\.(png|jpe?g|webp|bmp)$/i.test(low);
     const isVid = /\.(mp4|webm|mkv)$/i.test(low);
@@ -200,6 +204,11 @@ export async function collectLocalMediaFromHandle(
       if (k && !targetMap.has(k)) {
         targetMap.set(k, file);
       }
+    }
+    if (isImg) {
+      const anySuffix = stripMediaSuffix(file.name).toLowerCase();
+      if (anySuffix && !imagesByStem.has(anySuffix)) imagesByStem.set(anySuffix, file);
+      kinds.addFile([rawNoExt, strippedSuffix, anySuffix, normKey], file.name, dirName, file);
     }
   };
 
@@ -216,7 +225,7 @@ export async function collectLocalMediaFromHandle(
           if (/\.(png|jpe?g|webp|bmp|mp4|webm)$/i.test(entry.name)) {
             try {
               const f = await entry.getFile();
-              if (f.size > 0) registerFile(f);
+              if (f.size > 0) registerFile(f, dirHandle.name || '');
             } catch {}
           }
         }
@@ -225,7 +234,7 @@ export async function collectLocalMediaFromHandle(
   }
 
   await walk(rootHandle, 0);
-  return { imagesByStem, videosByStem };
+  return { imagesByStem, videosByStem, kinds };
 }
 
 /**
@@ -275,6 +284,7 @@ export async function saveMultiDbsToIndexedDB(dbs: any[]): Promise<void> {
               : r.discs,
             boxArtUrl: isDeadOrLocalBlobUrl(r.boxArtUrl) ? undefined : r.boxArtUrl,
             videoUrl: isDeadOrLocalBlobUrl(r.videoUrl) ? undefined : r.videoUrl,
+            media: stripBlobMedia(r.media),
           }))
         : [],
     }));
