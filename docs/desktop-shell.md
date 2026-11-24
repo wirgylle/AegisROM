@@ -52,7 +52,7 @@
 
 ### Файлы через Go (этап 3)
 
-`aegisapi/vfs.go` даёт `/api/native/vfs/*`: `pick`, `roots`, `list`, `stat`, `read` (с Range), `write`, `mkdir`, `remove`, `move`, `copy`. Пути принимаются только внутри папок, выбранных в нативном диалоге (`appDir/vfs-roots.json`), удалить саму выбранную папку нельзя. `read` отдаёт только медиа-типы, с `nosniff` и `CSP sandbox`.
+`aegisapi/vfs.go` даёт `/api/native/vfs/*`: `pick`, `roots`, `list`, `stat`, `read` (с Range), `write`, `mkdir`, `remove`, `move`, `copy`. `copy` сам создаёт папку назначения, а с `skipSame=1` не трогает файл того же размера (так сборка копирует ромы и медиа на диске, не пропуская байты через страницу). Пути принимаются только внутри папок, выбранных в нативном диалоге (`appDir/vfs-roots.json`), удалить саму выбранную папку нельзя. `read` отдаёт только медиа-типы, с `nosniff` и `CSP sandbox`.
 
 `src/utils/nativeFs.ts` подменяет `showDirectoryPicker` и возвращает объекты с интерфейсом `FileSystemDirectoryHandle`/`FileSystemFileHandle`. Файлы до 32 МБ приходят как настоящий `File`, крупнее — как `LazyFile` (чтение кусками по Range). Для `LazyFile` `URL.createObjectURL` выдаёт адрес `read`, а `FormData` передаёт ссылку на путь, и Go кладёт сам файл (для chdman). Handle'ы сохраняются в IndexedDB как пути и восстанавливаются после перезапуска без запросов разрешений.
 
@@ -122,7 +122,7 @@ Opt-in for now; Edge opens by default. To enable: run `AegisROM.exe --native-win
 
 ### Files via Go (stage 3)
 
-`aegisapi/vfs.go` serves `/api/native/vfs/*`: `pick`, `roots`, `list`, `stat`, `read` (with Range), `write`, `mkdir`, `remove`, `move`, `copy`. Paths are accepted only inside folders picked in the native dialog (`appDir/vfs-roots.json`); a picked folder itself cannot be removed. `read` serves media types only, with `nosniff` and `CSP sandbox`.
+`aegisapi/vfs.go` serves `/api/native/vfs/*`: `pick`, `roots`, `list`, `stat`, `read` (with Range), `write`, `mkdir`, `remove`, `move`, `copy`. `copy` creates the target folder itself, and with `skipSame=1` it leaves a same-size file alone (builds copy ROMs and media on disk this way, without sending bytes through the page). Paths are accepted only inside folders picked in the native dialog (`appDir/vfs-roots.json`); a picked folder itself cannot be removed. `read` serves media types only, with `nosniff` and `CSP sandbox`.
 
 `src/utils/nativeFs.ts` replaces `showDirectoryPicker` and returns objects implementing `FileSystemDirectoryHandle`/`FileSystemFileHandle`. Files up to 32 MB come back as a real `File`, larger ones as a `LazyFile` (read in Range chunks). For a `LazyFile`, `URL.createObjectURL` returns the `read` URL, and `FormData` sends a path reference that Go replaces with the file itself (for chdman). Handles are stored in IndexedDB as paths and come back after a restart without permission prompts.
 

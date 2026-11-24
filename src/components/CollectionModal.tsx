@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Layers, LibraryBig, X } from 'lucide-react';
+import { Layers, LibraryBig, MinusCircle, Pencil, X } from 'lucide-react';
 import { collectionKeyOf } from '../utils/gameCollections';
 import { useI18n } from '../i18n/translations';
 import type { EnrichedBuildGame } from '../utils/buildsAndConverterEngine';
@@ -16,9 +16,13 @@ interface CollectionModalProps {
   selectedId: string;
   onPick: (id: string) => void;
   onClose: () => void;
+  /** Убрать игру из группы (ручной — удалить, автоматической — вынуть). / Remove a game from the group. */
+  onRemove?: (id: string) => void;
+  /** Открыть окно «Коллекции и серии». / Open the "Collections and series" window. */
+  onOpenManager?: () => void;
 }
 
-export const CollectionModal: React.FC<CollectionModalProps> = ({ title, mode = 'collection', members, selectedId, onPick, onClose }) => {
+export const CollectionModal: React.FC<CollectionModalProps> = ({ title, mode = 'collection', members, selectedId, onPick, onClose, onRemove, onOpenManager }) => {
   const { t, tf } = useI18n();
 
   useEffect(() => {
@@ -67,6 +71,17 @@ export const CollectionModal: React.FC<CollectionModalProps> = ({ title, mode = 
               </p>
             </div>
           </div>
+          {onOpenManager && (
+            <button
+              type="button"
+              onClick={onOpenManager}
+              title={t('mg.open')}
+              className="ml-auto shrink-0 h-7 px-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1 cursor-pointer"
+            >
+              <Pencil className="w-3 h-3" />
+              <span className="hidden sm:inline">{t('mg.title')}</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={onClose}
@@ -82,8 +97,20 @@ export const CollectionModal: React.FC<CollectionModalProps> = ({ title, mode = 
             {rows.map((m) => {
               const isMod = m.modKind && m.modKind !== 'original';
               const isCurrent = m.id === selectedId;
+              const manual = isSeries ? m.manualSeries?.startsWith('m:s:') : m.manualCollection?.startsWith('m:c:');
               return (
-                <li key={m.id}>
+                <li key={m.id} className="relative group">
+                  {onRemove && members.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => onRemove(m.id)}
+                      title={t(manual ? 'mg.removeHintManual' : 'mg.removeHintAuto')}
+                      aria-label={t(manual ? 'mg.removeHintManual' : 'mg.removeHintAuto')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 z-10 p-1 rounded text-slate-400 hover:text-red-600 bg-white/80 dark:bg-slate-900/80 opacity-60 group-hover:opacity-100 focus:opacity-100 cursor-pointer"
+                    >
+                      <MinusCircle className="w-4 h-4" />
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => onPick(m.id)}
@@ -128,7 +155,7 @@ export const CollectionModal: React.FC<CollectionModalProps> = ({ title, mode = 
                         {m.oldFile}
                       </div>
                     </div>
-                    <div className="shrink-0 text-right text-slate-500 dark:text-slate-400 tabular-nums">
+                    <div className={`shrink-0 text-right text-slate-500 dark:text-slate-400 tabular-nums ${onRemove ? 'pr-7' : ''}`}>
                       <div>{m.year || ''}</div>
                       <div>{m.size}</div>
                     </div>

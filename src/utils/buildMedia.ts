@@ -1,0 +1,385 @@
+// Медиа для сборки: поиск обложек, баннеров и видео рядом с ромом и раскладка по папкам
+// целевого устройства, плюс gamelist.xml для EmulationStation.
+//
+// Media for builds: finds covers, banners and videos next to a ROM, lays them out in the
+// target device's folders, and writes gamelist.xml for EmulationStation.
+
+import {
+  GAMELIST_INFO_TAGS,
+  type GamelistEntry,
+  findGamelistEntry,
+  indexGamelistEntries,
+  normalizeGamelistPath,
+  parseGamelistEntries,
+  splitRelativeMediaPath,
+} from './gamelistXml.ts';
+
+export type BuildMediaKind = 'image' | 'thumbnail' | 'marquee' | 'video';
+export const BUILD_MEDIA_KINDS: BuildMediaKind[] = ['thumbnail', 'image', 'marquee', 'video'];
+
+export interface BuildExportOptions {
+  includeMedia: boolean;
+  mediaKinds: Record<BuildMediaKind, boolean>;
+  /** Не перезаписывать файл того же размера. / Do not rewrite a same-size file. */
+  skipExisting: boolean;
+  /** gamelist.xml для профилей EmulationStation. / gamelist.xml for EmulationStation profiles. */
+  writeGamelist: boolean;
+}
+
+export const DEFAULT_BUILD_EXPORT_OPTIONS: BuildExportOptions = {
+  includeMedia: true,
+  mediaKinds: { thumbnail: true, image: true, marquee: true, video: false },
+  skipExisting: true,
+  writeGamelist: true,
+};
+
+const OPTIONS_KEY = 'aegisrom_build_export_options_v1';
+
+export function loadBuildExportOptions(): BuildExportOptions {
+  try {
+    const raw = localStorage.getItem(OPTIONS_KEY);
+    if (!raw) return { ...DEFAULT_BUILD_EXPORT_OPTIONS, mediaKinds: { ...DEFAULT_BUILD_EXPORT_OPTIONS.mediaKinds } };
+    const v = JSON.parse(raw);
+    return {
+      includeMedia: typeof v.includeMedia === 'boolean' ? v.includeMedia : DEFAULT_BUILD_EXPORT_OPTIONS.includeMedia,
+      mediaKinds: { ...DEFAULT_BUILD_EXPORT_OPTIONS.mediaKinds, ...(v.mediaKinds || {}) },
+      skipExisting: typeof v.skipExisting === 'boolean' ? v.skipExisting : DEFAULT_BUILD_EXPORT_OPTIONS.skipExisting,
+      writeGamelist: typeof v.writeGamelist === 'boolean' ? v.writeGamelist : DEFAULT_BUILD_EXPORT_OPTIONS.writeGamelist,
+    };
+  } catch {
+    return { ...DEFAULT_BUILD_EXPORT_OPTIONS, mediaKinds: { ...DEFAULT_BUILD_EXPORT_OPTIONS.mediaKinds } };
+  }
+}
+
+export function saveBuildExportOptions(o: BuildExportOptions): void {
+  try {
+    localStorage.setItem(OPTIONS_KEY, JSON.stringify(o));
+  } catch {}
+}
+
+// ---------------------------------------------------------------------------
+// Раскладка на устройстве / Layout on the device
+// ---------------------------------------------------------------------------
+
+/**
+ * es: images/{rom}-image.png, images/{rom}-thumb.png, marquees/{rom}-marquee.png, videos/{rom}-video.mp4
+ * covers: covers/{rom}.png, marquees/{rom}.png, videos/{rom}.mp4
+ * single: Imgs/{rom}.png (одна картинка / one picture)
+ */
+export type MediaLayout = 'es' | 'covers' | 'single' | 'none';
+
+export function profileMediaLayout(mediaFolders: readonly string[]): MediaLayout {
+  const lower = mediaFolders.map((f) => f.toLowerCase());
+  if (lower.includes('images')) return 'es';
+  if (lower.includes('covers')) return 'covers';
+  if (lower.includes('imgs')) return 'single';
+  return 'none';
+}
+
+export interface FoundMedia {
+  /** Возвращает файл. / Returns the file. */
+  getFile: () => Promise<File>;
+  /** Расширение с точкой, в нижнем регистре. / Lower-case extension with the dot. */
+  ext: string;
+}
+
+export interface MediaTarget {
+  kind: BuildMediaKind;
+  /** Подпапка в папке консоли. / Subfolder inside the console folder. */
+  folder: string;
+  name: string;
+  source: FoundMedia;
+}
+
+/**
+ * Какие файлы и куда положить. stem — имя рома в сборке без расширения.
+ * Which files go where. stem is the ROM's name in the build without extension.
+ */
+export function planMediaTargets(
+  layout: MediaLayout,
+  mediaFolders: readonly string[],
+  wanted: Record<BuildMediaKind, boolean>,
+  found: Partial<Record<BuildMediaKind, FoundMedia>>,
+  stem: string
+): MediaTarget[] {
+  const out: MediaTarget[] = [];
+  const has = (k: BuildMediaKind) => Boolean(wanted[k] && found[k]);
+  const folderNamed = (name: string, fallback: string) =>
+    mediaFolders.find((f) => f.toLowerCase() === name) || fallback;
+
+  if (layout === 'es') {
+    const images = folderNamed('images', 'images');
+    const marquees = mediaFolders.some((f) => f.toLowerCase() === 'marquees') ? folderNamed('marquees', 'marquees') : images;
+    const videos = folderNamed('videos', 'videos');
+    if (has('image')) out.push({ kind: 'image', folder: images, name: `${stem}-image${found.image!.ext}`, source: found.image! });
+    if (has('thumbnail'))
+      out.push({ kind: 'thumbnail', folder: images, name: `${stem}-thumb${found.thumbnail!.ext}`, source: found.thumbnail! });
+    if (has('marquee'))
+      out.push({ kind: 'marquee', folder: marquees, name: `${stem}-marquee${found.marquee!.ext}`, source: found.marquee! });
+    if (has('video')) out.push({ kind: 'video', folder: videos, name: `${stem}-video${found.video!.ext}`, source: found.video! });
+    return out;
+  }
+
+  if (layout === 'covers' || layout === 'single') {
+    const cover = has('thumbnail') ? found.thumbnail! : has('image') ? found.image! : undefined;
+    const coverFolder = layout === 'covers' ? folderNamed('covers', 'covers') : folderNamed('imgs', 'Imgs');
+    if (cover) out.push({ kind: has('thumbnail') ? 'thumbnail' : 'image', folder: coverFolder, name: `${stem}${cover.ext}`, source: cover });
+    if (layout === 'covers') {
+      if (has('marquee') && mediaFolders.some((f) => f.toLowerCase() === 'marquees'))
+        out.push({ kind: 'marquee', folder: folderNamed('marquees', 'marquees'), name: `${stem}${found.marquee!.ext}`, source: found.marquee! });
+      if (has('video') && mediaFolders.some((f) => f.toLowerCase() === 'videos'))
+        out.push({ kind: 'video', folder: folderNamed('videos', 'videos'), name: `${stem}${found.video!.ext}`, source: found.video! });
+    }
+    return out;
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Поиск медиа рядом с ромом / Finding media next to a ROM
+// ---------------------------------------------------------------------------
+
+const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif']);
+const VIDEO_EXTS = new Set(['.mp4', '.webm', '.mkv', '.avi', '.m4v']);
+
+/** Папки с медиа рядом с ромами и вид медиа по умолчанию для файлов без суффикса. */
+/** Media folders next to ROMs and the default kind for files without a suffix. */
+const MEDIA_DIRS: Record<string, BuildMediaKind> = {
+  images: 'image',
+  image: 'image',
+  snap: 'image',
+  snaps: 'image',
+  screenshots: 'image',
+  screenshot: 'image',
+  titles: 'image',
+  downloaded_images: 'image',
+  download_images: 'image',
+  media: 'image',
+  boxart: 'thumbnail',
+  boxarts: 'thumbnail',
+  box2dfront: 'thumbnail',
+  covers: 'thumbnail',
+  cover: 'thumbnail',
+  thumbnails: 'thumbnail',
+  imgs: 'thumbnail',
+  marquees: 'marquee',
+  marquee: 'marquee',
+  wheel: 'marquee',
+  wheels: 'marquee',
+  logos: 'marquee',
+  videos: 'video',
+  video: 'video',
+};
+
+const SUFFIX_KIND: Array<[string, BuildMediaKind]> = [
+  ['-image', 'image'],
+  ['_image', 'image'],
+  ['-screenshot', 'image'],
+  ['-snap', 'image'],
+  ['-thumb', 'thumbnail'],
+  ['_thumb', 'thumbnail'],
+  ['-boxart', 'thumbnail'],
+  ['-box', 'thumbnail'],
+  ['-cover', 'thumbnail'],
+  ['-marquee', 'marquee'],
+  ['-wheel', 'marquee'],
+  ['-logo', 'marquee'],
+  ['-video', 'video'],
+  ['_video', 'video'],
+];
+
+function extOf(name: string): string {
+  const dot = name.lastIndexOf('.');
+  return dot === -1 ? '' : name.slice(dot).toLowerCase();
+}
+
+function stemOf(name: string): string {
+  const dot = name.lastIndexOf('.');
+  return (dot === -1 ? name : name.slice(0, dot)).trim().toLowerCase();
+}
+
+/**
+ * Разбирает имя медиафайла: стем рома и вид. dirKind — вид по папке.
+ * Parses a media file name: the ROM stem and the kind. dirKind is the folder's kind.
+ */
+export function classifyMediaFileName(
+  fileName: string,
+  dirKind: BuildMediaKind
+): { stem: string; kind: BuildMediaKind } | null {
+  const ext = extOf(fileName);
+  const isVideo = VIDEO_EXTS.has(ext);
+  if (!isVideo && !IMAGE_EXTS.has(ext)) return null;
+  let stem = stemOf(fileName);
+  let kind: BuildMediaKind | null = null;
+  for (const [sfx, k] of SUFFIX_KIND) {
+    if (stem.endsWith(sfx)) {
+      stem = stem.slice(0, -sfx.length).trim();
+      kind = k;
+      break;
+    }
+  }
+  if (isVideo) kind = 'video';
+  else if (!kind || kind === 'video') kind = dirKind === 'video' ? 'image' : dirKind;
+  if (!stem) return null;
+  return { stem, kind };
+}
+
+type StemIndex = Map<string, Partial<Record<BuildMediaKind, FoundMedia>>>;
+
+interface DirMediaInfo {
+  gamelist: Map<string, GamelistEntry> | null;
+  byStem: StemIndex;
+}
+
+/**
+ * Индекс медиа по папкам ромов: gamelist.xml и папки images/videos/... читаются один раз.
+ * Media index per ROM folder: gamelist.xml and images/videos/... are read once.
+ */
+export class MediaSourceIndex {
+  private readonly dirs = new Map<any, Promise<DirMediaInfo>>();
+
+  private load(dir: any): Promise<DirMediaInfo> {
+    let p = this.dirs.get(dir);
+    if (!p) {
+      p = this.read(dir);
+      this.dirs.set(dir, p);
+    }
+    return p;
+  }
+
+  private async read(dir: any): Promise<DirMediaInfo> {
+    let gamelist: Map<string, GamelistEntry> | null = null;
+    const byStem: StemIndex = new Map();
+    try {
+      const fh = await dir.getFileHandle('gamelist.xml');
+      const text = await (await fh.getFile()).text();
+      gamelist = indexGamelistEntries(parseGamelistEntries(text));
+    } catch {}
+    try {
+      for await (const entry of dir.values()) {
+        if (entry.kind !== 'directory') continue;
+        const dirKind = MEDIA_DIRS[String(entry.name).toLowerCase()];
+        if (!dirKind) continue;
+        try {
+          for await (const f of entry.values()) {
+            if (f.kind !== 'file') continue;
+            const c = classifyMediaFileName(f.name, dirKind);
+            if (!c) continue;
+            const slot = byStem.get(c.stem) || {};
+            if (!slot[c.kind]) {
+              slot[c.kind] = { getFile: () => f.getFile(), ext: extOf(f.name) };
+              byStem.set(c.stem, slot);
+            }
+          }
+        } catch {}
+      }
+    } catch {}
+    return { gamelist, byStem };
+  }
+
+  /** Запись gamelist.xml для рома, если есть. / The ROM's gamelist.xml entry, if any. */
+  async gamelistEntry(dir: any, romFileName: string): Promise<GamelistEntry | undefined> {
+    if (!dir) return undefined;
+    const info = await this.load(dir);
+    return info.gamelist ? findGamelistEntry(info.gamelist, romFileName) : undefined;
+  }
+
+  /**
+   * Медиа рома: сначала пути из gamelist.xml, затем файлы по имени рома.
+   * A ROM's media: gamelist.xml paths first, then files named after the ROM.
+   */
+  async find(
+    dir: any,
+    romFileName: string,
+    extraStems: string[] = []
+  ): Promise<Partial<Record<BuildMediaKind, FoundMedia>>> {
+    const out: Partial<Record<BuildMediaKind, FoundMedia>> = {};
+    if (!dir) return out;
+    const info = await this.load(dir);
+
+    const entry = info.gamelist ? findGamelistEntry(info.gamelist, romFileName) : undefined;
+    if (entry) {
+      for (const kind of BUILD_MEDIA_KINDS) {
+        const rel = entry.fields[kind];
+        if (!rel) continue;
+        const parts = splitRelativeMediaPath(rel);
+        if (!parts) continue;
+        const name = parts[parts.length - 1];
+        out[kind] = {
+          ext: extOf(name),
+          getFile: async () => {
+            let d = dir;
+            for (let i = 0; i < parts.length - 1; i++) d = await d.getDirectoryHandle(parts[i]);
+            return (await d.getFileHandle(name)).getFile();
+          },
+        };
+      }
+    }
+
+    const stems = [stemOf(romFileName), ...extraStems.map((s) => s.trim().toLowerCase())].filter(Boolean);
+    for (const s of stems) {
+      const slot = info.byStem.get(s);
+      if (!slot) continue;
+      for (const kind of BUILD_MEDIA_KINDS) {
+        if (!out[kind] && slot[kind]) out[kind] = slot[kind];
+      }
+    }
+    return out;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// gamelist.xml сборки / The build's gamelist.xml
+// ---------------------------------------------------------------------------
+
+export function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+export interface BuildGamelistGame {
+  /** Путь относительно папки консоли без "./". / Path relative to the console folder, without "./". */
+  path: string;
+  name: string;
+  /** Медиа: путь относительно папки консоли. / Media: path relative to the console folder. */
+  media: Partial<Record<BuildMediaKind, string>>;
+  /** Поля из исходного gamelist.xml, уже экранированные. / Fields from the source gamelist.xml, already escaped. */
+  info?: Record<string, string>;
+}
+
+function relPathForXml(p: string): string {
+  return './' + p.replace(/\\/g, '/').replace(/^(\.\/)+/, '');
+}
+
+/**
+ * gamelist.xml с играми сборки. Записи существующего файла для других ромов сохраняются.
+ * gamelist.xml with the build's games. Entries of the existing file for other ROMs are kept.
+ */
+export function buildGamelistXml(games: BuildGamelistGame[], existingXml?: string | null): string {
+  const ours = new Set(games.map((g) => normalizeGamelistPath(g.path)));
+  const kept = existingXml
+    ? parseGamelistEntries(existingXml).filter((e) => !ours.has(normalizeGamelistPath(e.path)))
+    : [];
+  const lines: string[] = ['<?xml version="1.0"?>', '<gameList>'];
+  for (const e of kept) lines.push(`\t${e.raw.trim()}`);
+  for (const g of games) {
+    lines.push('\t<game>');
+    lines.push(`\t\t<path>${escapeXml(relPathForXml(g.path))}</path>`);
+    lines.push(`\t\t<name>${escapeXml(g.name)}</name>`);
+    for (const kind of ['image', 'thumbnail', 'marquee', 'video'] as BuildMediaKind[]) {
+      const m = g.media[kind];
+      if (m) lines.push(`\t\t<${kind}>${escapeXml(relPathForXml(m))}</${kind}>`);
+    }
+    for (const tag of GAMELIST_INFO_TAGS) {
+      const v = g.info?.[tag];
+      if (v) lines.push(`\t\t<${tag}>${v}</${tag}>`);
+    }
+    lines.push('\t</game>');
+  }
+  lines.push('</gameList>', '');
+  return lines.join('\n');
+}

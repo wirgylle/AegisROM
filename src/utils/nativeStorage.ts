@@ -29,6 +29,7 @@ export const MIRRORED_LOCAL_KEYS = [
   'aegisrom_v0_5_multi_dbs',
   'aegisrom_v5_filename_constructor',
   'aegisrom_v5_saved_builds',
+  'aegisrom_settings_v1',
 ] as const;
 
 /** Disk key for the IndexedDB library vault (see persistentHandles.ts). */

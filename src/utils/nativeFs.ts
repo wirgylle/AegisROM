@@ -197,6 +197,38 @@ export function isLazyBlob(v: unknown): v is LazyBlob {
   return v instanceof LazyBlob;
 }
 
+/**
+ * Путь на диске для целого файла из нативной прослойки (LazyFile или File из getFile), иначе null.
+ * Disk path of a whole file from the native layer (LazyFile or a File from getFile), else null.
+ */
+export function nativePathOf(v: unknown): string | null {
+  if (v instanceof LazyFile) return v.__aegisPath;
+  if (typeof File !== 'undefined' && v instanceof File) {
+    const p = (v as any).__aegisPath;
+    return typeof p === 'string' && p ? p : null;
+  }
+  return null;
+}
+
+/**
+ * Копирует файл на диске через Go в dir/name. skipSame: не трогать файл того же размера.
+ * null: файл или папка не из нативной прослойки, копировать обычным способом.
+ * Copies a file on disk through Go into dir/name. skipSame: leave a same-size file alone.
+ * null: the file or folder is not from the native layer; copy the usual way.
+ */
+export async function nativeCopyFile(
+  src: unknown,
+  destDir: any,
+  name: string,
+  skipSame: boolean
+): Promise<'copied' | 'skipped' | null> {
+  const from = nativePathOf(src);
+  if (!enabled || !from || !destDir?.__aegisNativeFs || typeof destDir.path !== 'string') return null;
+  const to = joinPath(destDir.path, name);
+  const data = await call(`copy?from=${qp(from)}&to=${qp(to)}${skipSame ? '&skipSame=1' : ''}`, { method: 'POST' });
+  return data?.skipped ? 'skipped' : 'copied';
+}
+
 abstract class NativeHandle {
   // Plain fields so the handle survives structured clone into IndexedDB (see reviveNativeHandle).
   readonly __aegisNativeFs = true;
@@ -293,9 +325,10 @@ class NativeWritable {
     if (this.closed) return;
     this.closed = true;
     const target = this.handle.path;
-    // Whole large file copied as is: copy on disk, no round trip through the page.
-    if (this.parts.length === 1 && this.parts[0] instanceof LazyFile) {
-      await call(`copy?from=${qp((this.parts[0] as LazyFile).__aegisPath)}&to=${qp(target)}`, { method: 'POST' });
+    // Whole file copied as is: copy on disk, no round trip through the page.
+    const only = this.parts.length === 1 ? nativePathOf(this.parts[0]) : null;
+    if (only && !this.keepExistingData) {
+      await call(`copy?from=${qp(only)}&to=${qp(target)}`, { method: 'POST' });
       return;
     }
     const parts: BlobPart[] = [];
@@ -345,7 +378,11 @@ export class NativeFileHandle extends NativeHandle {
     const resp = await fetch(nativeReadUrl(this.path), { cache: 'no-store' });
     if (!resp.ok) throw domError(resp.status === 404 ? 'NotFoundError' : 'NotReadableError', this.path);
     const blob = await resp.blob();
-    return new File([blob], this.name, { lastModified: meta.mtime, type: blob.type === 'application/octet-stream' ? '' : blob.type });
+    const file = new File([blob], this.name, { lastModified: meta.mtime, type: blob.type === 'application/octet-stream' ? '' : blob.type });
+    // Путь на диске: копирование в сборку идёт через Go без пересылки байтов.
+    // Path on disk: build copies go through Go without sending the bytes around.
+    Object.defineProperty(file, '__aegisPath', { value: this.path, enumerable: false });
+    return file;
   }
 
   async createWritable(opts?: { keepExistingData?: boolean }): Promise<any> {

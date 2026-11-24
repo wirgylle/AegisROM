@@ -168,3 +168,24 @@ test('seriesKeyOf: XI–XVI считаются номером', () => {
   assert.equal(seriesKeyOf('Final Fantasy XII'), 'final fantasy');
   assert.equal(seriesKeyOf('Final Fantasy XIII-2'), 'final fantasy');
 });
+
+test('groupMembership и passesGroupFilter: коллекции, серии, одиночные', async () => {
+  const { groupMembership, passesGroupFilter, GROUP_FILTER_ALL } = await import('./gameCollections.ts');
+  const games = [
+    g('a1', 'Aladdin (USA)', 'SNES'),
+    g('a2', 'Aladdin (Europe)', 'GENESIS'),
+    g('s1', 'Sonic the Hedgehog', 'GENESIS'),
+    g('s2', 'Sonic the Hedgehog 2', 'GENESIS'),
+    g('x', 'Tetris', 'GB'),
+  ];
+  const m = groupMembership(games);
+  assert.ok(m.inCollection.has('a1') && m.inCollection.has('a2'));
+  assert.ok(m.inSeries.has('s1') && m.inSeries.has('s2'));
+  const only = (f: { collections: boolean; series: boolean; singles: boolean }) =>
+    games.filter((x) => passesGroupFilter(x.id, m, f)).map((x) => x.id);
+  assert.deepEqual(only(GROUP_FILTER_ALL), ['a1', 'a2', 's1', 's2', 'x']);
+  assert.deepEqual(only({ collections: true, series: false, singles: false }), ['a1', 'a2']);
+  assert.deepEqual(only({ collections: false, series: true, singles: false }), ['s1', 's2']);
+  assert.deepEqual(only({ collections: true, series: true, singles: false }), ['a1', 'a2', 's1', 's2']);
+  assert.deepEqual(only({ collections: false, series: false, singles: true }), ['x']);
+});

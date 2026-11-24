@@ -16,7 +16,6 @@ import {
   FolderInput,
   FolderOpen,
   Layers,
-  LibraryBig,
   FolderSearch,
   Undo2,
   RefreshCw,
@@ -35,10 +34,13 @@ import {
   AlertTriangle,
   Check,
   Wand2,
+  Settings as SettingsIcon,
   Coffee,
 } from 'lucide-react';
 import { GameInspectorCoverVideo } from './GameInspectorCoverVideo';
 import { DatFilesPanel } from './DatFilesPanel';
+import { ScrapeReportCard, ScreenScraperPanel } from './ScreenScraperPanel';
+import type { ScrapeReport } from '../utils/scrapeReport';
 import { PatcherPanel } from './PatcherPanel';
 import {
   APP_FULL_TITLE,
@@ -73,8 +75,53 @@ import { VirtualizedLibraryViews, type LibraryCollectionBadge } from './Virtuali
 import { EditorToolbar, GameEditModal, useManualEditsVersion } from './LibraryEditor';
 import { applyManualEditToRow, exportManualEdits, importManualEdits } from '../utils/manualEdits';
 import { CollectionModal } from './CollectionModal';
+import { ManualGroupsModal } from './ManualGroupsModal';
+import { useManualGroupsVersion } from './useManualGroups';
+import {
+  applyManualGroups,
+  exportManualGroups,
+  gameKeyOf,
+  getManualGroupsState,
+  importManualGroups,
+  removeFromManualGroup,
+  setDetached,
+  suggestGroups,
+} from '../utils/manualGroups';
+import { NO_STUDIO, studioKeyOf, studioOf } from '../utils/studio';
 import { GameRelationsPanel } from './GameRelationsPanel';
-import { buildCollections, buildSeries, indexCollections, seriesSiblings } from '../utils/gameCollections';
+import {
+  buildCollections,
+  buildSeries,
+  groupMembership,
+  indexCollections,
+  isGroupFilterAll,
+  passesGroupFilter,
+  seriesSiblings,
+  type LibraryGroupFilter,
+} from '../utils/gameCollections';
+import { stripBlobMedia, type MediaSet } from '../utils/mediaKinds';
+import {
+  LibraryGroupsControl,
+  LibraryMediaControl,
+  loadGroupFilter,
+  loadMediaPrefs,
+  saveGroupFilter,
+  saveMediaPrefs,
+  type LibraryMediaPrefs,
+} from './LibraryViewControls';
+import { OperationScopeModal } from './OperationScopeModal';
+import { GameDataFormatPicker, GameDataPanel, exportGameData, loadGameDataFormat, saveGameDataFormat } from './GameDataPanel';
+import { ScrapeOptionsPanel } from './ScrapeOptionsPanel';
+import { ScrapeSourcesPanel } from './ScrapeSourcesPanel';
+import {
+  defaultScrapeOptions,
+  loadScrapeOptions,
+  rowHasScrapeMedia,
+  saveScrapeOptions,
+  type ScrapeOptions,
+} from '../utils/scrapeOptions';
+import { describeScope, type ScopeOperation } from '../utils/operationScope';
+import { markProcessed } from '../utils/operationScopeStore';
 import { inferPortMasterPcTestPlan } from '../utils/portMasterEngine';
 import {
   SUPPORTED_LANGUAGES,
@@ -109,6 +156,8 @@ import {
 import { WorkbenchContextPanel, type HoveredTool } from './WorkbenchContextPanel';
 import { QuickTestModal, type QuickTestRequest } from './QuickTestModal';
 import { DonateModal } from './DonateModal';
+import { SettingsModal } from './SettingsModal';
+import { loadAppSettings, subscribeAppSettings } from '../utils/appSettings';
 import { resolveQuickTestCore, pickCueDataTrack, pickBiosForRegion, fileExt } from '../utils/quickTest';
 import { getVerifiedBiosFiles } from '../utils/biosScan';
 
@@ -126,6 +175,9 @@ export interface MultiDiscEntry {
   fileObj?: File;
   companionFiles?: File[];
   cueText?: string;
+  // Папка диска (handle) для поиска медиа при сборке; не сохраняется.
+  // The disc's folder (handle) for finding media in builds; not stored.
+  parentHandle?: any;
 }
 
 function sanitizeDatabasesForStorage<T extends { rows: UnifiedGameRow[] }>(dbs: T[]): T[] {
@@ -136,15 +188,18 @@ function sanitizeDatabasesForStorage<T extends { rows: UnifiedGameRow[] }>(dbs: 
           ...r,
           fileObj: undefined,
           companionFiles: undefined,
+          parentHandle: undefined,
           discs: Array.isArray(r.discs)
             ? r.discs.map((d) => ({
                 ...d,
                 fileObj: undefined,
                 companionFiles: undefined,
+                parentHandle: undefined,
               }))
             : undefined,
           boxArtUrl: isDeadOrLocalBlobUrl(r.boxArtUrl) ? undefined : r.boxArtUrl,
           videoUrl: isDeadOrLocalBlobUrl(r.videoUrl) ? undefined : r.videoUrl,
+          media: stripBlobMedia(r.media),
         }))
       : [],
   }));
@@ -194,6 +249,9 @@ export interface UnifiedGameRow {
   videoUrl?: string;
   fileObj?: File;
   companionFiles?: File[];
+  // Папка рома (handle): там сборка ищет gamelist.xml и медиа; не сохраняется.
+  // The ROM's folder (handle): builds look for gamelist.xml and media there; not stored.
+  parentHandle?: any;
   cueText?: string;
   totalBytes?: number;
   trackCount?: number;
@@ -211,11 +269,19 @@ export interface UnifiedGameRow {
   // Editor manual edits (utils/manualEdits.ts) and the gamelist.xml fields they set.
   developer?: string;
   publisher?: string;
+  // Ручные коллекции/серии (utils/manualGroups.ts), только при показе. / Manual groups, display only.
+  manualCollection?: string;
+  manualCollectionLabel?: string;
+  manualSeries?: string;
+  manualSeriesLabel?: string;
   players?: string;
   rating?: string;
   desc?: string;
   manualFields?: string[];
   manualMedia?: Partial<Record<'image' | 'thumbnail' | 'marquee' | 'video', string>>;
+  // Картинки по видам: боксарт, скриншот, титульный экран, баннер (utils/mediaKinds.ts).
+  // Images by kind: box art, screenshot, title screen, banner (utils/mediaKinds.ts).
+  media?: MediaSet;
 }
 
 interface FigmaConceptStudioProps {
@@ -226,6 +292,8 @@ interface FigmaConceptStudioProps {
   } | null;
   /** Opens the first-run setup wizard again (top bar wand button). */
   onOpenSetupWizard?: () => void;
+  /** Called after the Settings window saved new defaults (for the log). */
+  onSettingsSaved?: () => void;
   selectedConcept: FigmaConceptId;
   onSelectConcept: (id: FigmaConceptId) => void;
   isDarkMode: boolean;
@@ -239,6 +307,11 @@ interface FigmaConceptStudioProps {
   onExportLibrary?: () => void;
   romsCount?: number;
   scannedRows?: UnifiedGameRow[];
+  /** Ромы сеанса взяты из этой базы без скана (ids — её записи на тот момент). */
+  /** Session ROMs were taken from this database without a scan (ids: its records at that time). */
+  sessionSource?: { dbId: string; ids: Set<string> } | null;
+  /** Сообщает App, какая база открыта. / Tells App which database is open. */
+  onActiveDbChange?: (id: string, rows: UnifiedGameRow[], builtin: boolean) => void;
   isAnyProcessRunning?: boolean;
   progressPct?: number;
   currentActionText?: string;
@@ -263,12 +336,14 @@ interface FigmaConceptStudioProps {
   } | null>;
   lastScanMode?: 'append' | 'replace';
   scanRevision?: number;
-  onOrganizeCatalog?: () => void;
+  onOrganizeCatalog?: (ids?: string[]) => void;
   onGroupMultiDiscFolders?: () => void;
   autoGroupMultiDisc?: boolean;
   onChangeAutoGroupMultiDisc?: (val: boolean) => void;
-  onScrapeMedia?: () => void;
-  onOnlineRename?: () => void;
+  onScrapeMedia?: (ids?: string[], opts?: ScrapeOptions) => void;
+  onOnlineRename?: (ids?: string[]) => void;
+  // Итог последнего скраппера (null — ещё не запускали). / Last scraper run (null: not run yet).
+  scrapeReport?: ScrapeReport | null;
   // Системы Libretro из библиотеки (для автозагрузки DAT). / Libretro systems in the library (DAT auto-download).
   datSystems?: string[];
   onScanPhantomFolders?: () => void;
@@ -610,6 +685,7 @@ function buildSampleDefaultGames(): UnifiedGameRow[] {
 export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   navigateRequest,
   onOpenSetupWizard,
+  onSettingsSaved,
   selectedConcept,
   onSelectConcept,
   isDarkMode,
@@ -621,6 +697,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   onImportLibrary,
   onExportLibrary,
   scannedRows = [],
+  sessionSource = null,
+  onActiveDbChange,
   isAnyProcessRunning = false,
   progressPct = 0,
   currentActionText = '',
@@ -643,6 +721,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   onChangeAutoGroupMultiDisc,
   onScrapeMedia,
   onOnlineRename,
+  scrapeReport = null,
   datSystems,
   onScanPhantomFolders,
   onRepairSdCard,
@@ -701,14 +780,17 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     () => new Intl.Collator(locale, { sensitivity: 'base', numeric: true }),
     [locale]
   );
-  const [previewTab, setPreviewTab] = useState<'library' | 'tools' | 'builds' | 'env'>('library');
+  const [previewTab, setPreviewTab] = useState<'library' | 'tools' | 'builds' | 'env'>(
+    () => loadAppSettings().startSection
+  );
   const [toolsMode, setToolsMode] = useState<'library' | 'sd_folder' | 'combine'>('library');
   useEffect(() => {
     if (!navigateRequest) return;
     setPreviewTab(navigateRequest.target.tab);
     if (navigateRequest.target.toolsMode) setToolsMode(navigateRequest.target.toolsMode);
   }, [navigateRequest?.nonce]);
-  const [renameOnSortRules, setRenameOnSortRules] = useState<boolean>(true);
+  const [renameOnSortRules, setRenameOnSortRules] = useState<boolean>(() => loadAppSettings().renameOnSort);
+  const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
   const [librarySyncModalOpen, setLibrarySyncModalOpen] = useState<boolean>(false);
   const [selectedDiscIndex, setSelectedDiscIndex] = useState<number | null>(null);
   const [quickTestReq, setQuickTestReq] = useState<QuickTestRequest | null>(null);
@@ -870,14 +952,27 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
 
   // Dynamic Sidebar Grouping Mode: 'console' | 'bitness' | 'genre' | 'age'
   const [sidebarGroupBy, setSidebarGroupBy] = useState<
-    'console' | 'bitness' | 'genre' | 'age'
-  >('console');
+    'console' | 'bitness' | 'genre' | 'age' | 'studio'
+  >(() => loadAppSettings().sidebarGroupBy);
   const [activeSidebarFilterKey, setActiveSidebarFilterKey] = useState<string>('ALL');
 
   // Library Main Sorting Mode: 'title' | 'console' | 'bitness' | 'genre' | 'age' | 'size'
   const [librarySortBy, setLibrarySortBy] = useState<
-    'title' | 'console' | 'bitness' | 'genre' | 'age' | 'size' | 'status'
-  >('title');
+    'title' | 'console' | 'bitness' | 'genre' | 'age' | 'size' | 'status' | 'studio'
+  >(() => loadAppSettings().librarySortBy);
+  // Сохранили «Настройки» — применяем значения по умолчанию к текущему сеансу (раздел при открытии не трогаем).
+  // Settings saved — apply the defaults to this session (the start section is left alone).
+  useEffect(
+    () =>
+      subscribeAppSettings(() => {
+        const s = loadAppSettings();
+        setRenameOnSortRules(s.renameOnSort);
+        setLibrarySortBy(s.librarySortBy);
+        setSidebarGroupBy(s.sidebarGroupBy);
+        setActiveSidebarFilterKey('ALL');
+      }),
+    []
+  );
   // Фильтр по статусу: оригиналы, переводы, хаки, прочие патчи. / Status filter: originals, translations, hacks, other patches.
   const [libraryModFilter, setLibraryModFilter] = useState<'all' | 'modded' | RomModGroup>('all');
   // Коллекции: в «Все» одна карточка на игру, версии с других консолей под кнопкой.
@@ -893,8 +988,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       return 'collections';
     }
   });
-  const toggleLibraryGrouping = (mode: 'collections' | 'series') => {
-    const next = libraryGrouping === mode ? 'none' : mode;
+  const changeLibraryGrouping = (next: 'none' | 'collections' | 'series') => {
     setLibraryGrouping(next);
     try {
       localStorage.setItem('aegis.lib.grouping', next);
@@ -902,7 +996,21 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       // ignore
     }
   };
+  // Фильтр групп: игры из коллекций, из серий, одиночные (несколько пунктов сразу).
+  // Group filter: games from collections, from series, single games (any mix).
+  const [libraryGroupFilter, setLibraryGroupFilter] = useState<LibraryGroupFilter>(() => loadGroupFilter());
+  const changeLibraryGroupFilter = (f: LibraryGroupFilter) => {
+    setLibraryGroupFilter(f);
+    saveGroupFilter(f);
+  };
+  // Какое медиа показывать на карточках. / Which media the cards show.
+  const [libraryMediaPrefs, setLibraryMediaPrefs] = useState<LibraryMediaPrefs>(() => loadMediaPrefs());
+  const changeLibraryMediaPrefs = (p: LibraryMediaPrefs) => {
+    setLibraryMediaPrefs(p);
+    saveMediaPrefs(p);
+  };
   const [collectionModalLeadId, setCollectionModalLeadId] = useState<string | null>(null);
+  const [manualGroupsTab, setManualGroupsTab] = useState<null | 'groups' | 'suggest' | 'detached'>(null);
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedGameId, setSelectedGameId] = useState<string>('g1');
@@ -1083,6 +1191,39 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     if (!scannedRows || scannedRows.length === 0) return;
 
     const nowTime = new Date().toLocaleTimeString(locale, { hour12: false });
+
+    // Ромы сеанса взяты из открытой базы без скана: результаты операций пишем в ту же базу.
+    // Записи, которых не было среди ромов (файл не найден на диске), остаются как есть.
+    // Session ROMs came from the open database without a scan: operation results go into that
+    // same database. Records that were not among the ROMs (file not found on disk) stay as they are.
+    if (sessionSource && savedDatabases.some((d) => d.id === sessionSource.dbId)) {
+      setSavedDatabases((prev) => {
+        const target = prev.find((d) => d.id === sessionSource.dbId);
+        if (!target) return prev;
+        const live = new Map(scannedRows.map((r) => [r.id, r]));
+        const kept: UnifiedGameRow[] = [];
+        for (const r of target.rows) {
+          const next = live.get(r.id);
+          if (next) {
+            kept.push(next);
+            live.delete(r.id);
+          } else if (!sessionSource.ids.has(r.id)) {
+            // Не был ромом сеанса (файл не найден): не трогаем. / Was not a session ROM (file not found): untouched.
+            kept.push(r);
+          }
+        }
+        // Новые id (операция поменяла id рома) добавляются в конец.
+        // New ids (an operation changed a ROM id) go at the end.
+        const nextRows = [...kept, ...live.values()];
+        const updated = prev.map((d) =>
+          d.id === target.id ? { ...d, rows: nextRows, updatedAt: nowTime } : d
+        );
+        persistDatabasesSafely(updated);
+        return updated;
+      });
+      return;
+    }
+
     setSavedDatabases((prev) => {
       const targetId =
         lastScanMode === 'append' && prev.some((d) => d.id === activeDbId && d.id !== 'db_master_full' && d.id !== 'db_portable_retro')
@@ -1212,6 +1353,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         const n = importManualEdits(parsed.manualEdits);
         if (n > 0) onAddLog?.(tf('ed.importedLog', { count: n }));
       }
+      if (parsed && !Array.isArray(parsed) && parsed.manualGroups) importManualGroups(parsed.manualGroups);
       if (Array.isArray(parsed)) {
         loadedRows = parsed;
       } else if (parsed && Array.isArray(parsed.rows)) {
@@ -1248,6 +1390,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
           ...r,
           boxArtUrl: isDeadOrLocalBlobUrl(r.boxArtUrl) ? undefined : r.boxArtUrl,
           videoUrl: isDeadOrLocalBlobUrl(r.videoUrl) ? undefined : r.videoUrl,
+          media: stripBlobMedia(r.media),
         }));
         const newDbId = `db_file_${Date.now()}`;
         const pathHint = parsed?.libraryPath || libraryPath || file.name;
@@ -1290,19 +1433,24 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       totalGames: gamesSource.length,
       // Ручные правки редактора хранятся отдельно от строк. / Editor manual edits are kept apart from rows.
       manualEdits: exportManualEdits(),
+      // Ручные коллекции и серии. / Manual collections and series.
+      manualGroups: exportManualGroups(),
       rows: gamesSource.map((g) => ({
         ...g,
         fileObj: undefined,
         companionFiles: undefined,
+        parentHandle: undefined,
         discs: Array.isArray(g.discs)
           ? g.discs.map((d) => ({
               ...d,
               fileObj: undefined,
               companionFiles: undefined,
+              parentHandle: undefined,
             }))
           : undefined,
         boxArtUrl: isDeadOrLocalBlobUrl(g.boxArtUrl) ? undefined : g.boxArtUrl,
         videoUrl: isDeadOrLocalBlobUrl(g.videoUrl) ? undefined : g.videoUrl,
+        media: stripBlobMedia(g.media),
       })),
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
@@ -1339,6 +1487,37 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
 
   const activeDbEntry =
     savedDatabases.find((d) => d.id === activeDbId) || savedDatabases[0];
+  const isBuiltinDb = !activeDbEntry || activeDbEntry.id === 'db_master_full' || activeDbEntry.id === 'db_portable_retro';
+  // Операции работают и без скана: App берёт ромы из открытой базы (ensureSessionRoms).
+  // Operations work without a scan too: App takes ROMs from the open database (ensureSessionRoms).
+  const canRunOps = scannedRows.length > 0 || (!isBuiltinDb && (activeDbEntry?.rows.length || 0) > 0);
+  useEffect(() => {
+    if (activeDbEntry) onActiveDbChange?.(activeDbEntry.id, activeDbEntry.rows, isBuiltinDb);
+  }, [activeDbEntry, isBuiltinDb]);
+
+  // Окно выбора области перед операцией. / Scope window before an operation.
+  const [scopeRequest, setScopeRequest] = useState<{
+    op: ScopeOperation;
+    run: (ids: string[]) => void;
+  } | null>(null);
+  // Типы медиа и повтор промахов для скраппера: показываются внутри окна области.
+  // Scraper media types and miss retry: shown inside the scope window.
+  const [scrapeOpts, setScrapeOpts] = useState<ScrapeOptions>(() => loadScrapeOptions(defaultScrapeOptions(scrapeShortVideos)));
+  // Ref: запуск берёт выбор, сделанный уже в открытом окне. / The run reads the choice made in the open window.
+  const scrapeOptsRef = useRef(scrapeOpts);
+  scrapeOptsRef.current = scrapeOpts;
+  // Формат выгрузки данных игр, выбирается в окне области. / Game data export format, chosen in the scope window.
+  const [gameDataFormat, setGameDataFormat] = useState(loadGameDataFormat);
+  const gameDataFormatRef = useRef(gameDataFormat);
+  gameDataFormatRef.current = gameDataFormat;
+  const scopeRows: UnifiedGameRow[] = !isBuiltinDb && activeDbEntry ? activeDbEntry.rows : scannedRows;
+  const openScope = (op: ScopeOperation, run: (ids?: string[]) => void) => {
+    if (scopeRows.length === 0) {
+      run();
+      return;
+    }
+    setScopeRequest({ op, run });
+  };
 
   const defaultSampleGames = useMemo(
     () => buildSampleDefaultGames(),
@@ -1362,10 +1541,21 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
 
   // Ручные правки редактора поверх строк базы. / Editor manual edits laid over the database rows.
   const manualEditsVersion = useManualEditsVersion();
+  // Ручные коллекции и серии (utils/manualGroups.ts) тоже накладываются здесь.
+  // Manual collections and series (utils/manualGroups.ts) are laid over here too.
+  const manualGroupsVersion = useManualGroupsVersion();
   const enrichedGamesSource = React.useMemo(
-    () => gamesSource.map((g) => enrichGameForBuild(applyManualEditToRow(g))),
+    () => applyManualGroups(gamesSource.map((g) => enrichGameForBuild(applyManualEditToRow(g))), getManualGroupsState()),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [gamesSource, manualEditsVersion]
+    [gamesSource, manualEditsVersion, manualGroupsVersion]
+  );
+  // Предложения: игры, похожие на часть серии или коллекции. Применяются только по «Принять».
+  // Suggestions: games that look like part of a series or collection. Applied only on "Accept".
+  const deferredGamesForSuggest = useDeferredValue(enrichedGamesSource);
+  const groupSuggestions = React.useMemo(
+    () => suggestGroups(deferredGamesForSuggest, getManualGroupsState()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [deferredGamesForSuggest, manualGroupsVersion]
   );
   const [editorEditIds, setEditorEditIds] = useState<string[] | null>(null);
   const editorEditGames = React.useMemo(() => {
@@ -1400,6 +1590,9 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         const primaryGenre = (g.genre || t('app.miscGenre')).split('/')[0].trim();
         key = primaryGenre;
         label = localizeGenre(primaryGenre, t);
+      } else if (sidebarGroupBy === 'studio') {
+        key = studioKeyOf(g);
+        label = key === NO_STUDIO ? t('studio.unknown') : studioOf(g);
       } else {
         // 'age'
         key = g.ageRating;
@@ -1428,12 +1621,25 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     } else if (sidebarGroupBy === 'bitness') {
       const order: Record<string, number> = { '8-bit': 1, '16-bit': 2, '32/64-bit': 3 };
       list.sort((a, b) => (order[a.key] || 99) - (order[b.key] || 99));
+    } else if (sidebarGroupBy === 'studio') {
+      // По алфавиту, «не указана» в конце. / Alphabetical, "not set" last.
+      list.sort((a, b) => (a.key === NO_STUDIO ? 1 : 0) - (b.key === NO_STUDIO ? 1 : 0) || activeCollator.compare(a.label, b.label));
     } else {
       list.sort((a, b) => b.count - a.count || activeCollator.compare(a.label, b.label));
     }
 
     return list;
   }, [enrichedGamesSource, sidebarGroupBy, t, activeCollator]);
+
+  // Принадлежность к коллекциям и сериям по всей Библиотеке (только когда фильтр включён).
+  // Collection and series membership over the whole Library (only while the filter is on).
+  // Галочки обновляются сразу, а пересчёт списка идёт следом. / Checkboxes update at once, the list follows.
+  const deferredGroupFilter = useDeferredValue(libraryGroupFilter);
+  const groupFilterOn = !isGroupFilterAll(deferredGroupFilter);
+  const libraryGroupMembership = React.useMemo(
+    () => (groupFilterOn ? groupMembership(enrichedGamesSource) : null),
+    [enrichedGamesSource, groupFilterOn]
+  );
 
   const filteredGames = React.useMemo(() => {
     const q = deferredSearchQuery.trim().toLowerCase();
@@ -1456,10 +1662,16 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         if (sidebarGroupBy === 'age' && g.ageRating !== activeSidebarFilterKey) {
           continue;
         }
+        if (sidebarGroupBy === 'studio' && studioKeyOf(g) !== activeSidebarFilterKey) {
+          continue;
+        }
       }
       if (libraryModFilter !== 'all') {
         const grp = modGroup((g.modKind as RomModKind) || 'original');
         if (libraryModFilter === 'modded' ? grp === 'original' : grp !== libraryModFilter) continue;
+      }
+      if (libraryGroupMembership && !passesGroupFilter(g.id, libraryGroupMembership, deferredGroupFilter)) {
+        continue;
       }
       if (hasQuery) {
         const hit =
@@ -1468,7 +1680,9 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
           g.cleanFile.toLowerCase().includes(q) ||
           g.serial.toLowerCase().includes(q) ||
           g.genre.toLowerCase().includes(q) ||
-          g.console.toLowerCase().includes(q);
+          g.console.toLowerCase().includes(q) ||
+          (g.developer || '').toLowerCase().includes(q) ||
+          (g.publisher || '').toLowerCase().includes(q);
         if (!hit) continue;
       }
       filtered.push(g);
@@ -1508,6 +1722,12 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       if (librarySortBy === 'size') {
         return b.sizeMB - a.sizeMB;
       }
+      if (librarySortBy === 'studio') {
+        // Игры без студии в конце. / Games without a studio go last.
+        const sa = studioOf(a);
+        const sb = studioOf(b);
+        return (sa ? 0 : 1) - (sb ? 0 : 1) || activeCollator.compare(sa, sb) || activeCollator.compare(a.title, b.title);
+      }
       if (librarySortBy === 'status') {
         return (
           (MOD_SORT_RANK[modGroup((a.modKind as RomModKind) || 'original')] || 9) -
@@ -1519,12 +1739,13 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     });
 
     return filtered;
-  }, [enrichedGamesSource, activeSidebarFilterKey, sidebarGroupBy, deferredSearchQuery, librarySortBy, libraryModFilter, t, activeCollator]);
+  }, [enrichedGamesSource, activeSidebarFilterKey, sidebarGroupBy, deferredSearchQuery, librarySortBy, libraryModFilter, libraryGroupMembership, deferredGroupFilter, t, activeCollator]);
 
   // В редакторе (таблица файлов) нужны все файлы, поэтому там коллекции не сворачиваются.
+  // Внутри одной консоли сворачивание тоже работает (регионы, ревизии, хаки, части серии).
   // The editor (file table) needs every file, so collections are not collapsed there.
-  const collectionsActive =
-    libraryGrouping !== 'none' && activeSidebarFilterKey === 'ALL' && selectedConcept !== 'concept_c_workbench';
+  // Collapsing also works inside one console (regions, revisions, hacks, parts of a series).
+  const collectionsActive = libraryGrouping !== 'none' && selectedConcept !== 'concept_c_workbench';
 
   const groupedLibraryView = React.useMemo(() => {
     if (!collectionsActive) return null;
@@ -1548,15 +1769,19 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         // На карточке серии — название серии. / A series card shows the series name.
         games.push(multi ? { ...s.lead, title: s.label } : s.lead);
       }
-      return { mode: 'series' as const, games, badges, leadOf, membersByLead, labelByLead };
+      return { mode: 'series' as const, games, badges, leadOf, membersByLead, labelByLead, nameByLead: new Map<string, string>() };
     }
     const cols = buildCollections(filteredGames);
+    const nameByLead = new Map<string, string>();
     for (const c of cols) {
       badges.set(c.lead.id, { count: c.members.length, consoles: c.consoles });
       membersByLead.set(c.lead.id, c.members);
       for (const m of c.members) leadOf.set(m.id, c.lead.id);
+      if (c.label) nameByLead.set(c.lead.id, c.label);
     }
-    return { mode: 'collections' as const, games: cols.map((c) => c.lead), badges, leadOf, membersByLead, labelByLead };
+    // Ручная коллекция показывает своё название. / A manual collection shows its own name.
+    const games = cols.map((c) => (c.label && c.members.length > 1 ? { ...c.lead, title: c.label } : c.lead));
+    return { mode: 'collections' as const, games, badges, leadOf, membersByLead, labelByLead, nameByLead };
   }, [collectionsActive, libraryGrouping, filteredGames]);
 
   // Индекс по всей библиотеке для правой панели (не зависит от фильтров).
@@ -1644,42 +1869,20 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     if (text) setSimActionText(text);
   };
 
-  const startSimulatedProgressTask = (taskLabel: string, steps: string[]) => {
+  // Раньше здесь была имитация прогресса: полоса доходила до 100 % и писала «Завершено», хотя
+  // ничего не делалось. Теперь честно говорим, что сначала нужно отсканировать папку.
+  // This used to fake progress up to 100 % and log "Done" while nothing happened. Now it says
+  // plainly that a folder has to be scanned first.
+  const startSimulatedProgressTask = (taskLabel: string, _steps: string[]) => {
     if (simTimerRef.current) {
       window.clearInterval(simTimerRef.current);
+      simTimerRef.current = null;
     }
-    setSimRunning(true);
-    setSimProgress(6);
-    setSimActionText(steps[0] || taskLabel);
-    onAddLog?.(`▶ ${tf('status.simStarted', { label: taskLabel })}`);
-
-    let currentPct = 6;
-    simTimerRef.current = window.setInterval(() => {
-      currentPct += 12;
-      if (currentPct >= 100) {
-        if (simTimerRef.current) window.clearInterval(simTimerRef.current);
-        simTimerRef.current = null;
-        setSimProgress(100);
-        const doneMsg = `✔ ${tf('status.simDone', { label: taskLabel })}`;
-        setSimActionText(doneMsg);
-        onAddLog?.(doneMsg);
-        window.setTimeout(() => {
-          setSimRunning(false);
-          setSimProgress(0);
-        }, 1200);
-      } else {
-        setSimProgress(currentPct);
-        const stepIdx = Math.min(
-          steps.length - 1,
-          Math.floor((currentPct / 100) * steps.length)
-        );
-        const stepText = steps[stepIdx] || taskLabel;
-        setSimActionText(stepText);
-        if (currentPct === 30 || currentPct === 66) {
-          onAddLog?.(`[${currentPct}%] ${stepText}`);
-        }
-      }
-    }, 280);
+    setSimRunning(false);
+    setSimProgress(0);
+    const msg = tf('tools.sim.needScan', { label: taskLabel });
+    setSimActionText(msg);
+    onAddLog?.(msg);
   };
 
   const handleStopAll = () => {
@@ -1868,6 +2071,17 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
             <span className="hidden 2xl:inline">{t('coffee.button')}</span>
           </button>
 
+          <button
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            title={t('settings.button')}
+            aria-label={t('settings.button')}
+            className="h-8 px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition"
+          >
+            <SettingsIcon className="w-4 h-4" />
+            <span className="hidden xl:inline">{t('settings.button')}</span>
+          </button>
+
           {onOpenSetupWizard && (
             <button
               type="button"
@@ -1989,6 +2203,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   { id: 'bitness', label: t('cat.byBitness') },
                   { id: 'genre', label: t('cat.byGenre') },
                   { id: 'age', label: t('cat.byAge') },
+                  { id: 'studio', label: t('studio.by') },
                 ].map((mode) => (
                   <button
                     key={mode.id}
@@ -2002,7 +2217,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         }
                       });
                     }}
-                    className={`py-1 px-1.5 rounded-md text-center cursor-pointer transition ${
+                    className={`py-1 px-1.5 rounded-md text-center cursor-pointer transition ${mode.id === 'studio' ? 'col-span-2' : ''} ${
                       sidebarGroupBy === mode.id
                         ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-2xs'
                         : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
@@ -2036,6 +2251,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       ? t('cat.allBitness')
                       : sidebarGroupBy === 'genre'
                       ? t('cat.allGenre')
+                      : sidebarGroupBy === 'studio'
+                      ? t('studio.all')
                       : t('cat.allAge')}
                   </span>
                   <span className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">
@@ -2147,6 +2364,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         ? t('cat.allBitness')
                         : sidebarGroupBy === 'genre'
                         ? t('cat.allGenre')
+                        : sidebarGroupBy === 'studio'
+                        ? t('studio.all')
                         : t('cat.allAge')}{' '}
                       ({enrichedGamesSource.length})
                     </option>
@@ -2157,35 +2376,38 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     ))}
                   </select>
 
-                  {/* Collections / Series toggles (mutually exclusive) */}
-                  <button
-                    type="button"
-                    onClick={() => toggleLibraryGrouping('collections')}
-                    aria-pressed={libraryGrouping === 'collections'}
-                    title={t('coll.toggleHint')}
-                    className={`h-8 px-2.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
-                      libraryGrouping === 'collections'
-                        ? 'bg-accent text-white border-accent'
-                        : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
-                    }`}
-                  >
-                    <Layers className="w-3.5 h-3.5" />
-                    <span>{t('coll.toggle')}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => toggleLibraryGrouping('series')}
-                    aria-pressed={libraryGrouping === 'series'}
-                    title={t('series.toggleHint')}
-                    className={`h-8 px-2.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
-                      libraryGrouping === 'series'
-                        ? 'bg-accent text-white border-accent'
-                        : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
-                    }`}
-                  >
-                    <LibraryBig className="w-3.5 h-3.5" />
-                    <span>{t('series.toggle')}</span>
-                  </button>
+                  {/* Группы: сворачивание и фильтр коллекций/серий / Groups: collapsing and collection/series filter */}
+                  <LibraryGroupsControl
+                    grouping={libraryGrouping}
+                    onGrouping={changeLibraryGrouping}
+                    groupingDisabled={selectedConcept === 'concept_c_workbench'}
+                    filter={libraryGroupFilter}
+                    onFilter={changeLibraryGroupFilter}
+                    onOpenManager={() => setManualGroupsTab('groups')}
+                  />
+
+                  {/* Предложения по сериям и коллекциям после скана / Series and collection suggestions after a scan */}
+                  {groupSuggestions.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setManualGroupsTab('suggest')}
+                      title={t('mg.badgeHint')}
+                      className="h-8 px-2.5 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer hover:bg-amber-100 dark:hover:bg-amber-900/40"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      {tf('mg.badge', { count: groupSuggestions.length })}
+                    </button>
+                  )}
+
+                  {/* Медиа на карточках / Media on cards */}
+                  {selectedConcept !== 'concept_c_workbench' && (
+                    <LibraryMediaControl
+                      prefs={libraryMediaPrefs}
+                      onChange={changeLibraryMediaPrefs}
+                      view={selectedConcept === 'concept_a_sidebar' ? 'grid' : 'compact'}
+                      games={filteredGames}
+                    />
+                  )}
 
                   {/* Sorting Dropdown */}
                   <div className="flex items-center gap-1.5 text-xs">
@@ -2201,6 +2423,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       <option value="genre">{t('lib.sort.genre')}</option>
                       <option value="age">{t('lib.sort.age')}</option>
                       <option value="size">{t('lib.sort.size')}</option>
+                      <option value="studio">{t('lib.sort.studio')}</option>
                       <option value="status">{t('lib.sort.status')}</option>
                     </select>
                   </div>
@@ -2360,7 +2583,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   onEdit={setEditorEditIds}
                   onWriteGamelist={onEditorWriteGamelist}
                   onScrapeMedia={onEditorScrapeMedia}
-                  onMoveRoms={scannedRows.length > 0 ? onMassMoveRoms : undefined}
+                  onMoveRoms={canRunOps ? onMassMoveRoms : undefined}
                   onAddLog={onAddLog}
                   busy={activeRunning}
                 />
@@ -2377,6 +2600,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                 }
                 collections={groupedLibraryView?.badges}
                 onOpenCollection={setCollectionModalLeadId}
+                mediaPrefs={libraryMediaPrefs}
                 checkedGameIds={checkedGameIds}
                 onSelectGame={handleSelectGame}
                 onToggleCheck={toggleCheckGame}
@@ -2508,6 +2732,21 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     </div>
                   </div>
 
+                  {/* Данные игр: CSV / XML туда и обратно. / Game data: CSV / XML out and back in. */}
+                  <GameDataPanel
+                    games={enrichedGamesSource}
+                    busy={activeRunning}
+                    onExport={() =>
+                      openScope('gameData', (ids) => {
+                        const set = ids ? new Set(ids) : null;
+                        const rows = set ? enrichedGamesSource.filter((g) => set.has(g.id)) : enrichedGamesSource;
+                        const file = exportGameData(rows, gameDataFormatRef.current);
+                        onAddLog?.(tf('gameData.log.export', { count: rows.length, file }));
+                      })
+                    }
+                    onAddLog={onAddLog}
+                  />
+
                   {/* Smart Media Scraper Banner (~1.5KB placeholder check) */}
                   <div className="bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/70 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
                     <div className="min-w-0 flex-1 space-y-0.5">
@@ -2522,17 +2761,11 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <button data-tool="scraper"
                       type="button"
                       onClick={() => {
-                        if (scannedRows.length > 0 && onScrapeMedia) {
-                          onScrapeMedia();
+                        // Без ромов в сеансе App берёт их из базы, без скана. / Without session ROMs App takes them from the database, no scan.
+                        if (onScrapeMedia) {
+                          openScope('scrape', (ids) => onScrapeMedia?.(ids, scrapeOptsRef.current));
                         } else {
-                          startSimulatedProgressTask(
-                            t('tools.lib.scraperTitle'),
-                            [
-                              t('tools.sim.scraper1'),
-                              t('tools.sim.scraper2'),
-                              t('tools.sim.scraper3'),
-                            ]
-                          );
+                          startSimulatedProgressTask(t('tools.lib.scraperTitle'), []);
                         }
                       }}
                       disabled={activeRunning}
@@ -2543,7 +2776,27 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     </button>
                   </div>
 
+                  {scrapeReport && (
+                    <ScrapeReportCard
+                      report={scrapeReport}
+                      disabled={activeRunning}
+                      onStep={(step) => {
+                        if (step === 'rename') {
+                          onOnlineRename?.();
+                        } else if (step === 'retry') {
+                          onScrapeMedia?.();
+                        } else {
+                          document
+                            .querySelector('[data-tool="screenscraper"]')
+                            ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }
+                      }}
+                    />
+                  )}
+
                   <DatFilesPanel disabled={activeRunning} systems={datSystems} />
+
+                  <ScreenScraperPanel disabled={activeRunning} />
 
                   <PatcherPanel disabled={activeRunning} />
 
@@ -2552,8 +2805,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <button data-tool="g1r"
                       type="button"
                       onClick={() => {
-                        if (scannedRows.length > 0 && onOrganizeCatalog) {
-                          onOrganizeCatalog();
+                        if (canRunOps && onOrganizeCatalog) {
+                          openScope('g1r', onOrganizeCatalog);
                         } else {
                           startSimulatedProgressTask('1G1R', [
                             t('tools.sim.g1r1'),
@@ -2572,8 +2825,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <button data-tool="onlineRename"
                       type="button"
                       onClick={() => {
-                        if (scannedRows.length > 0 && onOnlineRename) {
-                          onOnlineRename();
+                        if (canRunOps && onOnlineRename) {
+                          openScope('rename', onOnlineRename);
                         } else {
                           startSimulatedProgressTask(t('tools.lib.onlineRename'), [
                             t('tools.sim.online1'),
@@ -2612,7 +2865,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <button data-tool="cleanup"
                       type="button"
                       onClick={() => {
-                        if (scannedRows.length > 0 && onScanPhantomFolders) {
+                        if (canRunOps && onScanPhantomFolders) {
                           onScanPhantomFolders();
                         } else {
                           startSimulatedProgressTask(t('tools.lib.cleanupPhantom'), [
@@ -2631,7 +2884,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <button data-tool="multiDisc"
                       type="button"
                       onClick={() => {
-                        if (scannedRows.length > 0 && onGroupMultiDiscFolders) {
+                        if (canRunOps && onGroupMultiDiscFolders) {
                           onGroupMultiDiscFolders();
                         } else {
                           startSimulatedProgressTask(t('tools.lib.multiDiscGroup'), [
@@ -2840,13 +3093,10 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <button data-tool="scraper"
                       type="button"
                       onClick={() => {
-                        if (scannedRows.length > 0 && onScrapeMedia) {
-                          onScrapeMedia();
+                        if (onScrapeMedia) {
+                          openScope('scrape', (ids) => onScrapeMedia?.(ids, scrapeOptsRef.current));
                         } else {
-                          startSimulatedProgressTask(t('tools.sd.scraperBtn'), [
-                            t('tools.sim.sdScrap1'),
-                            t('tools.sim.sdScrap2'),
-                          ]);
+                          startSimulatedProgressTask(t('tools.sd.scraperBtn'), []);
                         }
                       }}
                       disabled={activeRunning}
@@ -2859,8 +3109,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <button data-tool="g1r"
                       type="button"
                       onClick={() => {
-                        if (scannedRows.length > 0 && onOrganizeCatalog) {
-                          onOrganizeCatalog();
+                        if (canRunOps && onOrganizeCatalog) {
+                          openScope('g1r', onOrganizeCatalog);
                         } else {
                           startSimulatedProgressTask(t('tools.sd.dedupBtn'), [
                             t('tools.sim.sdDedup1'),
@@ -2878,8 +3128,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <button data-tool="onlineRename"
                       type="button"
                       onClick={() => {
-                        if (scannedRows.length > 0 && onOnlineRename) {
-                          onOnlineRename();
+                        if (canRunOps && onOnlineRename) {
+                          openScope('rename', onOnlineRename);
                         } else {
                           startSimulatedProgressTask(t('tools.sd.onlineRenameBtn'), [
                             t('tools.sim.sdOnline1'),
@@ -2906,7 +3156,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <button data-tool="cleanup"
                       type="button"
                       onClick={() => {
-                        if (scannedRows.length > 0 && onScanPhantomFolders) {
+                        if (canRunOps && onScanPhantomFolders) {
                           onScanPhantomFolders();
                         } else {
                           startSimulatedProgressTask(t('tools.sd.cleanupBtn'), [
@@ -2950,7 +3200,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <button data-tool="sdRepair"
                       type="button"
                       onClick={() => {
-                        if (onRepairSdCard && (scannedRows.length > 0 || sdTargetFolderName)) {
+                        if (onRepairSdCard && (canRunOps || sdTargetFolderName)) {
                           onRepairSdCard(sdFirmwareId);
                         } else {
                           startSimulatedProgressTask(`${t('tools.sd.repairTitle')} (${sdFirmwareId})`, [
@@ -3255,7 +3505,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                             onClick={() => {
                               const ids = massMatchedGames.map((g) => g.id);
                               setConfirmMassDelete(false);
-                              if (scannedRows.length > 0 && onMassDeleteRoms) {
+                              if (canRunOps && onMassDeleteRoms) {
                                 onMassDeleteRoms(ids);
                               } else {
                                 const idSet = new Set(ids);
@@ -3302,7 +3552,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         disabled={activeRunning || massMatchedGames.length === 0}
                         onClick={() => {
                           const ids = massMatchedGames.map((g) => g.id);
-                          if (scannedRows.length > 0 && onMassMoveRoms) {
+                          if (canRunOps && onMassMoveRoms) {
                             onMassMoveRoms(ids);
                           } else {
                             startSimulatedProgressTask(
@@ -3324,7 +3574,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         type="button"
                         disabled={activeRunning}
                         onClick={() => {
-                          if (scannedRows.length > 0 && onMassSplitRoms) {
+                          if (canRunOps && onMassSplitRoms) {
                             onMassSplitRoms(massSplitMode);
                           } else {
                             startSimulatedProgressTask(
@@ -3981,6 +4231,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
           mode={groupedLibraryView.labelByLead.has(collectionModalLeadId) ? 'series' : 'collection'}
           title={
             groupedLibraryView.labelByLead.get(collectionModalLeadId) ||
+            groupedLibraryView.nameByLead.get(collectionModalLeadId) ||
             groupedLibraryView.membersByLead.get(collectionModalLeadId)!.find((m) => m.id === collectionModalLeadId)?.title ||
             ''
           }
@@ -3991,10 +4242,91 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
             setCollectionModalLeadId(null);
           }}
           onClose={() => setCollectionModalLeadId(null)}
+          onRemove={(id) => {
+            // Ручная группа — убрать из неё; автоматическая — вынуть игру из группы.
+            // Manual group: remove from it; automatic group: take the game out.
+            const row = enrichedGamesSource.find((g) => g.id === id);
+            if (!row) return;
+            const key = gameKeyOf(row);
+            const isSeries = groupedLibraryView.labelByLead.has(collectionModalLeadId);
+            const manual = isSeries ? row.manualSeries : row.manualCollection;
+            const prefix = isSeries ? 'm:s:' : 'm:c:';
+            if (manual && manual.startsWith(prefix)) removeFromManualGroup(manual.slice(prefix.length), [key]);
+            else setDetached(isSeries ? 'series' : 'collection', [key], true);
+          }}
+          onOpenManager={() => {
+            setCollectionModalLeadId(null);
+            setManualGroupsTab('groups');
+          }}
+        />
+      )}
+
+      {manualGroupsTab && (
+        <ManualGroupsModal
+          games={enrichedGamesSource}
+          checkedIds={Object.keys(checkedGameIds).filter((id) => checkedGameIds[id])}
+          suggestions={groupSuggestions}
+          initialTab={manualGroupsTab}
+          onClose={() => setManualGroupsTab(null)}
+          onLog={onAddLog}
         />
       )}
 
       <DonateModal open={donateOpen} onClose={() => setDonateOpen(false)} />
+      {settingsOpen && (
+        <SettingsModal onClose={() => setSettingsOpen(false)} onSaved={() => onSettingsSaved?.()} />
+      )}
+
+      <OperationScopeModal
+        open={Boolean(scopeRequest)}
+        operation={scopeRequest?.op || 'other'}
+        rows={scopeRows}
+        busy={activeRunning}
+        extra={
+          scopeRequest?.op === 'scrape' ? (
+            <div className="space-y-4">
+              <ScrapeSourcesPanel
+                value={scrapeOpts.sources}
+                onChange={(sources) => setScrapeOpts({ ...scrapeOpts, sources })}
+                onOpenScreenScraper={() => {
+                  setScopeRequest(null);
+                  // Блок логина ScreenScraper — в «Инструментах». / The ScreenScraper login block is in Tools.
+                  setTimeout(
+                    () =>
+                      document
+                        .querySelector('[data-tool="screenscraper"]')
+                        ?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
+                    50
+                  );
+                }}
+              />
+              <div className="border-t border-slate-200 dark:border-slate-800" />
+              <ScrapeOptionsPanel value={scrapeOpts} onChange={setScrapeOpts} />
+            </div>
+          ) : scopeRequest?.op === 'gameData' ? (
+            <GameDataFormatPicker
+              value={gameDataFormat}
+              onChange={(f) => {
+                setGameDataFormat(f);
+                saveGameDataFormat(f);
+              }}
+            />
+          ) : undefined
+        }
+        hasMedia={scopeRequest?.op === 'scrape' ? (row) => rowHasScrapeMedia(row as any, scrapeOpts.slots) : undefined}
+        onClose={() => setScopeRequest(null)}
+        onConfirm={(ids, scope) => {
+          const req = scopeRequest;
+          setScopeRequest(null);
+          if (!req) return;
+          if (req.op === 'scrape') saveScrapeOptions(scrapeOpts);
+          markProcessed(req.op, ids);
+          onAddLog?.(
+            tf('scope.log', { op: t(`scope.op.${req.op}`), scope: describeScope(scope), count: ids.length })
+          );
+          req.run(ids);
+        }}
+      />
 
       {quickTestReq && (
         <QuickTestModal

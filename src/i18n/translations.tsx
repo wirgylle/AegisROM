@@ -11,9 +11,16 @@ import { IT } from './locales/it';
 import { SETUP_STRINGS } from './locales/setup';
 import { BIOS_STRINGS } from './biosStrings';
 import { COLLECTION_STRINGS } from './collectionStrings';
+import { LIBRARY_VIEW_STRINGS } from './libraryViewStrings';
 import { EDITOR_STRINGS } from './editorStrings';
 import { SAVE_STRINGS } from './saveStrings';
+import { BUILD_EXPORT_STRINGS } from './buildExportStrings';
 import { DONATE_STRINGS } from './donateStrings';
+import { SETTINGS_STRINGS } from './settingsStrings';
+import { SCOPE_STRINGS } from './scopeStrings';
+import { SCRAPE_STRINGS } from './scrapeStrings';
+import { GAME_DATA_STRINGS } from './gameDataStrings';
+import { GROUP_STRINGS } from './groupStrings';
 
 export type SupportedLanguage =
   | 'en'
@@ -80,18 +87,18 @@ export function detectSystemLanguage(): SupportedLanguage {
 
 // Отдельные файлы строк (мастер настройки, BIOS) подмешиваются сюда.
 // Separate string files (setup wizard, BIOS) are merged here.
-const EN_ALL = { ...EN, ...SETUP_STRINGS.en, ...BIOS_STRINGS.en, ...COLLECTION_STRINGS.en, ...SAVE_STRINGS.en, ...EDITOR_STRINGS.en, ...DONATE_STRINGS.en };
+const EN_ALL = { ...EN, ...SETUP_STRINGS.en, ...BIOS_STRINGS.en, ...COLLECTION_STRINGS.en, ...SAVE_STRINGS.en, ...BUILD_EXPORT_STRINGS.en, ...EDITOR_STRINGS.en, ...DONATE_STRINGS.en, ...LIBRARY_VIEW_STRINGS.en, ...SETTINGS_STRINGS.en, ...SCOPE_STRINGS.en, ...SCRAPE_STRINGS.en, ...GAME_DATA_STRINGS.en, ...GROUP_STRINGS.en };
 
 const DICTS: Record<SupportedLanguage, TranslationDict> = {
-  ru: { ...RU, ...SETUP_STRINGS.ru, ...BIOS_STRINGS.ru, ...COLLECTION_STRINGS.ru, ...SAVE_STRINGS.ru, ...EDITOR_STRINGS.ru, ...DONATE_STRINGS.ru },
+  ru: { ...RU, ...SETUP_STRINGS.ru, ...BIOS_STRINGS.ru, ...COLLECTION_STRINGS.ru, ...SAVE_STRINGS.ru, ...BUILD_EXPORT_STRINGS.ru, ...EDITOR_STRINGS.ru, ...DONATE_STRINGS.ru, ...LIBRARY_VIEW_STRINGS.ru, ...SETTINGS_STRINGS.ru, ...SCOPE_STRINGS.ru, ...SCRAPE_STRINGS.ru, ...GAME_DATA_STRINGS.ru, ...GROUP_STRINGS.ru },
   en: EN_ALL,
-  de: { ...DE, ...SETUP_STRINGS.de, ...BIOS_STRINGS.de, ...COLLECTION_STRINGS.de, ...EDITOR_STRINGS.de, ...DONATE_STRINGS.de },
-  es: { ...ES, ...SETUP_STRINGS.es, ...BIOS_STRINGS.es, ...COLLECTION_STRINGS.es, ...EDITOR_STRINGS.es, ...DONATE_STRINGS.es },
-  ja: { ...JA, ...SETUP_STRINGS.ja, ...BIOS_STRINGS.ja, ...COLLECTION_STRINGS.ja, ...EDITOR_STRINGS.ja, ...DONATE_STRINGS.ja },
-  zh: { ...ZH, ...SETUP_STRINGS.zh, ...BIOS_STRINGS.zh, ...COLLECTION_STRINGS.zh, ...EDITOR_STRINGS.zh, ...DONATE_STRINGS.zh },
-  sr: { ...SR, ...SETUP_STRINGS.sr, ...BIOS_STRINGS.sr, ...COLLECTION_STRINGS.sr, ...EDITOR_STRINGS.sr, ...DONATE_STRINGS.sr },
-  fr: { ...FR, ...SETUP_STRINGS.fr, ...BIOS_STRINGS.fr, ...COLLECTION_STRINGS.fr, ...EDITOR_STRINGS.fr, ...DONATE_STRINGS.fr },
-  it: { ...IT, ...SETUP_STRINGS.it, ...BIOS_STRINGS.it, ...COLLECTION_STRINGS.it, ...EDITOR_STRINGS.it, ...DONATE_STRINGS.it },
+  de: { ...DE, ...SETUP_STRINGS.de, ...BIOS_STRINGS.de, ...COLLECTION_STRINGS.de, ...EDITOR_STRINGS.de, ...DONATE_STRINGS.de, ...SCRAPE_STRINGS.en },
+  es: { ...ES, ...SETUP_STRINGS.es, ...BIOS_STRINGS.es, ...COLLECTION_STRINGS.es, ...EDITOR_STRINGS.es, ...DONATE_STRINGS.es, ...SCRAPE_STRINGS.en },
+  ja: { ...JA, ...SETUP_STRINGS.ja, ...BIOS_STRINGS.ja, ...COLLECTION_STRINGS.ja, ...EDITOR_STRINGS.ja, ...DONATE_STRINGS.ja, ...SCRAPE_STRINGS.en },
+  zh: { ...ZH, ...SETUP_STRINGS.zh, ...BIOS_STRINGS.zh, ...COLLECTION_STRINGS.zh, ...EDITOR_STRINGS.zh, ...DONATE_STRINGS.zh, ...SCRAPE_STRINGS.en },
+  sr: { ...SR, ...SETUP_STRINGS.sr, ...BIOS_STRINGS.sr, ...COLLECTION_STRINGS.sr, ...EDITOR_STRINGS.sr, ...DONATE_STRINGS.sr, ...SCRAPE_STRINGS.en },
+  fr: { ...FR, ...SETUP_STRINGS.fr, ...BIOS_STRINGS.fr, ...COLLECTION_STRINGS.fr, ...EDITOR_STRINGS.fr, ...DONATE_STRINGS.fr, ...SCRAPE_STRINGS.en },
+  it: { ...IT, ...SETUP_STRINGS.it, ...BIOS_STRINGS.it, ...COLLECTION_STRINGS.it, ...EDITOR_STRINGS.it, ...DONATE_STRINGS.it, ...SCRAPE_STRINGS.en },
 };
 
 let activeLangRuntime: SupportedLanguage = detectSystemLanguage();
