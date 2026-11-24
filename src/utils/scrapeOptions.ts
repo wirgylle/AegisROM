@@ -96,3 +96,12 @@ export function skipKnownMiss(miss: ScrapeMiss | undefined, retryMisses: boolean
   if (ssConfigured && !(miss.source || '').includes('screenscraper')) return false;
   return true;
 }
+
+// «Медиа есть» для окна области по выбранным типам: у записи базы известны только обложка и видео,
+// поэтому скриншот и логотип проверяются по обложке.
+// "Has media" for the scope window by the chosen types: a database record only knows the cover and
+// video, so screenshot and logo are checked by the cover.
+export function rowHasScrapeMedia(row: { boxArtUrl?: string; videoUrl?: string }, slots: MediaSlot[]): boolean {
+  const ok = (u?: string) => Boolean(u && u.trim() && !u.startsWith('blob:'));
+  return slots.every((s) => (s === 'video' ? ok(row.videoUrl) : ok(row.boxArtUrl)));
+}

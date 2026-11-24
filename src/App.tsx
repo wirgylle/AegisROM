@@ -88,14 +88,12 @@ import {
   defaultScrapeOptions,
   fetchScrapeMisses,
   loadScrapeOptions,
-  saveScrapeOptions as persistScrapeOptions,
   needsScrape,
   saveScrapeMisses,
   skipKnownMiss,
   type ScrapeMiss,
   type ScrapeOptions,
 } from './utils/scrapeOptions';
-import { ScrapeStartModal } from './components/ScrapeStartModal';
 import {
   findGamelistEntry,
   indexGamelistEntries,
@@ -1753,7 +1751,6 @@ export function App() {
   const [scrapeShortVideos, setScrapeShortVideos] = useState(() => loadAppSettings().scrapeShortVideos);
   // Окно перед скраппером: типы медиа и повтор прошлых промахов; ids — выбранная область.
   // Pre-scrape window: media types and retrying misses; ids is the chosen scope.
-  const [scrapeStart, setScrapeStart] = useState<{ ids?: string[] } | null>(null);
   const [deleteJunkPermanently, setDeleteJunkPermanently] = useState(
     () => loadAppSettings().deleteJunkPermanently
   );
@@ -9315,7 +9312,7 @@ export function App() {
         onGroupMultiDiscFolders={() => void runWithSessionRoms('handleGroupMultiDiscFolders')}
         autoGroupMultiDisc={autoGroupMultiDisc}
         onChangeAutoGroupMultiDisc={setAutoGroupMultiDisc}
-        onScrapeMedia={(ids?: string[]) => setScrapeStart({ ids })}
+        onScrapeMedia={(ids?: string[], o?: ScrapeOptions) => void handleScrapeLibraryMedia(ids, o || loadScrapeOptions(defaultScrapeOptions(scrapeShortVideos)))}
         onOnlineRename={(ids?: string[]) => void runWithSessionRoms('handleOnlineRenameRoms', ids)}
         scrapeReport={scrapeReport}
         datSystems={datSystems}
@@ -9623,19 +9620,6 @@ export function App() {
             </div>
           </div>
         </div>
-      )}
-      {scrapeStart && (
-        <ScrapeStartModal
-          open
-          initial={loadScrapeOptions(defaultScrapeOptions(scrapeShortVideos))}
-          onClose={() => setScrapeStart(null)}
-          onConfirm={(o) => {
-            const ids = scrapeStart.ids;
-            setScrapeStart(null);
-            persistScrapeOptions(o);
-            void handleScrapeLibraryMedia(ids, o);
-          }}
-        />
       )}
     </div>
   );

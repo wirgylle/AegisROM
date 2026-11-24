@@ -31,3 +31,11 @@ test('skipKnownMiss', () => {
   assert.equal(skipKnownMiss({ ...miss, source: 'libretro+screenscraper' }, false, true), true);
   assert.equal(skipKnownMiss({ code: 'network', at: 1 }, false, false), false, 'network errors are retried');
 });
+
+test('rowHasScrapeMedia follows the chosen types', async () => {
+  const { rowHasScrapeMedia } = await import('./scrapeOptions.ts');
+  const row = { boxArtUrl: 'x.png' };
+  assert.equal(rowHasScrapeMedia(row, ['image', 'marquee']), true);
+  assert.equal(rowHasScrapeMedia(row, ['image', 'video']), false);
+  assert.equal(rowHasScrapeMedia({ boxArtUrl: 'blob:abc' }, ['image']), false);
+});
