@@ -36,6 +36,7 @@ import {
   Wand2,
   Settings as SettingsIcon,
   Coffee,
+  FolderPlus,
 } from 'lucide-react';
 import { GameInspectorCoverVideo } from './GameInspectorCoverVideo';
 import { DatFilesPanel } from './DatFilesPanel';
@@ -77,6 +78,7 @@ import { EditorToolbar, GameEditModal, useManualEditsVersion } from './LibraryEd
 import { applyManualEditToRow, exportManualEdits, importManualEdits } from '../utils/manualEdits';
 import { CollectionModal } from './CollectionModal';
 import { ManualGroupsModal } from './ManualGroupsModal';
+import { AddToGroupModal } from './AddToGroupModal';
 import { useManualGroupsVersion } from './useManualGroups';
 import {
   applyManualGroups,
@@ -1014,6 +1016,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     saveMediaPrefs(p);
   };
   const [collectionModalLeadId, setCollectionModalLeadId] = useState<string | null>(null);
+  // «В коллекцию или серию…»: id ромов, которые добавляем. / ROM ids being added to a group.
+  const [addToGroupIds, setAddToGroupIds] = useState<string[] | null>(null);
   const [manualGroupsTab, setManualGroupsTab] = useState<null | 'groups' | 'suggest' | 'detached'>(null);
 
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -1794,6 +1798,25 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     () => indexCollections(enrichedGamesSource),
     [enrichedGamesSource]
   );
+  // Кнопка на карточке: в сгруппированном виде берём все версии игры, в таблице без группировки — один файл.
+  // Card button: grouped views take every version of the game, an ungrouped table takes one file.
+  const openAddToGroup = useCallback(
+    (id: string, wholeGame: boolean) => {
+      const members = wholeGame
+        ? libraryCollectionIndex.byKey.get(libraryCollectionIndex.keyOfId.get(id) || '')?.members
+        : undefined;
+      setAddToGroupIds(members && members.length > 0 ? members.map((m) => m.id) : [id]);
+    },
+    [libraryCollectionIndex]
+  );
+  const groupedForAdd = Boolean(groupedLibraryView);
+  const onCardAddToGroup = useCallback((id: string) => openAddToGroup(id, groupedForAdd), [openAddToGroup, groupedForAdd]);
+  const addToGroupTargets = React.useMemo(() => {
+    if (!addToGroupIds) return [];
+    const set = new Set(addToGroupIds);
+    return enrichedGamesSource.filter((g) => set.has(g.id));
+  }, [addToGroupIds, enrichedGamesSource]);
+
   const libraryLeadByKey = React.useMemo(() => {
     const m = new Map<string, string>();
     for (const [k, c] of libraryCollectionIndex.byKey) m.set(k, c.lead.id);
@@ -2607,6 +2630,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                 }
                 collections={groupedLibraryView?.badges}
                 onOpenCollection={setCollectionModalLeadId}
+                onAddToGroup={onCardAddToGroup}
                 mediaPrefs={libraryMediaPrefs}
                 checkedGameIds={checkedGameIds}
                 onSelectGame={handleSelectGame}
@@ -3965,6 +3989,15 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   </div>
 
                   {/* Versions, series and description */}
+                  <button
+                    type="button"
+                    onClick={() => openAddToGroup(selectedGame.id, true)}
+                    className="w-full h-8 px-3 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center justify-center gap-1.5 cursor-pointer transition"
+                  >
+                    <FolderPlus className="w-3.5 h-3.5" />
+                    {t('atg.button')}
+                  </button>
+
                   <GameRelationsPanel
                     game={selectedGame}
                     versions={
@@ -4280,6 +4313,15 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
             setCollectionModalLeadId(null);
             setManualGroupsTab('groups');
           }}
+        />
+      )}
+
+      {addToGroupTargets.length > 0 && (
+        <AddToGroupModal
+          games={enrichedGamesSource}
+          targets={addToGroupTargets}
+          onClose={() => setAddToGroupIds(null)}
+          onLog={onAddLog}
         />
       )}
 
