@@ -129,3 +129,72 @@ test('studioOf / studioKeyOf', async () => {
   assert.equal(studioKeyOf({ developer: 'Capcom Co., Ltd.' }), studioKeyOf({ developer: 'capcom co' }));
   assert.equal(studioKeyOf({}), NO_STUDIO);
 });
+
+// Случай из отчёта: три версии одной игры на разных консолях и одна другая игра с тем же началом.
+// The reported case: three versions of one game on different consoles and one other game.
+const jungle = [
+  g('j1', 'Jungle Book, The (USA)', 'NES', 'E0000001'),
+  g('j2', 'Jungle Book, The (USA)', 'SNES', 'E0000002'),
+  g('j3', 'Jungle Book, The (Europe)', 'MD', 'E0000003'),
+  g('j4', 'Jungle Book Groove Party (Europe)', 'PS1', 'E0000004'),
+];
+
+test('предложения: серия показывает игры с версиями, коллекция внутри серии предлагается отдельно', async () => {
+  const { applySuggestionEdit } = await import('./manualGroups.ts');
+  const sug = suggestGroups(jungle, emptyGroupsState());
+  const ser = sug.find((s) => s.kind === 'series' && s.action === 'create');
+  assert.ok(ser, JSON.stringify(sug));
+  assert.equal(ser!.parts!.length, 2);
+  const book = ser!.parts!.find((p) => p.gameIds.includes('j1'))!;
+  assert.deepEqual(book.consoles, ['NES', 'SNES', 'MD']);
+  assert.equal(book.title, 'Jungle Book, The');
+  const col = sug.find((s) => s.kind === 'collection');
+  assert.ok(col, JSON.stringify(sug));
+  assert.equal(col!.reason, 'multi-console');
+  assert.equal(col!.parentId, ser!.id);
+  assert.deepEqual(new Set(col!.gameIds), new Set(['j1', 'j2', 'j3']));
+  // Правка состава перед «Принять»: сняли Groove Party и сменили вид на коллекцию.
+  const e = applySuggestionEdit(ser!, { excluded: [gameKeyOf(jungle[3])], kind: 'collection', name: ' Книга джунглей ' })!;
+  assert.equal(e.kind, 'collection');
+  assert.equal(e.name, 'Книга джунглей');
+  assert.deepEqual(e.gameIds, ['j1', 'j2', 'j3']);
+  assert.equal(e.parts!.length, 1);
+  assert.equal(applySuggestionEdit(col!, { excluded: col!.gameKeys }), null);
+});
+
+test('предложения: одна игра на разных консолях без серии — не серия', () => {
+  const only = jungle.slice(0, 3);
+  const sug = suggestGroups(only, emptyGroupsState());
+  assert.ok(!sug.some((s) => s.kind === 'series'), JSON.stringify(sug));
+  // И не засыпаем окно коллекциями вне серий. / No collection outside a series either.
+  assert.equal(sug.length, 0);
+});
+
+test('предложения: коллекция внутри ручной серии и после отклонения серии', () => {
+  const st = withMembersAdded(
+    { ...emptyGroupsState(), groups: [{ id: 'jb', kind: 'series', name: 'Jungle Book', members: [], createdAt: 0 }] },
+    'jb',
+    jungle.map(gameKeyOf)
+  );
+  const sug = suggestGroups(applyManualGroups(jungle, st), st);
+  const col = sug.find((s) => s.kind === 'collection')!;
+  assert.ok(col);
+  assert.equal(col.seriesName, 'Jungle Book');
+  assert.equal(col.parentId, undefined);
+  const st2 = { ...emptyGroupsState(), rejected: ['new:jungle book'] };
+  const sug2 = suggestGroups(jungle, st2);
+  assert.ok(!sug2.some((s) => s.kind === 'series'));
+  assert.ok(sug2.some((s) => s.kind === 'collection' && !s.parentId));
+});
+
+test('предложения: коллекция внутри автоматической серии', () => {
+  const rows = [
+    g('m1', 'Super Mario Bros. (World)', 'NES', 'F0000001'),
+    g('m2', 'Super Mario Bros. (Europe)', 'GBC', 'F0000002'),
+    g('m3', 'Super Mario Bros. 3 (USA)', 'NES', 'F0000003'),
+  ];
+  const col = suggestGroups(rows, emptyGroupsState()).find((s) => s.kind === 'collection');
+  assert.ok(col);
+  assert.deepEqual(col!.consoles, ['NES', 'GBC']);
+  assert.equal(col!.seriesName, 'Super Mario Bros');
+});

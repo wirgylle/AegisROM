@@ -12,7 +12,7 @@
 // Nothing changes without confirmation: the user accepts or rejects each suggestion.
 // The game key is the same as for manual edits: console + CRC32, otherwise the row id.
 
-import { buildSeries, normalizeGameTitle, seriesKeyOf, type CollectionInput } from './gameCollections.ts';
+import { buildCollections, buildSeries, normalizeGameTitle, seriesKeyOf, type CollectionInput } from './gameCollections.ts';
 import { manualEditKey } from './manualEdits.ts';
 
 export type ManualGroupKind = 'collection' | 'series';
@@ -86,24 +86,69 @@ export function applyManualGroups<T extends GroupRowLike>(rows: readonly T[], st
   });
 }
 
+/**
+ * Одна игра внутри предложения серии: все её версии (консоли, регионы).
+ * One game inside a series suggestion: all its versions (consoles, regions).
+ */
+export interface SuggestionPart {
+  title: string;
+  consoles: string[];
+  gameIds: string[];
+  gameKeys: string[];
+}
+
 export interface GroupSuggestion {
   /** Стабильный id для «отклонить». / Stable id used to reject. */
   id: string;
   kind: ManualGroupKind;
-  /** Добавить в существующую ручную группу или создать новую серию. / Add to a manual group or create a series. */
+  /** Добавить в существующую ручную группу или создать новую. / Add to a manual group or create a new one. */
   action: 'add' | 'create';
   groupId?: string;
   name: string;
   /** Игры, которые предлагается добавить. / Games proposed for the group. */
   gameIds: string[];
   gameKeys: string[];
-  /** Для «create»: все игры будущей серии. / For "create": every game of the new series. */
-  reason: 'same-game' | 'same-series' | 'common-prefix';
+  reason: 'same-game' | 'same-series' | 'common-prefix' | 'multi-console';
+  /**
+   * Для новой серии: игры серии, каждая со своими версиями. Так видно, где одна игра на
+   * нескольких консолях (коллекция), а где разные игры (серия).
+   * For a new series: its games, each with its versions, so a game on several consoles
+   * (a collection) is told apart from different games (a series).
+   */
+  parts?: SuggestionPart[];
+  /** Консоли коллекции. / Consoles of a collection. */
+  consoles?: string[];
+  /** Коллекция внутри предложенной серии: id этого предложения. / Collection inside a suggested series. */
+  parentId?: string;
+  /** Название серии, в которую входит коллекция. / Name of the series the collection belongs to. */
+  seriesName?: string;
+}
+
+/** Правки предложения перед «Принять». / Edits to a suggestion before "Accept". */
+export interface SuggestionEdit {
+  name?: string;
+  kind?: ManualGroupKind;
+  /** Ключи игр, снятые галочкой. / Game keys the user unticked. */
+  excluded?: readonly string[];
 }
 
 // Слова, на которых общий префикс не заканчивается: «Legend of …», «Kirby's …».
 // Words a common prefix may not end with.
 const STOP_TAIL = new Set(['of', 'and', 'the', 'a', 'an', 'to', 'in', 'on', 'no', 'de', 'la', 'le', 'vs', 'for', 's']);
+
+/** Название без скобок региона и ревизии. / Title without region and revision brackets. */
+export function plainTitle(title: string): string {
+  return String(title || '').replace(/\[[^\]]*\]|\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim() || String(title || '');
+}
+
+function uniqueConsoles(rows: readonly { consoleShort?: string }[]): string[] {
+  const out: string[] = [];
+  for (const r of rows) {
+    const c = String(r.consoleShort || '').toUpperCase();
+    if (c && !out.includes(c)) out.push(c);
+  }
+  return out;
+}
 
 function titleCasePrefix(title: string, words: number): string {
   const raw = String(title || '')
@@ -208,7 +253,9 @@ export function suggestGroups<T extends GroupRowLike>(rows: readonly T[], state:
 
   // 3. Новые серии: разные автоматические серии с общими первыми двумя словами
   //    («Super Mario Bros.», «Super Mario World» → «Super Mario»).
+  //    В серии должно быть минимум две разные игры: одна игра на разных консолях — это коллекция.
   // 3. New series: automatic series sharing the first two words.
+  //    A series needs at least two different games: one game on several consoles is a collection.
   const free = rows.filter((r) => !r.manualSeries && r.manualSeries !== '');
   const series = buildSeries(free);
   const byPrefix = new Map<string, typeof series>();
@@ -223,29 +270,92 @@ export function suggestGroups<T extends GroupRowLike>(rows: readonly T[], state:
     arr.push(s);
     byPrefix.set(prefix, arr);
   }
+  // Серия, в которую входит игра (ручная или предложенная): для коллекций внутри серий.
+  // The series a game belongs to (manual or suggested): for collections inside series.
+  const seriesOfKey = new Map<string, { name: string; parentId?: string }>();
   for (const [prefix, list] of byPrefix) {
     if (list.length < 2) continue;
-    const id = `new:${prefix}`;
-    if (rejected.has(id)) continue;
     const members = list.flatMap((s) => s.members);
+    const parts: SuggestionPart[] = buildCollections(members).map((c) => {
+      const keys: string[] = [];
+      const ids: string[] = [];
+      for (const m of c.members) {
+        const k = gameKeyOf(m);
+        if (!keys.includes(k)) {
+          keys.push(k);
+          ids.push(m.id);
+        }
+      }
+      return { title: plainTitle(c.lead.title), consoles: c.consoles.slice(), gameIds: ids, gameKeys: keys };
+    });
+    if (parts.length < 2) continue;
+    const id = `new:${prefix}`;
     const lead = list.find((s) => s.key === prefix)?.lead || list[0].lead;
+    const name = titleCasePrefix(lead.title, 2);
+    const rejectedSeries = rejected.has(id);
+    for (const p of parts) for (const k of p.gameKeys) seriesOfKey.set(k, { name, parentId: rejectedSeries ? undefined : id });
+    if (rejectedSeries) continue;
+    out.push({
+      id,
+      kind: 'series',
+      action: 'create',
+      name,
+      gameIds: parts.flatMap((p) => p.gameIds),
+      gameKeys: parts.flatMap((p) => p.gameKeys),
+      reason: 'common-prefix',
+      parts,
+    });
+  }
+  // Автоматические серии из двух и больше игр: Super Mario Bros. на NES и GBC внутри «Super Mario».
+  // Automatic series of two or more games.
+  for (const s of series) {
+    if (s.games.length < 2 || s.key.startsWith('#')) continue;
+    for (const m of s.members) {
+      const k = gameKeyOf(m);
+      if (!seriesOfKey.has(k)) seriesOfKey.set(k, { name: s.label });
+    }
+  }
+  // Ручные серии тоже: коллекция внутри уже собранной серии.
+  // Manual series too: a collection inside a series the user already made.
+  for (const r of rows) {
+    const sid = r.manualSeries?.startsWith('m:s:') ? r.manualSeries.slice(4) : '';
+    const g = sid ? byGroup.get(sid) : undefined;
+    if (g) seriesOfKey.set(gameKeyOf(r), { name: g.name });
+  }
+
+  // 4. Новые коллекции: одна и та же игра на двух и больше консолях внутри серии.
+  //    Автоматически такие версии уже стоят вместе; ручная коллекция закрепляет их и даёт название.
+  //    Игры вне серий не предлагаем, чтобы не засыпать окно сотнями очевидных пар.
+  // 4. New collections: the same game on two or more consoles inside a series.
+  //    Games outside series are not suggested, so the window is not flooded with obvious pairs.
+  const freeCols = rows.filter((r) => !r.manualCollection && !state.detached[gameKeyOf(r)]?.collection);
+  for (const c of buildCollections(freeCols)) {
+    if (c.key.startsWith('#') || c.consoles.length < 2) continue;
+    const id = `newc:${c.key}`;
+    if (rejected.has(id)) continue;
     const keys: string[] = [];
     const ids: string[] = [];
-    for (const m of members) {
+    let ser: { name: string; parentId?: string } | undefined;
+    for (const m of c.members) {
       const k = gameKeyOf(m);
+      ser = ser || seriesOfKey.get(k);
       if (!keys.includes(k)) {
         keys.push(k);
         ids.push(m.id);
       }
     }
+    if (!ser) continue;
     out.push({
       id,
-      kind: 'series',
+      kind: 'collection',
       action: 'create',
-      name: titleCasePrefix(lead.title, 2),
+      name: plainTitle(c.lead.title),
       gameIds: ids,
       gameKeys: keys,
-      reason: 'common-prefix',
+      reason: 'multi-console',
+      consoles: uniqueConsoles(c.members),
+      parentId: ser.parentId,
+      seriesName: ser.name,
     });
   }
   return out;
@@ -431,9 +541,43 @@ export function setDetached(kind: ManualGroupKind, keys: readonly string[], on: 
   commit(withDetached(state, kind, keys, on));
 }
 
-export function acceptSuggestion(s: GroupSuggestion): void {
-  if (s.action === 'add' && s.groupId) addToManualGroup(s.groupId, s.gameKeys);
-  else createManualGroup(s.kind, s.name, s.gameKeys);
+/**
+ * Накладывает правки пользователя (название, вид, снятые игры). null — не осталось ни одной игры.
+ * Applies user edits (name, kind, unticked games). null when no game is left.
+ */
+export function applySuggestionEdit(s: GroupSuggestion, edit?: SuggestionEdit): GroupSuggestion | null {
+  if (!edit) return s.gameKeys.length ? s : null;
+  const drop = new Set(edit.excluded || []);
+  const gameKeys: string[] = [];
+  const gameIds: string[] = [];
+  s.gameKeys.forEach((k, i) => {
+    if (drop.has(k)) return;
+    gameKeys.push(k);
+    gameIds.push(s.gameIds[i]);
+  });
+  if (gameKeys.length === 0) return null;
+  const out: GroupSuggestion = { ...s, gameKeys, gameIds };
+  if (s.action === 'create') {
+    const name = (edit.name ?? '').trim();
+    if (name) out.name = name;
+    if (edit.kind) out.kind = edit.kind;
+  }
+  if (s.parts) {
+    out.parts = s.parts
+      .map((p) => {
+        const keep = p.gameKeys.map((k, i) => [k, p.gameIds[i]] as const).filter(([k]) => !drop.has(k));
+        return { ...p, gameKeys: keep.map((x) => x[0]), gameIds: keep.map((x) => x[1]) };
+      })
+      .filter((p) => p.gameKeys.length > 0);
+  }
+  return out;
+}
+
+export function acceptSuggestion(s: GroupSuggestion, edit?: SuggestionEdit): void {
+  const e = applySuggestionEdit(s, edit);
+  if (!e) return;
+  if (e.action === 'add' && e.groupId) addToManualGroup(e.groupId, e.gameKeys);
+  else createManualGroup(e.kind, e.name, e.gameKeys);
 }
 
 export function rejectSuggestion(s: GroupSuggestion): void {
