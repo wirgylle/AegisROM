@@ -109,6 +109,38 @@ jobs:
       - name: Build AegisROM.app & .dmg (arm64 + amd64)
         run: npm run release:mac
 
+      # Пробный запуск собранного .app из .dmg: проверяет подпись и что приложение не падает при старте.
+      # Smoke launch of the built .app from the .dmg: checks the signature and that the app does not crash on start.
+      - name: Smoke launch .app
+        run: |
+          set -u
+          DMG="$(ls public/downloads/AegisROM-v*-macOS-universal.dmg | head -n1)"
+          MNT="$(mktemp -d)"
+          hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MNT"
+          APP="$MNT/AegisROM.app"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv "$APP" 2>&1 || true
+          spctl -a -vv "$APP" 2>&1 || echo "spctl: rejected (expected without notarization)"
+          lipo -archs "$APP/Contents/MacOS/AegisROM"
+          LOG="$RUNNER_TEMP/aegis-smoke.log"
+          "$APP/Contents/MacOS/AegisROM" >"$LOG" 2>&1 &
+          PID=$!
+          sleep 10
+          if kill -0 "$PID" 2>/dev/null; then
+            echo "AegisROM is running after 10 s"
+            kill "$PID" || true
+            wait "$PID" 2>/dev/null || true
+            STATUS=0
+          else
+            CODE=0; wait "$PID" || CODE=$?
+            echo "::error::AegisROM exited during startup (code $CODE)"
+            STATUS=1
+          fi
+          echo "----- app output -----"; cat "$LOG"
+          ls -t ~/Library/Logs/DiagnosticReports/AegisROM* 2>/dev/null | head -n1 | xargs -I{} sh -c 'echo "----- crash report {} -----"; head -n 80 "{}"' || true
+          hdiutil detach "$MNT" || true
+          exit $STATUS
+
       - name: Upload .dmg
         uses: actions/upload-artifact@v4
         with:
