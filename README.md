@@ -106,7 +106,7 @@ The Settings button in the header: theme (light, dark or same as system), langua
 | For `.chd` conversion | `chdman` from the MAME package |
 | Internet | only needed for the box art scraper and the PortMaster catalog |
 
-There are no Linux or macOS versions yet; they are planned.
+A macOS test version (one `.dmg` for Intel and Apple Silicon) is in dev builds and hasn't been checked on a real Mac yet: see [docs/macos.md](docs/macos.md). There is no Linux version yet.
 
 ## Installation
 

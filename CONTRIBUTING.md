@@ -34,7 +34,7 @@
 
 | Область | Файлы |
 |---|---|
-| Бэкенд | `aegiscore/`, `aegisapi/`, `cmd/`, `go.mod` |
+| Бэкенд | `aegiscore/`, `aegisapi/`, `aegisdesktop/`, `aegistransfer/`, `cmd/`, `go.mod` |
 | Фронтенд | `src/`, `index.html`, `vite.config.ts` (dev-прокси к Go API) |
 | Дизайн | `src/components/`, `src/index.css`, `public/` (иконки, манифест) |
 | Архитектура | структура пакетов, `docs/architecture.md` |
@@ -45,7 +45,7 @@
 ## Что не коммитим
 
 - Бинарники (`.exe`, `.zip`, `cmd/aegis-setup/payload/AegisROM.exe.gz`) — они публикуются через GitHub Releases.
-- Сгенерированный фронтенд `cmd/aegis-gui/webdist/` (кроме `.gitkeep`).
+- Сгенерированный фронтенд `cmd/aegis-gui/webdist/` и `cmd/aegis-mac/webdist/` (кроме `.gitkeep`), `.dmg`.
 - `data/` — локальная база dev-сервера с вашими путями.
 - `.env*`, `node_modules/`, `dist/`.
 
