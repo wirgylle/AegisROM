@@ -33,6 +33,23 @@ var screenScraperAPIBase = "https://api.screenscraper.fr/api2"
 
 const screenScraperSoftName = "AegisROM"
 
+// Ключ разработчика ScreenScraper, вшитый при сборке (как у EmulationStation на R36S):
+// пользователю хватает своего логина и пароля. В git ключа нет, его подставляет CI из секретов:
+//
+//	go build -ldflags "-X aegisgui/aegisapi.ssBuiltinDevID=... -X aegisgui/aegisapi.ssBuiltinDevPassword=..."
+//
+// Если ключ не вшит (локальная сборка), его можно ввести вручную в «Дополнительно».
+//
+// ScreenScraper developer key baked in at build time (as EmulationStation on the R36S does), so the user
+// only needs their own login and password. The key is not in git; CI injects it from secrets via -ldflags.
+// Without a baked key (local builds) it can be entered by hand under "Advanced".
+var (
+	ssBuiltinDevID       = ""
+	ssBuiltinDevPassword = ""
+)
+
+func ssHasBuiltinDevKey() bool { return ssBuiltinDevID != "" && ssBuiltinDevPassword != "" }
+
 // ssSystemIDs: id систем ScreenScraper по имени системы Libretro (как в CONSOLE_CATALOG).
 // Список составлен по документации ScreenScraper, на живом API не сверен.
 // ssSystemIDs maps Libretro system names to ScreenScraper system ids (from the docs, not
@@ -86,14 +103,26 @@ type ssCredentials struct {
 	MaxPerMin int `json:"maxPerMin,omitempty"`
 }
 
+// devKey: свой ключ пользователя, иначе вшитый. / The user's own key, else the built-in one.
+func (c ssCredentials) devKey() (string, string) {
+	if c.DevID != "" && c.DevPassword != "" {
+		return c.DevID, c.DevPassword
+	}
+	return ssBuiltinDevID, ssBuiltinDevPassword
+}
+
+// configured: нужны логин и пароль; ключ разработчика — только если он не вшит в сборку.
+// configured: login and password; a developer key only when none is built in.
 func (c ssCredentials) configured() bool {
-	return c.DevID != "" && c.DevPassword != "" && c.User != "" && c.Password != ""
+	id, pw := c.devKey()
+	return id != "" && pw != "" && c.User != "" && c.Password != ""
 }
 
 func (c ssCredentials) authParams() url.Values {
 	v := url.Values{}
-	v.Set("devid", c.DevID)
-	v.Set("devpassword", c.DevPassword)
+	id, pw := c.devKey()
+	v.Set("devid", id)
+	v.Set("devpassword", pw)
 	v.Set("softname", screenScraperSoftName)
 	v.Set("ssid", c.User)
 	v.Set("sspassword", c.Password)
@@ -503,7 +532,11 @@ func registerScreenScraperRoutes(mux *http.ServeMux, appDir string, touch func()
 		switch r.Method {
 		case http.MethodGet:
 			c := ss.get()
-			writeJSON(w, map[string]any{"configured": c.configured(), "user": c.User, "hasDevKey": c.DevID != ""})
+			writeJSON(w, map[string]any{
+				"configured": c.configured(), "user": c.User, "hasDevKey": c.DevID != "",
+				// builtinDevKey=true — форме нужны только логин и пароль. / The form needs login and password only.
+				"builtinDevKey": ssHasBuiltinDevKey(),
+			})
 		case http.MethodDelete:
 			ss.clear()
 			writeJSON(w, map[string]any{"ok": true, "configured": false})
@@ -525,8 +558,12 @@ func registerScreenScraperRoutes(mux *http.ServeMux, appDir string, touch func()
 			if in.DevID == "" {
 				in.DevID = old.DevID
 			}
+			if in.User == "" || in.Password == "" {
+				writeJSON(w, map[string]any{"ok": false, "error": "нужны логин и пароль ScreenScraper / ScreenScraper login and password are required"})
+				return
+			}
 			if !in.configured() {
-				writeJSON(w, map[string]any{"ok": false, "error": "нужны все четыре поля"})
+				writeJSON(w, map[string]any{"ok": false, "error": "в этой сборке нет ключа разработчика: укажите devid и devpassword в «Дополнительно» / this build has no developer key: enter devid and devpassword under Advanced"})
 				return
 			}
 			info, err := ss.checkUser(in)

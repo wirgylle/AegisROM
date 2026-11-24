@@ -24,15 +24,17 @@ func withLibretroServer(t *testing.T, names []string, status int) *int32 {
 		}
 		_, _ = w.Write([]byte(b.String()))
 	}))
-	oldBase, oldDelay := libretroThumbnailsBase, libretroIndexRetryDelay
-	libretroThumbnailsBase, libretroIndexRetryDelay = srv.URL, 0
+	oldBase, oldDelay, oldGH := libretroThumbnailsBase, libretroIndexRetryDelay, libretroGitHubAPIBase
+	libretroThumbnailsBase, libretroIndexRetryDelay, libretroGitHubAPIBase = srv.URL, 0, ""
 	cacheMu.Lock()
 	libretroIndexCache = make(map[string][]libretroEntry)
+	libretroIndexInfo = make(map[string]*libretroIndexData)
+	libretroDiskCacheDir = ""
 	libretroIndexFailures = make(map[string]indexFailure)
 	cacheMu.Unlock()
 	t.Cleanup(func() {
 		srv.Close()
-		libretroThumbnailsBase, libretroIndexRetryDelay = oldBase, oldDelay
+		libretroThumbnailsBase, libretroIndexRetryDelay, libretroGitHubAPIBase = oldBase, oldDelay, oldGH
 	})
 	return &hits
 }
