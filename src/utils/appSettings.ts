@@ -18,8 +18,8 @@ export const APP_SETTINGS_STORAGE_KEY = 'aegisrom_settings_v1';
 export type ThemePreference = 'system' | 'light' | 'dark';
 export type StartSection = 'library' | 'tools' | 'builds' | 'env';
 export type LibraryViewMode = 'presentation' | 'compact' | 'editor';
-export type LibrarySortBy = 'title' | 'console' | 'bitness' | 'genre' | 'age' | 'size' | 'status';
-export type SidebarGroupBy = 'console' | 'bitness' | 'genre' | 'age';
+export type LibrarySortBy = 'title' | 'console' | 'bitness' | 'genre' | 'age' | 'size' | 'status' | 'studio';
+export type SidebarGroupBy = 'console' | 'bitness' | 'genre' | 'age' | 'studio';
 export type CatalogMode = 'gen_then_console' | 'r36s_gen_direct' | 'r36s_flat_console';
 export type PriorityPreset = 'rus_first' | 'usa_first' | 'eur_first' | 'jpn_first';
 export type CombineMoveMode = 'move' | 'copy';
@@ -83,8 +83,8 @@ export const APP_SETTINGS_CHOICES = {
   theme: ['system', 'light', 'dark'],
   startSection: ['library', 'tools', 'builds', 'env'],
   libraryView: ['presentation', 'compact', 'editor'],
-  librarySortBy: ['title', 'console', 'bitness', 'genre', 'age', 'size', 'status'],
-  sidebarGroupBy: ['console', 'bitness', 'genre', 'age'],
+  librarySortBy: ['title', 'console', 'bitness', 'genre', 'age', 'size', 'status', 'studio'],
+  sidebarGroupBy: ['console', 'bitness', 'genre', 'age', 'studio'],
   catalogMode: ['r36s_flat_console', 'gen_then_console', 'r36s_gen_direct'],
   priorityPreset: ['rus_first', 'usa_first', 'eur_first', 'jpn_first'],
   combineMoveMode: ['move', 'copy'],

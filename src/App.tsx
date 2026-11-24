@@ -121,6 +121,7 @@ import {
   rememberGamelistOriginal,
   type ManualEdit,
 } from './utils/manualEdits';
+import { exportManualGroups, importManualGroups } from './utils/manualGroups';
 import {
   ConsoleSteamTabs,
   type PersistentDbState,
@@ -3302,6 +3303,7 @@ export function App() {
             const n = importManualEdits(parsed.manualEdits);
             if (n > 0) addLog(tf('ed.importedLog', { count: n }));
           }
+          if (parsed?.manualGroups) importManualGroups(parsed.manualGroups);
           if (parsed && Array.isArray(parsed.records)) {
             await handleUpdateDbState({
               ...dbState,
@@ -3443,6 +3445,7 @@ export function App() {
         exportedAt: new Date().toISOString(),
         totalRoms: roms.length || dbState.records.length,
         manualEdits: exportManualEdits(),
+        manualGroups: exportManualGroups(),
       },
       null,
       2

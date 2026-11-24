@@ -21,6 +21,16 @@ export interface CollectionInput {
   consoleShort: string;
   modKind?: string;
   boxArtUrl?: string;
+  /**
+   * Ручные группы (utils/manualGroups.ts). Ключ коллекции/серии, заданный пользователем, и название.
+   * Пустая строка в manualSeries — игру вынули из автоматической серии.
+   * Manual groups (utils/manualGroups.ts): user-set collection/series key and name.
+   * An empty manualSeries means the game was taken out of its automatic series.
+   */
+  manualCollection?: string;
+  manualCollectionLabel?: string;
+  manualSeries?: string;
+  manualSeriesLabel?: string;
 }
 
 /** Приводит название к ключу сравнения. / Turns a title into a comparison key. */
@@ -83,7 +93,10 @@ export function seriesKeyOf(title: string): string {
 }
 
 /** Ключ коллекции (одна игра на всех консолях). / Collection key (one game on every console). */
-export function collectionKeyOf(g: Pick<CollectionInput, 'title' | 'cleanFile' | 'oldFile' | 'id'>): string {
+export function collectionKeyOf(
+  g: Pick<CollectionInput, 'title' | 'cleanFile' | 'oldFile' | 'id'> & { manualCollection?: string }
+): string {
+  if (g.manualCollection) return g.manualCollection;
   return normalizeGameTitle(g.title) || normalizeGameTitle(g.cleanFile || '') || normalizeGameTitle(g.oldFile || '') || `#${g.id}`;
 }
 
@@ -94,6 +107,8 @@ export interface GameCollection<T extends CollectionInput = CollectionInput> {
   lead: T;
   members: T[];
   consoles: string[];
+  /** Название ручной коллекции. / Manual collection name. */
+  label?: string;
 }
 
 function leadRank(g: CollectionInput): number {
@@ -114,11 +129,14 @@ export function buildCollections<T extends CollectionInput>(games: readonly T[])
     const key = collectionKeyOf(g);
     let c = byKey.get(key);
     if (!c) {
-      c = { key, seriesKey: seriesKeyOf(g.title), lead: g, members: [], consoles: [] };
+      c = { key, seriesKey: g.manualSeries !== undefined ? g.manualSeries : seriesKeyOf(g.title), lead: g, members: [], consoles: [] };
+      if (g.manualCollection && g.manualCollectionLabel) c.label = g.manualCollectionLabel;
       byKey.set(key, c);
       order.push(c);
     }
     c.members.push(g);
+    // Ручная серия у любой версии игры переносит в неё всю игру. / A manual series on any version moves the whole game.
+    if (g.manualSeries && !String(c.seriesKey).startsWith('m:')) c.seriesKey = g.manualSeries;
     const cs = (g.consoleShort || '').toUpperCase();
     if (cs && !c.consoles.includes(cs)) c.consoles.push(cs);
     if (leadRank(g) < leadRank(c.lead)) c.lead = g;
@@ -173,6 +191,8 @@ export interface GameSeries<T extends CollectionInput = CollectionInput> {
   games: GameCollection<T>[];
   members: T[];
   consoles: string[];
+  /** Серия создана вручную. / The series was made by hand. */
+  manual?: boolean;
 }
 
 /**
@@ -214,8 +234,16 @@ export function buildSeries<T extends CollectionInput>(games: readonly T[]): Gam
   const cols = buildCollections(games);
   const keyCount = new Map<string, number>();
   const bases = new Set<string>();
+  const manualLabel = new Map<string, string>();
   for (const c of cols) {
-    if (!c.seriesKey) continue;
+    for (const m of c.members) {
+      if (m.manualSeries && m.manualSeriesLabel && !manualLabel.has(m.manualSeries)) manualLabel.set(m.manualSeries, m.manualSeriesLabel);
+    }
+  }
+  const isManual = (c: GameCollection<T>) => manualLabel.has(c.seriesKey) || c.seriesKey.startsWith('m:');
+  const isDetached = (c: GameCollection<T>) => c.members.some((m) => m.manualSeries === '');
+  for (const c of cols) {
+    if (!c.seriesKey || isManual(c)) continue;
     keyCount.set(c.seriesKey, (keyCount.get(c.seriesKey) || 0) + 1);
     if (c.seriesKey !== c.key) bases.add(c.seriesKey);
   }
@@ -225,7 +253,13 @@ export function buildSeries<T extends CollectionInput>(games: readonly T[]): Gam
   const byKey = new Map<string, GameSeries<T>>();
   const order: GameSeries<T>[] = [];
   for (const c of cols) {
-    const base = sortedBases.find((b) => startsWithWords(c.key, b)) || c.seriesKey || c.key;
+    // Ручная серия важнее автоматической; вынутая из серии игра стоит отдельно.
+    // A manual series wins over the automatic one; a detached game stands alone.
+    const base = isManual(c)
+      ? c.seriesKey
+      : isDetached(c)
+      ? `#solo:${c.key}`
+      : sortedBases.find((b) => startsWithWords(c.key, b)) || c.seriesKey || c.key;
     let s = byKey.get(base);
     if (!s) {
       s = { key: base, label: '', lead: c.lead, games: [], members: [], consoles: [] };
@@ -242,7 +276,9 @@ export function buildSeries<T extends CollectionInput>(games: readonly T[]): Gam
     const exact = s.games.find((c) => c.key === s.key);
     const withArt = s.games.find((c) => c.lead.boxArtUrl);
     s.lead = (exact || withArt || s.games[0]).lead;
-    s.label = s.games.length > 1 ? seriesLabelOf(s.lead.title, s.key) : s.lead.title;
+    const ml = manualLabel.get(s.key);
+    s.label = ml || (s.games.length > 1 ? seriesLabelOf(s.lead.title, s.key) : s.games[0].label || s.lead.title);
+    if (ml) s.manual = true;
   }
   return order;
 }
