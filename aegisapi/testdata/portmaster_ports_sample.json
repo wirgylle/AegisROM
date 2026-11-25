@@ -1,0 +1,197 @@
+{
+ "ports": {
+  "2048.zip": {
+   "attr": {
+    "arch": [
+     "aarch64",
+     "armhf"
+    ],
+    "avail": [
+     "rg-arc-d:ALL",
+     "rg-arc-s:ALL",
+     "rg353m:ALL",
+     "rg353ps:ALL",
+     "rg351mp:ALL",
+     "rg503:ALL",
+     "rg552:ALL",
+     "rgcubexx:ALL",
+     "rg40xx-h:ALL",
+     "rg40xx-v:ALL",
+     "rg35xx-plus:ALL",
+     "rg35xx-h:ALL",
+     "rg35xx-sp:ALL",
+     "rg34xx-h:ALL",
+     "rg34xx-sp:ALL",
+     "rg28xx:ALL",
+     "rg351p:ALL",
+     "rg351v:ALL",
+     "rgb10:ALL",
+     "rgb20s:ALL",
+     "rgb30:ALL",
+     "rk2023:ALL",
+     "x55:ALL",
+     "rgb10max3:ALL",
+     "rgb10max3pro:ALL",
+     "oga:ALL",
+     "ogs:ALL",
+     "ogu:ALL",
+     "ace:ALL",
+     "chi:ALL",
+     "trimui-smart-pro:ALL",
+     "trimui-brick:ALL",
+     "rp5:ALL",
+     "rpmini:ALL",
+     "gkd-bubble:ALL",
+     "xu10:ALL",
+     "r33s:ALL",
+     "r35s:ALL",
+     "r36s:ALL"
+    ],
+    "desc": "The 2048 puzzle game",
+    "desc_md": null,
+    "exp": false,
+    "genres": [
+     "puzzle"
+    ],
+    "image": {
+     "covers": [],
+     "screenshot": "screenshot.jpg",
+     "thumbnail": null,
+     "video": null
+    },
+    "inst": "Ready to run.",
+    "inst_md": null,
+    "min_glibc": "",
+    "porter": [
+     "Christian_Haitian"
+    ],
+    "reqs": [],
+    "rtr": true,
+    "runtime": [],
+    "title": "2048"
+   },
+   "items": [
+    "2048.sh",
+    "2048/"
+   ],
+   "items_opt": null,
+   "name": "2048.zip",
+   "rating": {
+    "average_rating": 3.33,
+    "max_rating": "5",
+    "min_rating": "1",
+    "total_ratings": 6
+   },
+   "source": {
+    "date_added": "2021-09-10",
+    "date_updated": "2026-04-12",
+    "md5": "b41feda34b8cb175bfaabf9e42b962ed",
+    "release_id": "2026-04-12_1606",
+    "repo": "main",
+    "size": 83788,
+    "url": "https://github.com/PortsMaster/PortMaster-New/releases/download/2026-04-12_1606/2048.zip"
+   },
+   "version": 2
+  },
+  "80soverdrive.zip": {
+   "attr": {
+    "arch": [
+     "aarch64"
+    ],
+    "avail": [
+     "rg-arc-d:ALL",
+     "rg-arc-s:ALL",
+     "rg353m:ALL",
+     "rg353ps:ALL",
+     "rg351mp:ALL",
+     "rg503:ALL",
+     "rg552:ALL",
+     "rgcubexx:ALL",
+     "rg40xx-h:ALL",
+     "rg40xx-v:ALL",
+     "rg35xx-plus:ALL",
+     "rg35xx-h:ALL",
+     "rg35xx-sp:ALL",
+     "rg34xx-h:ALL",
+     "rg34xx-sp:ALL",
+     "rg28xx:ALL",
+     "rg351p:ALL",
+     "rg351v:ALL",
+     "rgb10:ALL",
+     "rgb20s:ALL",
+     "rk2023:ALL",
+     "x55:ALL",
+     "rgb10max3:ALL",
+     "rgb10max3pro:ALL",
+     "oga:ALL",
+     "ogs:ALL",
+     "ogu:ALL",
+     "ace:ALL",
+     "chi:ALL",
+     "trimui-smart-pro:ALL",
+     "trimui-brick:ALL",
+     "rp5:ALL",
+     "rpmini:ALL",
+     "gkd-bubble:ALL",
+     "xu10:ALL",
+     "r33s:ALL",
+     "r35s:ALL",
+     "r36s:ALL"
+    ],
+    "availability": "paid",
+    "desc": "80's OVERDRIVE is a 2D pixelart racing game, designed to take you back in time to when 8 and 16 bit consoles and arcade games ruled the world. Compete against opponents in career mode to unlock new races, buy new cars and upgrade them with state-of-the-art technologies!",
+    "desc_md": null,
+    "exp": false,
+    "genres": [
+     "arcade",
+     "racing"
+    ],
+    "image": {
+     "covers": [
+      "cover.png"
+     ],
+     "screenshot": "screenshot.png",
+     "thumbnail": null,
+     "video": null
+    },
+    "inst": "1) Purchase the game from Steam.  \n2) Install the latest game on Steam and copy all the game assets to 80soverdrive/gamedata",
+    "inst_md": null,
+    "min_glibc": "",
+    "porter": [
+     "Fraxinus88"
+    ],
+    "reqs": [
+     "!1:1"
+    ],
+    "rtr": false,
+    "runtime": [
+     "mono-6.12.0.122-aarch64.squashfs"
+    ],
+    "store": [
+     {
+      "developerurl": "https://insane-code.com/",
+      "gameurl": "https://store.steampowered.com/app/1381440/80s_OVERDRIVE/",
+      "name": "Steam"
+     }
+    ],
+    "title": "80's OVERDRIVE"
+   },
+   "items": [
+    "80s Overdrive.sh",
+    "80soverdrive"
+   ],
+   "items_opt": null,
+   "name": "80soverdrive.zip",
+   "source": {
+    "date_added": "2026-11-14",
+    "date_updated": "2026-11-14",
+    "md5": "fe9ae542fe248e0774bc3d974939f8d1",
+    "release_id": "2026-11-14_2003",
+    "repo": "main",
+    "size": 2856543,
+    "url": "https://github.com/PortsMaster/PortMaster-New/releases/download/2026-11-14_2003/80soverdrive.zip"
+   },
+   "version": 4
+  }
+ }
+}
