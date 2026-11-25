@@ -5,7 +5,7 @@ package main
 // Своё окно (Wails v3 + WebView2) вместо Edge/Chrome --app.
 // Native window (Wails v3 + WebView2) instead of Edge/Chrome --app.
 //
-// RU: С 0.6.1 своё окно открывается по умолчанию. Edge остаётся запасным вариантом:
+// RU: С 0.6.2 своё окно открывается по умолчанию. Edge остаётся запасным вариантом:
 //   - ключ `--legacy-window` или файл appDir/use-legacy-window (Настройки → Окно приложения);
 //   - нет WebView2 Runtime;
 //   - окно не загрузило страницу за nativeWindowLoadTimeout (сразу открывается Edge);
@@ -13,7 +13,7 @@ package main
 //     остался на диске): Edge включается сам и запоминается, вернуть окно можно в Настройках.
 // `--native-window` включает своё окно, даже если выше выбран Edge.
 //
-// EN: Since 0.6.1 the native window is the default. Edge stays as the fallback:
+// EN: Since 0.6.2 the native window is the default. Edge stays as the fallback:
 //   - `--legacy-window` or the appDir/use-legacy-window file (Settings → App window);
 //   - no WebView2 Runtime;
 //   - the window did not load the page within nativeWindowLoadTimeout (Edge opens right away);
