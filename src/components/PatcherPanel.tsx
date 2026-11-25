@@ -1,24 +1,16 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { Download, FileCode2, FolderInput, Wand2 } from 'lucide-react';
 import { useI18n } from '../i18n/translations';
-import {
-  PATCH_EXTENSIONS,
-  PatchError,
-  applyPatchSmart,
-  buildPatchedFileName,
-  crc32,
-  crcHex,
-  readPatchInfo,
-  type PatchInfo,
-} from '../utils/romPatcher';
+import { PATCH_EXTENSIONS, PatchError, buildPatchedFileName, readPatchInfo, type PatchInfo } from '../utils/romPatcher';
 import { HACKROMS_DIR, PATCH_DIR } from '../utils/romHacks';
+import { PatchMemoryError, computeRomCrc, runPatchJob } from '../utils/patchRunner';
 
 // Патчер в «Инструментах»: ром + патч (IPS / UPS / BPS / xdelta) → новый ром с тегом статуса.
 // Результат можно скачать или положить в <папка консоли>/hackroms/, а сам патч — в patch/.
 // Patcher in Tools: ROM + patch (IPS / UPS / BPS / xdelta) → a new ROM with a status tag.
 // The result can be downloaded or saved into <console folder>/hackroms/, the patch itself into patch/.
-
-const MAX_ROM_BYTES = 512 * 1024 * 1024;
+// Ром читается с диска кусками, результат пишется во временный файл: размер рома не ограничен.
+// The ROM is read from disk in pieces and the result goes to a temporary file: no ROM size limit.
 
 type TagChoice = 'trans' | 'hack' | 'fix' | 'custom';
 
@@ -34,7 +26,9 @@ export function PatcherPanel({ disabled }: { disabled?: boolean }) {
   const { t, tf } = useI18n();
   const romInput = useRef<HTMLInputElement>(null);
   const patchInput = useRef<HTMLInputElement>(null);
-  const [rom, setRom] = useState<{ file: File; bytes: Uint8Array; crc: string } | null>(null);
+  const [rom, setRom] = useState<{ file: File; crc: string | null; headerless?: string } | null>(null);
+  const [progress, setProgress] = useState<number | null>(null);
+  const romToken = useRef(0);
   const [patch, setPatch] = useState<{ file: File; bytes: Uint8Array; info: PatchInfo | null } | null>(null);
   const [tagChoice, setTagChoice] = useState<TagChoice>('trans');
   const [lang, setLang] = useState('Rus');
@@ -54,12 +48,10 @@ export function PatcherPanel({ disabled }: { disabled?: boolean }) {
   const outName = rom ? buildPatchedFileName(rom.file.name, tag) : '';
 
   const crcState = useMemo(() => {
-    if (!rom || !patch?.info?.sourceCrc32) return 'unknown';
+    if (!rom?.crc || !patch?.info?.sourceCrc32) return 'unknown';
     if (rom.crc === patch.info.sourceCrc32) return 'match';
     if (rom.crc === patch.info.targetCrc32) return 'patched';
-    if (rom.bytes.length > 512 && rom.bytes.length % 1024 === 512) {
-      if (crcHex(crc32(rom.bytes, 512)) === patch.info.sourceCrc32) return 'match-header';
-    }
+    if (rom.headerless && rom.headerless === patch.info.sourceCrc32) return 'match-header';
     return 'mismatch';
   }, [rom, patch]);
 
@@ -67,12 +59,14 @@ export function PatcherPanel({ disabled }: { disabled?: boolean }) {
     const f = files?.[0];
     if (!f) return;
     setMessage(null);
-    if (f.size > MAX_ROM_BYTES) {
-      setMessage({ kind: 'err', text: t('patcher.err.tooBig') });
-      return;
+    const token = ++romToken.current;
+    setRom({ file: f, crc: null });
+    try {
+      const res = await computeRomCrc(f);
+      if (token === romToken.current) setRom({ file: f, crc: res.crc, headerless: res.headerless });
+    } catch (err) {
+      if (token === romToken.current) setMessage({ kind: 'err', text: String(err) });
     }
-    const bytes = new Uint8Array(await f.arrayBuffer());
-    setRom({ file: f, bytes, crc: crcHex(crc32(bytes)) });
   };
 
   const onPatch = async (files: FileList | null) => {
@@ -90,6 +84,7 @@ export function PatcherPanel({ disabled }: { disabled?: boolean }) {
 
   const errorText = (err: unknown) => {
     if (err instanceof PatchError) return `${t(`patcher.err.${err.code}`)} (${err.message})`;
+    if (err instanceof PatchMemoryError) return t('patcher.err.tooBig');
     return String(err);
   };
 
@@ -97,6 +92,8 @@ export function PatcherPanel({ disabled }: { disabled?: boolean }) {
     if (!rom || !patch) return;
     setBusy(true);
     setMessage(null);
+    setProgress(0);
+    let cleanup: (() => Promise<void>) | null = null;
     try {
       let dir: any = null;
       if (mode === 'folder') {
@@ -104,21 +101,32 @@ export function PatcherPanel({ disabled }: { disabled?: boolean }) {
         if (!picker) throw new Error(t('patcher.err.noFolderApi'));
         dir = await picker({ mode: 'readwrite' });
       }
-      const res = applyPatchSmart(rom.bytes, patch.bytes, { ignoreChecksums });
-      const blob = new Blob([res.data as Uint8Array<ArrayBuffer>], { type: 'application/octet-stream' });
+      const expected = patch.info?.targetSize || rom.file.size;
+      const res = await runPatchJob(rom.file, patch.bytes, { ignoreChecksums }, (written) =>
+        setProgress(Math.min(99, Math.round((written / Math.max(1, expected)) * 100)))
+      );
+      cleanup = res.cleanup;
       if (mode === 'download') {
-        const url = URL.createObjectURL(blob);
+        const url = URL.createObjectURL(res.blob);
         const a = document.createElement('a');
         a.href = url;
         a.download = outName;
         a.click();
-        setTimeout(() => URL.revokeObjectURL(url), 5000);
+        // Временный файл удаляем позже: браузер ещё сохраняет загрузку. Брошенные файлы
+        // подчищает следующий запуск. / The temp file is removed later: the browser is still
+        // saving the download. Leftovers are swept by the next run.
+        const done = cleanup;
+        cleanup = null;
+        setTimeout(() => {
+          URL.revokeObjectURL(url);
+          void done();
+        }, 120_000);
       } else {
         const hackDir = await dir.getDirectoryHandle(HACKROMS_DIR, { create: true });
         const fh = await hackDir.getFileHandle(outName, { create: true });
         const w = await fh.createWritable();
-        await w.write(blob);
-        await w.close();
+        // Потоком с диска на диск, без копии в памяти. / Stream disk to disk, no in-memory copy.
+        await res.blob.stream().pipeTo(w);
         const patchDir = await dir.getDirectoryHandle(PATCH_DIR, { create: true });
         const ph = await patchDir.getFileHandle(patch.file.name, { create: true });
         const pw = await ph.createWritable();
@@ -138,7 +146,9 @@ export function PatcherPanel({ disabled }: { disabled?: boolean }) {
       if ((err as any)?.name === 'AbortError') return;
       setMessage({ kind: 'err', text: errorText(err) });
     } finally {
+      if (cleanup) void cleanup();
       setBusy(false);
+      setProgress(null);
     }
   };
 
@@ -188,7 +198,7 @@ export function PatcherPanel({ disabled }: { disabled?: boolean }) {
           )}
           {rom && (
             <div>
-              {tf('patcher.romCrc', { crc: rom.crc.toUpperCase() })}{' '}
+              {rom.crc ? tf('patcher.romCrc', { crc: rom.crc.toUpperCase() }) : t('patcher.crcCalc')}{' '}
               {crcState === 'match' && <span className="text-emerald-600 dark:text-emerald-400">{t('patcher.crc.match')}</span>}
               {crcState === 'match-header' && (
                 <span className="text-emerald-600 dark:text-emerald-400">{t('patcher.crc.matchHeader')}</span>
@@ -255,6 +265,10 @@ export function PatcherPanel({ disabled }: { disabled?: boolean }) {
           <span>{t('patcher.toFolder')}</span>
         </button>
       </div>
+
+      {busy && progress !== null && (
+        <div className="text-slate-600 dark:text-slate-300">{tf('patcher.progress', { pct: progress })}</div>
+      )}
 
       {message && (
         <div

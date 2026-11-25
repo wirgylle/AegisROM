@@ -9,6 +9,8 @@ import {
   modGroup,
   modTag,
   refineModWithDat,
+  needsFullCrcForPatches,
+  type PatchFileRef,
 } from './romHacks.ts';
 
 test('original ROM stays original', () => {
@@ -92,4 +94,29 @@ test('description lists what differs', () => {
   assert.match(d, /hack\.desc\.translationTo/);
   assert.match(d, /Shedevr/);
   assert.match(d, /Final Fantasy \(U\)\.nes/);
+});
+
+test('needsFullCrcForPatches: only ROMs over 16 MB with a BPS/UPS patch of the same size', () => {
+  const MB = 1024 * 1024;
+  const patches: PatchFileRef[] = [
+    { name: 'a.bps', relativePath: 'psx/patch/a.bps', sourceSize: 300 * MB, targetSize: 310 * MB },
+    { name: 'b.ips', relativePath: 'psx/patch/b.ips' },
+  ];
+  assert.equal(needsFullCrcForPatches(300 * MB, patches), true); // чистый ром / clean ROM
+  assert.equal(needsFullCrcForPatches(310 * MB, patches), true); // уже пропатченный / already patched
+  assert.equal(needsFullCrcForPatches(301 * MB, patches), false); // другой размер / other size
+  assert.equal(needsFullCrcForPatches(10 * MB, [{ name: 'c.bps', relativePath: '', sourceSize: 10 * MB }]), false);
+  assert.equal(needsFullCrcForPatches(300 * MB, []), false);
+  // С копирным заголовком: патч сделан под ром без него. / Copier header: patch made for the headerless ROM.
+  assert.equal(needsFullCrcForPatches(32 * MB + 512, [{ name: 'd.bps', relativePath: '', sourceSize: 32 * MB }]), true);
+});
+
+test('linkPatchesToRom links a large ROM by its full CRC32', () => {
+  const info = detectRomMod('Game (USA).bin', 'psx/Game (USA).bin');
+  const patches: PatchFileRef[] = [
+    { name: 'rus.bps', relativePath: 'psx/patch/rus.bps', sourceCrc32: 'AABBCCDD', sourceSize: 300 },
+  ];
+  // CRC первых 16 МБ не совпал, полный совпал. / The 16 MB CRC misses, the full one matches.
+  const linked = linkPatchesToRom(info, ['11111111', undefined, 'aabbccdd'], patches);
+  assert.deepEqual(linked.availablePatches, ['rus.bps']);
 });

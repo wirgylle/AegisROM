@@ -27,6 +27,7 @@ type RomItem struct {
 	IsNumberedFile  bool // e.g., 000001.pbp, 000002.chd, 0001.bin
 	Revision        string
 	Status          string // "verified", "duplicate_clone", "junk_bad_dump"
+	ModKind         string // "" (оригинал / original), "translation", "hack", "fix", "trainer", "patched"
 	Is1G1RWinner    bool
 	Reason          string
 	MediaStatus     string
@@ -64,11 +65,13 @@ type GameEntryXML struct {
 	Region      string `xml:"region,omitempty"`
 }
 
+// junkRegex: [h] (хак) и [t] (трейнер) — не битые дампы, см. mods.go. Как JUNK_REGEX во фронтенде.
+// junkRegex: [h] (hack) and [t] (trainer) are not bad dumps, see mods.go. Same as JUNK_REGEX in the frontend.
 var (
 	regionRegex       = regexp.MustCompile(`(?i)\((USA|Europe|Japan|World|Russia|Rus|Ru|Germany|France|Spain|Italy|Australia|Asia|Korea|Brazil|China|En,Fr,De|En,Ja|U|E|J|W|UE|JU)\)`)
 	rusTagRegex       = regexp.MustCompile(`(?i)(\[rus\]|\(rus\)|\(ru\)|\[r-rus\]|\[russian\]|\(russian\)|_rus\b|\.rus\b|\brus\b|рус)`)
 	revisionRegex     = regexp.MustCompile(`(?i)\((Rev\s*[0-9A-Z]+|v[0-9]+\.[0-9]+|Alt\s*[0-9]*)\)`)
-	junkRegex         = regexp.MustCompile(`(?i)\[(b[0-9]*|h[0-9]*|t[0-9]*|p[0-9]*|o[0-9]*)\]|\((Pirate|Bootleg|Corrupt|Bad)\)`)
+	junkRegex         = regexp.MustCompile(`(?i)\[(b[0-9]*|p[0-9]*|o[0-9]*)\]|\((Pirate|Bootleg|Corrupt|Bad)\)`)
 	TagStripRegex     = regexp.MustCompile(`\[.*?\]|\(.*?\)`)
 	leadingNumRegex   = regexp.MustCompile(`^[\s\[\(#]*0*(\d{1,10})[\s\])\._-]+`)
 	PureNumberRegex   = regexp.MustCompile(`^(?:game[_-]?|rom[_-]?|track[_-]?|psx[_-]?|ps1[_-]?)?0*(\d{1,10})(?:[_-]?[1-4a-d])?$`)
