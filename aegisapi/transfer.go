@@ -1,6 +1,6 @@
 package aegisapi
 
-// Заливка сборки на приставку по Wi-Fi (SFTP, SMB) / Uploading a build to a handheld over Wi-Fi.
+// Заливка сборки на приставку по Wi-Fi (SFTP, SMB, WebDAV) / Uploading a build to a handheld over Wi-Fi.
 //
 // RU: Профили устройств лежат в dataDir/transfer-profiles.json, пароли — в хранилище ключей
 // ОС. Папка сборки должна быть внутри папок, выбранных пользователем (/api/native/vfs/pick).
@@ -181,6 +181,9 @@ func RegisterTransferRoutes(mux *http.ServeMux, dataDir string, touch func(), op
 		var body struct {
 			ID        string `json:"id"`
 			LocalPath string `json:"localPath"`
+			// SyncSaves: сверить сохранения по .aegis-saves-map.json сборки.
+			// SyncSaves: reconcile saves using the build's .aegis-saves-map.json.
+			SyncSaves bool `json:"syncSaves"`
 		}
 		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&body)
 		p, ok := api.store.Get(body.ID)
@@ -208,11 +211,17 @@ func RegisterTransferRoutes(mux *http.ServeMux, dataDir string, touch func(), op
 			transferFail(w, http.StatusOK, aegistransfer.CodeBusy, nil)
 			return
 		}
+		var links []aegistransfer.SaveLink
+		if body.SyncSaves {
+			// Папки библиотеки — только из выбранных пользователем. / Library folders: user-picked only.
+			entries, _ := aegistransfer.FindSaveMap(local)
+			links = aegistransfer.LinksForUpload(local, entries, ResolveVFSPath)
+		}
 		_ = api.store.SetLocalDir(p.ID, local)
 		api.jobNo++
 		dial := func(ctx context.Context) (aegistransfer.Remote, error) { return api.dial(ctx, p, pw, "") }
-		api.job = aegistransfer.Start(context.Background(), strconv.Itoa(api.jobNo), p, local, dial)
-		writeJSONOK(w, map[string]any{"job": api.job.Snapshot()})
+		api.job = aegistransfer.Start(context.Background(), strconv.Itoa(api.jobNo), p, local, dial, links...)
+		writeJSONOK(w, map[string]any{"job": api.job.Snapshot(), "saveLinks": len(links)})
 	})
 
 	mux.HandleFunc("/api/native/transfer/status", func(w http.ResponseWriter, r *http.Request) {
