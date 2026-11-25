@@ -39,6 +39,8 @@ import {
   FolderPlus,
 } from 'lucide-react';
 import { GameInspectorCoverVideo } from './GameInspectorCoverVideo';
+import { MediaVersionsPanel, type MediaVersionsView } from './MediaVersionsPanel';
+import type { VersionSlot } from '../utils/mediaVersions';
 import { DatFilesPanel } from './DatFilesPanel';
 import { ScrapeReportCard, ScreenScraperPanel } from './ScreenScraperPanel';
 import type { ScrapeReport } from '../utils/scrapeReport';
@@ -337,6 +339,10 @@ interface FigmaConceptStudioProps {
     rows: UnifiedGameRow[],
     libraryPathHint?: string
   ) => Promise<UnifiedGameRow[]>;
+  /** Версии медиа рома (V1, V2…) для карточки. / A ROM's media versions for the game card. */
+  onLoadMediaVersions?: (row: UnifiedGameRow) => Promise<MediaVersionsView | null>;
+  /** Выбор версии по умолчанию; вернёт новую ссылку на картинку. / Picks the default version; returns the new image URL. */
+  onSelectMediaVersion?: (row: UnifiedGameRow, slot: VersionSlot, id: string | null) => Promise<string | null>;
   logs?: string[];
   onClearLogs?: () => void;
   onEmergencyStop?: () => void;
@@ -719,6 +725,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   mediaAccessVersion = 0,
   hasMediaFolderAccess = false,
   onResolveMediaForDbRows,
+  onLoadMediaVersions,
+  onSelectMediaVersion,
   logs = [],
   onClearLogs,
   onEmergencyStop,
@@ -1178,6 +1186,33 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     if (nextActionMsg) {
       onAddLog?.(nextActionMsg);
     }
+  };
+
+  // Новая основная картинка после выбора версии: меняем ссылки строки в открытой базе.
+  // A new main image after picking a version: update the row's URLs in the open database.
+  const [mediaVersionsRev, setMediaVersionsRev] = useState(0);
+  const patchRowMedia = (rowId: string, slot: VersionSlot, url: string) => {
+    setSavedDatabases((prev) =>
+      prev.map((db) => {
+        if (!db.rows.some((r) => r.id === rowId)) return db;
+        return {
+          ...db,
+          rows: db.rows.map((r) => {
+            if (r.id !== rowId) return r;
+            const media: MediaSet = { ...(r.media || {}) };
+            if (slot === 'image') {
+              media.boxart = url;
+              if (media.image) media.image = url;
+              return { ...r, media, boxArtUrl: url };
+            }
+            if (slot === 'thumb') media.snap = url;
+            else media.marquee = url;
+            return { ...r, media };
+          }),
+        };
+      })
+    );
+    setMediaVersionsRev((n) => n + 1);
   };
 
   const hydrateDbRowsMedia = async (
@@ -3921,6 +3956,22 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     boxArtUrl={selectedGame.boxArtUrl}
                     videoUrl={selectedGame.videoUrl}
                   />
+
+                  {/* Версии обложки: миниатюры и окно выбора (utils/mediaVersions.ts). */}
+                  {/* Cover versions: thumbnails and the picker window. */}
+                  {onLoadMediaVersions && onSelectMediaVersion && (
+                    <MediaVersionsPanel
+                      gameKey={`${selectedGame.id}|${mediaVersionsRev}`}
+                      title={selectedGame.title}
+                      load={() => onLoadMediaVersions(selectedGame)}
+                      select={async (slot, id) => {
+                        const url = await onSelectMediaVersion(selectedGame, slot, id);
+                        if (!url) return false;
+                        patchRowMedia(selectedGame.id, slot, url);
+                        return true;
+                      }}
+                    />
+                  )}
 
                   <div>
                     <h3 className="text-lg font-bold leading-snug text-slate-900 dark:text-slate-100">

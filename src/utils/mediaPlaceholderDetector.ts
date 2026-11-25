@@ -251,11 +251,20 @@ export async function auditRomMediaOnDisk(
 /**
  * Verifies that a fetched remote media payload is real artwork/video rather than a 1.5 KB placeholder icon or HTML error.
  */
-export function isFetchedMediaPayloadValid(buf: ArrayBuffer, kind: 'image' | 'video'): boolean {
+// minImageBytes: скриншоты Game Boy и NES в Libretro реально весят 0,5–4 КБ (PNG 160×144, 256×240),
+// поэтому для слота скриншота порог ниже; заголовок картинки проверяется всегда.
+// minImageBytes: real Game Boy and NES screenshots in Libretro weigh 0.5–4 KB, so the screenshot
+// slot uses a lower threshold; the image header is always checked.
+export const MIN_SCREENSHOT_BYTES = 256;
+export function isFetchedMediaPayloadValid(
+  buf: ArrayBuffer,
+  kind: 'image' | 'video',
+  minImageBytes: number = MIN_REAL_IMAGE_BYTES
+): boolean {
   if (kind === 'video') {
     return buf.byteLength >= MIN_REAL_VIDEO_BYTES;
   }
-  if (buf.byteLength <= MIN_REAL_IMAGE_BYTES) {
+  if (buf.byteLength <= minImageBytes) {
     return false;
   }
   const u8 = new Uint8Array(buf.slice(0, 12));
