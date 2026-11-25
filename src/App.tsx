@@ -140,6 +140,7 @@ import {
   type MultiDiscEntry,
   type UnifiedGameRow,
 } from './components/FigmaConceptStudio';
+import type { MediaVersionsView } from './components/MediaVersionsPanel';
 import { APP_VERSION } from './version';
 import type {
   BufferRomPreviewItem,
@@ -204,6 +205,21 @@ import {
 } from './utils/romHacks';
 import { isPatchFileName, readPatchInfo } from './utils/romPatcher';
 import { carryRomSaves, countSavesForRom, looksLikeSaveFile, romStem } from './utils/saveFiles';
+import {
+  carryMediaVersions,
+  loadManifest as loadMediaVersionsManifest,
+  nameFromMediaUrl,
+  offerMediaVersion,
+  readVersionFile as readMediaVersionFile,
+  saveManifest as saveMediaVersionsManifest,
+  selectMediaVersion,
+  systemFromMediaUrl,
+  VERSION_SLOTS,
+  type MediaVersionsManifest,
+  type RomContext as MediaRomContext,
+  type VersionSlot,
+  type VersionSource,
+} from './utils/mediaVersions';
 import {
   MEDIA_KINDS,
   MediaKindIndex,
@@ -2116,6 +2132,90 @@ export function App() {
       window.removeEventListener('keydown', onGesture, true);
     };
   }, [pendingRestoreCount]);
+
+  // Версии медиа рома (utils/mediaVersions.ts): папка консоли и имя, под которым лежат картинки.
+  // Сначала ром сеанса (есть handle), затем папка библиотеки + relativePath.
+  // A ROM's media versions: its console folder and media stem. A session ROM first (it has a
+  // handle), then the library folder + relativePath.
+  const resolveRowMediaDir = async (row: UnifiedGameRow): Promise<{ dir: any; stems: string[] } | null> => {
+    const stemOf = (name?: string) => String(name || '').replace(/\.[^/.]+$/, '').trim();
+    const multi = Boolean(row.isMultiDisc || (row.discs && row.discs.length > 1));
+    const session = romsRef.current.find((x) => x.id === row.id);
+    if (session && (session.targetDirHandle || session.parentHandle)) {
+      const stem =
+        session.isMultiDisc && session.multiDiscFolderName ? session.multiDiscFolderName.trim() : stemOf(session.fileName);
+      return { dir: session.targetDirHandle || session.parentHandle, stems: [stem] };
+    }
+    const parts = String(row.relativePath || '').split(/[\\/]/).filter(Boolean);
+    const fileStem = multi ? parts[parts.length - 2] || '' : stemOf(parts[parts.length - 1]);
+    const stems = Array.from(
+      new Set(
+        [fileStem, multi ? row.multiDiscFolderName || row.cleanFile : stemOf(row.cleanFile), multi ? '' : stemOf(row.oldFile)]
+          .map((x) => String(x || '').trim())
+          .filter(Boolean)
+      )
+    );
+    if (row.parentHandle && !multi) return { dir: row.parentHandle, stems };
+    const base = libraryDirHandle || rootDirHandle;
+    if (!base || parts.length < 2) return null;
+    const dirParts = parts.slice(0, multi ? -2 : -1);
+    const walk = async (segs: string[]) => {
+      let d = base;
+      for (const p of segs) d = await d.getDirectoryHandle(p);
+      return d;
+    };
+    try {
+      return { dir: await walk(dirParts), stems };
+    } catch {}
+    // relativePath может начинаться с имени самой папки. / relativePath may start with the folder's own name.
+    if (dirParts[0] && dirParts[0] === base.name) {
+      try {
+        return { dir: await walk(dirParts.slice(1)), stems };
+      } catch {}
+    }
+    return null;
+  };
+
+  const handleLoadMediaVersions = async (row: UnifiedGameRow): Promise<MediaVersionsView | null> => {
+    const loc = await resolveRowMediaDir(row);
+    if (!loc) return null;
+    const mf = await loadMediaVersionsManifest(loc.dir);
+    const stem = loc.stems.find((s) => mf.items[s]) || loc.stems[0];
+    const view: MediaVersionsView = { stem, slots: {} };
+    const entry = mf.items[stem];
+    if (!entry) return view;
+    for (const slot of VERSION_SLOTS) {
+      const e = entry[slot];
+      if (!e) continue;
+      const urls: Record<string, string> = {};
+      for (const v of e.versions) {
+        const f = await readMediaVersionFile(loc.dir, v);
+        if (f) urls[v.id] = URL.createObjectURL(f);
+      }
+      view.slots[slot] = { entry: e, urls };
+    }
+    return view;
+  };
+
+  // Выбор пользователя: основной файл переписан, ссылка рома обновлена. / A user's pick: the main file is rewritten.
+  const handleSelectMediaVersion = async (
+    row: UnifiedGameRow,
+    slot: VersionSlot,
+    id: string | null
+  ): Promise<string | null> => {
+    const loc = await resolveRowMediaDir(row);
+    if (!loc) {
+      addLog(t('mv.noFolder'));
+      return null;
+    }
+    const mf = await loadMediaVersionsManifest(loc.dir);
+    const stem = loc.stems.find((s) => mf.items[s]) || loc.stems[0];
+    const res = await selectMediaVersion(loc.dir, stem, slot, id);
+    if (!res.file) return null;
+    const active = res.manifest.items[stem]?.[slot]?.active || '';
+    addLog(tf(id ? 'mv.selectLog' : 'mv.unpinLog', { title: row.title, slot: t(`mv.slot.${slot}`), id: active.toUpperCase() }));
+    return URL.createObjectURL(res.file);
+  };
 
   // Hydrates expired blob: URLs / missing covers & videos when opening an existing DB file (.json) without re-scanning
   const handleResolveMediaForDbRows = async (
@@ -4292,6 +4392,8 @@ export function App() {
             // Сохранения (.srm, .sav, .state…) и их история едут за ромом (utils/saveFiles.ts).
             // Saves (.srm, .sav, .state…) and their history follow the ROM (utils/saveFiles.ts).
             await carryRomSaves(r.parentHandle, r.parentHandle, oldBaseNoExt, safeBase);
+            // Версии медиа (.aegis-media) тоже. / Media versions (.aegis-media) too.
+            await carryMediaVersions(r.parentHandle, r.parentHandle, oldBaseNoExt, safeBase).catch(() => false);
 
             // В заводском XML R36S обложки, -marquee.png и -thumb.png лежат внутри папки images/!
             const mediaPairs: Array<{ folder: string; suffixes: string[] }> = [
@@ -4483,6 +4585,12 @@ export function App() {
             // Сохранения рядом с ромом едут за ним. / Saves next to the ROM follow it.
             try {
               await carryRomSaves(
+                rootDirHandle,
+                rootDirHandle,
+                foundDiskName.replace(/\.[^/.]+$/, ''),
+                m.proposedFileName.replace(/\.[^/.]+$/, '')
+              );
+              await carryMediaVersions(
                 rootDirHandle,
                 rootDirHandle,
                 foundDiskName.replace(/\.[^/.]+$/, ''),
@@ -5793,6 +5901,7 @@ export function App() {
     // Сохранения и их история: копия в историю, при конфликте остаётся более новое.
     // Saves and their history: copied into history first; on conflict the newer one stays current.
     try {
+      await carryMediaVersions(srcConsoleDir, destConsoleDir, oldBaseNoExt, newBaseNoExt).catch(() => false);
       const moved = await carryRomSaves(srcConsoleDir, destConsoleDir, oldBaseNoExt, newBaseNoExt);
       if (moved.moved > 0) {
         addLog(
@@ -7832,6 +7941,9 @@ export function App() {
           auditsById.set(w.id, audit);
           if (audit.isFullyValid) {
             skippedRealMediaCount++;
+            // «Искать варианты лучше»: ром с рабочими картинками тоже ищем (utils/mediaVersions.ts).
+            // "Look for better versions": a ROM with working images is searched too.
+            if (runOpts.compareExisting) romsNeedingScrape.push(w);
             continue;
           }
           if (audit.image.status === 'placeholder' || audit.video.status === 'placeholder') {
@@ -8032,6 +8144,18 @@ export function App() {
 
       const nextRoms = [...targetList];
       let downloadedMediaCount = 0;
+      // Версии медиа: манифест каждой папки консоли читаем один раз и пишем в конце.
+      // Media versions: each console folder's manifest is read once and written at the end.
+      const versionManifests = new Map<any, MediaVersionsManifest>();
+      const manifestFor = async (dir: any) => {
+        let mf = versionManifests.get(dir);
+        if (!mf) {
+          mf = await loadMediaVersionsManifest(dir);
+          versionManifests.set(dir, mf);
+        }
+        return mf;
+      };
+      const versionStats = { added: 0, replaced: 0 };
       // Учёт «медиа нет» для следующих запусков. / "No media" record for the next runs.
       const missSet: Record<string, ScrapeMiss> = {};
       const missClear: string[] = [];
@@ -8066,8 +8190,11 @@ export function App() {
         const activeRoot = rootOverride || rootDirHandle || sdTargetDirHandle || libraryDirHandle;
         const hasDisk = Boolean(activeRoot && consoleDirHandle);
         const saved: Partial<Record<MediaSlot, boolean>> | null = hasDisk ? {} : null;
+        let romVersionsAdded = 0;
         if (hasDisk && titleMatched && saved) {
-          const slots = slotsToDownload(auditsById.get(r.id) || null, wantVideo);
+          const slotAudit = auditsById.get(r.id) || null;
+          const slots = slotsToDownload(slotAudit, wantVideo);
+          if (runOpts.compareExisting) for (const sl of VERSION_SLOTS) slots.add(sl);
           for (const sl of Array.from(slots)) if (!wantedSlots.has(sl)) slots.delete(sl);
           const romBaseNoExt = (
             r.isMultiDisc && r.multiDiscFolderName
@@ -8088,9 +8215,72 @@ export function App() {
             ['video', m.videoUrl, 'videos', `${romBaseNoExt}-video.mp4`, 'video'],
           ];
           const localFiles: LocalSlots | undefined = m.localFiles;
+          const romCtx: MediaRomContext = {
+            consoleCode: r.consoleCode,
+            system: (CONSOLE_CATALOG[r.consoleCode] || CONSOLE_CATALOG.nes).libretroSystem,
+            region: r.region,
+            cleanTitle: officialTitle,
+            fileStem: romBaseNoExt,
+          };
           for (const [slot, url, folder, fileName, kind] of jobs) {
             const local = localFiles?.[slot];
             if ((!url && !local) || !slots.has(slot)) continue;
+            // Картинки идут через версии: рабочая не затирается, найденная хранится как V2, V3…
+            // Images go through versions: a working one is kept, a new find is stored as V2, V3…
+            if (slot !== 'video') {
+              const vslot = slot as VersionSlot;
+              let buf: ArrayBuffer | null = null;
+              try {
+                if (local) buf = await (await local.handle.getFile()).arrayBuffer();
+                else if (url) {
+                  const resp = await fetch(mediaFetchUrl(url));
+                  buf = resp.ok ? await resp.arrayBuffer() : null;
+                }
+              } catch {
+                buf = null;
+              }
+              if (!buf || !isFetchedMediaPayloadValid(buf, 'image')) continue;
+              const fromUrl = local ? undefined : url;
+              const source: VersionSource =
+                m.titleSource === 'local'
+                  ? 'local'
+                  : m.titleSource === 'screenscraper'
+                  ? 'screenscraper'
+                  : m.titleSource === 'libretro-fuzzy'
+                  ? 'libretro-fuzzy'
+                  : 'libretro';
+              const primaryValid =
+                (slot === 'marquee' ? slotAudit?.marquee.status : slotAudit?.image.status) === 'valid';
+              try {
+                const mf = await manifestFor(consoleDirHandle);
+                const res = await offerMediaVersion(
+                  consoleDirHandle,
+                  mf,
+                  romBaseNoExt,
+                  vslot,
+                  buf,
+                  {
+                    source,
+                    system:
+                      source === 'local' || source === 'screenscraper' ? romCtx.system : systemFromMediaUrl(fromUrl),
+                    matchedName: local
+                      ? local.path.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '')
+                      : source === 'screenscraper'
+                      ? m.matchedCanonicalTitle
+                      : nameFromMediaUrl(fromUrl),
+                  },
+                  romCtx,
+                  { primaryValid }
+                );
+                if (res.added) {
+                  versionStats.added++;
+                  romVersionsAdded++;
+                }
+                if (res.replaced) versionStats.replaced++;
+                if (res.active) saved[slot] = true;
+              } catch {}
+              continue;
+            }
             const dh = await dirFor(folder);
             if (!dh) continue;
             if (local) {
@@ -8142,7 +8332,9 @@ export function App() {
           mediaStatus: !titleMatched
             ? tf('app.scrape.notMatchedStatus', { reason: m.reason || t('title.note.onlineNoMatch') })
             : saved && !gotSomething
-            ? t('app.scrape.nothingSavedStatus')
+            ? romVersionsAdded > 0
+              ? tf('mv.status.added', { count: romVersionsAdded })
+              : t('app.scrape.nothingSavedStatus')
             : auditReason
             ? tf('app.scrape.reDownloadedStatus', { reason: auditReason })
             : saved
@@ -8154,6 +8346,13 @@ export function App() {
 
         setProgressPct(30 + Math.round(((downloadedMediaCount) / Math.max(1, romsNeedingScrape.length)) * 65));
       }
+
+      for (const [dir, mf] of versionManifests) {
+        try {
+          await saveMediaVersionsManifest(dir, mf);
+        } catch {}
+      }
+      if (versionStats.added > 0 || versionStats.replaced > 0) addLog(tf('mv.log.run', versionStats));
 
       // Скраппер по части библиотеки (редактор): вливаем результат в полный список, иначе остальные ромы пропадут.
       // Scraping part of the library (editor): merge back into the full list, or the other ROMs would vanish.
@@ -9636,6 +9835,8 @@ export function App() {
         mediaAccessVersion={mediaAccessVersion}
         hasMediaFolderAccess={Boolean(libraryDirHandle || rootDirHandle)}
         onResolveMediaForDbRows={handleResolveMediaForDbRows}
+        onLoadMediaVersions={handleLoadMediaVersions}
+        onSelectMediaVersion={handleSelectMediaVersion}
         logs={logs}
         onClearLogs={() => setLogs([t('status.cleared')])}
         onEmergencyStop={handleEmergencyStop}
