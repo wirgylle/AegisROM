@@ -1,6 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildLocalConsoleIndex, findConsoleDir, lookupLocalMedia, slotFromPath, type DirLike, type FileLike } from './localMediaIndex.ts';
+import {
+  buildLocalConsoleIndex,
+  findConsoleDir,
+  joinLinkPath,
+  lookupLocalMedia,
+  readLocalMedia,
+  slotFromPath,
+  symlinkTarget,
+  type DirLike,
+  type FileLike,
+} from './localMediaIndex.ts';
 
 // Дерево из путей: { 'media/images/a.png': '' } → фейковые хэндлы.
 // A tree from paths → fake handles.
@@ -85,4 +95,45 @@ test('findConsoleDir: by name, inside downloaded_media, or the folder itself', a
   const flat = tree('mygames', { 'gamelist.xml': '' });
   assert.equal((await findConsoleDir(flat, ['gba']))?.name, 'mygames');
   assert.equal(await findConsoleDir(tree('x', { 'a/b.png': '' }), ['gba']), null);
+});
+
+// Клон libretro-thumbnails на Windows: симлинки — это текстовые файлы с путём цели.
+// A libretro-thumbnails clone on Windows: symlinks are text files holding the target path.
+test('libretro-thumbnails clone: Named_Logos is a logo, symlink stubs are followed', async () => {
+  const png = '\x89PNG real image';
+  const root = tree('libretro-thumbnails', {
+    'Sony - PlayStation/Named_Boxarts/Final Fantasy VII (Europe).png': png,
+    'Sony - PlayStation/Named_Boxarts/Final Fantasy VII (Europe) (Disc 1).png': 'Final Fantasy VII (Europe).png',
+    'Sony - PlayStation/Named_Logos/Final Fantasy VII (Europe) (Disc 1).png': '../Named_Logos/Missing.png',
+    'Sony - PlayStation/Named_Snaps/Final Fantasy VII (Europe) (Disc 1).png': 'Final Fantasy VII (Europe) (Disc 2).png',
+    'Sony - PlayStation/Named_Snaps/Final Fantasy VII (Europe) (Disc 2).png': 'Final Fantasy VII (Europe).png',
+    'Sony - PlayStation/Named_Snaps/Final Fantasy VII (Europe).png': png,
+  });
+  const dir = await findConsoleDir(root, ['psx', 'psx', 'Sony - PlayStation']);
+  assert.ok(dir);
+  const idx = await buildLocalConsoleIndex(dir!);
+  const hit = lookupLocalMedia(idx, 'Final Fantasy VII (Europe) (Disc 1)', 'Final Fantasy VII');
+  assert.ok(hit?.image && hit?.thumb && hit?.marquee);
+
+  const img = await readLocalMedia(hit!.image!);
+  assert.equal(img.status, 'ok');
+  assert.equal(img.viaLink, true);
+  assert.equal(new TextDecoder().decode(img.buf!), png);
+
+  // Две ссылки подряд. / Two links in a row.
+  const snap = await readLocalMedia(hit!.thumb!);
+  assert.equal(snap.status, 'ok');
+  assert.equal(new TextDecoder().decode(snap.buf!), png);
+
+  // Цели нет. / The target is missing.
+  assert.equal((await readLocalMedia(hit!.marquee!)).status, 'link-broken');
+});
+
+test('symlinkTarget: only short text paths to media files', () => {
+  const enc = (s: string) => new TextEncoder().encode(s).buffer as ArrayBuffer;
+  assert.equal(symlinkTarget(enc('Contra (USA).png')), 'Contra (USA).png');
+  assert.equal(symlinkTarget(enc('notes.txt')), null);
+  assert.equal(symlinkTarget(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]).buffer), null);
+  assert.equal(joinLinkPath('named_boxarts/a.png', '../Named_Snaps/b.png'), 'Named_Snaps/b.png');
+  assert.equal(joinLinkPath('a.png', '../../x.png'), null);
 });

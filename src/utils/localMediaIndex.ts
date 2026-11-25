@@ -25,7 +25,14 @@ export interface DirLike {
   values(): AsyncIterable<FileLike | DirLike>;
 }
 
-export type LocalSlots = Partial<Record<MediaSlot, { handle: FileLike; path: string }>>;
+// resolve: найти другой файл той же папки консоли по относительному пути (для ссылок-симлинков).
+// resolve: find another file of the same console folder by relative path (for symlink stubs).
+export interface LocalMediaEntry {
+  handle: FileLike;
+  path: string;
+  resolve?: (rel: string) => FileLike | undefined;
+}
+export type LocalSlots = Partial<Record<MediaSlot, LocalMediaEntry>>;
 
 export interface LocalConsoleIndex {
   dirName: string;
@@ -65,7 +72,7 @@ export function stripMediaSuffix(stem: string): { stem: string; slot: MediaSlot 
 // Slot from the path folders, innermost first: the most specific folder wins.
 const DIR_SLOT: Array<[RegExp, MediaSlot]> = [
   [/^(videos?|snapvideos?|video-?snaps?)$/i, 'video'],
-  [/^(marquees?|wheels?|logos?|wheel-?carbon|wheel-?steel)$/i, 'marquee'],
+  [/^(marquees?|wheels?|logos?|named_logos|wheel-?carbon|wheel-?steel)$/i, 'marquee'],
   [/^(screenshots?|snaps?|ss|sstitle|titlescreens?|titleshots?|thumbnails?|thumbs?|named_snaps|named_titles)$/i, 'thumb'],
   [/^(box-?2d(front)?|box-?3d|boxart|boxfront|box_front|covers?|mix(images?)?|named_boxarts|fronts?)$/i, 'image'],
 ];
@@ -149,7 +156,7 @@ export async function buildLocalConsoleIndex(
     if (cur[slot]) return;
     const handle = files.get(rel);
     if (!handle) return;
-    cur[slot] = { handle, path: rel };
+    cur[slot] = { handle, path: rel, resolve: (p) => files.get(p.toLowerCase()) };
     byStem.set(key, cur);
   };
   // Путь из gamelist.xml: относительный к папке консоли; абсолютный — ищем по имени файла.
@@ -252,4 +259,61 @@ export async function findConsoleDir(root: DirLike, names: string[]): Promise<Di
     }
   }
   return rootHasGamelist ? root : null;
+}
+
+// Ссылка-симлинк, которую git на Windows (core.symlinks=false) или распаковщик ZIP записал
+// обычным файлом: внутри только путь к настоящей картинке, например «Final Fantasy VII (Europe).png».
+// В libretro-thumbnails так хранятся диски «(Disc N)», регионы-дубли и половина логотипов.
+// A symlink that git on Windows (core.symlinks=false) or a ZIP extractor wrote as a plain file:
+// it only holds the path of the real image. libretro-thumbnails stores per-disc entries,
+// regional duplicates and about half the logos this way.
+const MAX_LINK_BYTES = 1024;
+export function symlinkTarget(buf: ArrayBuffer): string | null {
+  if (buf.byteLength === 0 || buf.byteLength > MAX_LINK_BYTES) return null;
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(buf).trim();
+  } catch {
+    return null;
+  }
+  if (!text || /[\x00-\x1f]/.test(text)) return null;
+  const ext = extOf(text);
+  return IMAGE_EXT.has(ext) || VIDEO_EXT.has(ext) ? text : null;
+}
+
+// Путь цели относительно папки файла-ссылки. / The target path relative to the link file's folder.
+export function joinLinkPath(fromRel: string, target: string): string | null {
+  const parts = fromRel.split('/');
+  parts.pop();
+  for (const seg of target.replace(/\\/g, '/').split('/')) {
+    if (!seg || seg === '.') continue;
+    if (seg === '..') {
+      if (parts.length === 0) return null;
+      parts.pop();
+    } else parts.push(seg);
+  }
+  return parts.join('/');
+}
+
+export type LocalReadStatus = 'ok' | 'link-broken';
+
+// Прочитать файл слота, пройдя до 4 ссылок-симлинков. / Read a slot file, following up to 4 symlink stubs.
+export async function readLocalMedia(
+  entry: LocalMediaEntry
+): Promise<{ status: LocalReadStatus; buf: ArrayBuffer | null; viaLink: boolean }> {
+  let handle = entry.handle;
+  let path = entry.path;
+  let viaLink = false;
+  for (let hop = 0; hop <= 4; hop++) {
+    const buf = await (await handle.getFile()).arrayBuffer();
+    const target = symlinkTarget(buf);
+    if (!target) return { status: 'ok', buf, viaLink };
+    const next = joinLinkPath(path, target);
+    const h = next && entry.resolve ? entry.resolve(next) : undefined;
+    if (!next || !h) return { status: 'link-broken', buf: null, viaLink: true };
+    handle = h;
+    path = next;
+    viaLink = true;
+  }
+  return { status: 'link-broken', buf: null, viaLink: true };
 }
