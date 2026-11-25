@@ -2818,6 +2818,16 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     </div>
                   </div>
 
+                  {/* Проверка ромов: сразу под папкой библиотеки, чтобы её было видно. / ROM check: right below the library folder so it is easy to find. */}
+                  <RomCheckPanel
+                    disabled={activeRunning}
+                    running={romCheckRunning}
+                    progressText={romCheckProgress}
+                    report={romCheckReport}
+                    onRun={onCheckRoms ? (deep) => openScope('romCheck', (ids) => onCheckRoms(ids, deep)) : undefined}
+                    onStop={onStopRomCheck}
+                  />
+
                   {/* Данные игр: CSV / XML туда и обратно. / Game data: CSV / XML out and back in. */}
                   <GameDataPanel
                     games={enrichedGamesSource}
@@ -2879,15 +2889,6 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       }}
                     />
                   )}
-
-                  <RomCheckPanel
-                    disabled={activeRunning}
-                    running={romCheckRunning}
-                    progressText={romCheckProgress}
-                    report={romCheckReport}
-                    onRun={onCheckRoms ? (deep) => openScope('romCheck', (ids) => onCheckRoms(ids, deep)) : undefined}
-                    onStop={onStopRomCheck}
-                  />
 
                   <DatFilesPanel disabled={activeRunning} systems={datSystems} />
 
