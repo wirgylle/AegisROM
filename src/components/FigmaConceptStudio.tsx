@@ -160,6 +160,7 @@ import { WorkbenchContextPanel, type HoveredTool } from './WorkbenchContextPanel
 import { QuickTestModal, type QuickTestRequest } from './QuickTestModal';
 import { DonateModal } from './DonateModal';
 import { RomSavesPanel } from './RomSavesPanel';
+import { ManualButton } from './ManualViewer';
 import { SettingsModal } from './SettingsModal';
 import { loadAppSettings, subscribeAppSettings } from '../utils/appSettings';
 import { resolveQuickTestCore, pickCueDataTrack, pickBiosForRegion, fileExt } from '../utils/quickTest';
@@ -191,6 +192,7 @@ function sanitizeDatabasesForStorage<T extends { rows: UnifiedGameRow[] }>(dbs: 
       ? u.rows.map((r) => ({
           ...r,
           fileObj: undefined,
+          manualFile: undefined,
           companionFiles: undefined,
           parentHandle: undefined,
           discs: Array.isArray(r.discs)
@@ -288,6 +290,10 @@ export interface UnifiedGameRow {
   // Картинки по видам: боксарт, скриншот, титульный экран, баннер (utils/mediaKinds.ts).
   // Images by kind: box art, screenshot, title screen, banner (utils/mediaKinds.ts).
   media?: MediaSet;
+  // Мануал (PDF): файл сеанса (не сохраняется) и путь от папки скана.
+  // Manual (PDF): the session file (not stored) and its path from the scan folder.
+  manualFile?: File;
+  manualRel?: string;
 }
 
 interface FigmaConceptStudioProps {
@@ -1446,6 +1452,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       rows: gamesSource.map((g) => ({
         ...g,
         fileObj: undefined,
+        manualFile: undefined,
         companionFiles: undefined,
         parentHandle: undefined,
         discs: Array.isArray(g.discs)
@@ -4158,6 +4165,15 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <Plus className="w-4 h-4" />
                     <span>{t('lib.addToBuild')}</span>
                   </button>
+
+                  {/* Мануал (PDF из media/manuals Skraper и т. п.), только если он есть. */}
+                  {/* Manual (PDF from Skraper media/manuals etc.), only when there is one. */}
+                  <ManualButton
+                    title={selectedGame.title}
+                    file={selectedGame.manualFile}
+                    manualRel={selectedGame.manualRel}
+                    romRef={romDiskRef}
+                  />
 
                   {qtCore && (
                     <button

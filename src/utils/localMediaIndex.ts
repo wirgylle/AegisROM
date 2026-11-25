@@ -11,6 +11,7 @@
 
 import { normalizeGamelistPath, parseGamelistEntries, unescapeXml } from './gamelistXml.ts';
 import type { MediaSlot } from './scrapePlan';
+import { isNonCoverDir } from './skraperMedia.ts';
 
 // Минимум интерфейса File System Access, который нам нужен (и нативный шим, и браузер).
 // The File System Access subset we need (both the native shim and the browser).
@@ -65,8 +66,8 @@ export function stripMediaSuffix(stem: string): { stem: string; slot: MediaSlot 
 // Slot from the path folders, innermost first: the most specific folder wins.
 const DIR_SLOT: Array<[RegExp, MediaSlot]> = [
   [/^(videos?|snapvideos?|video-?snaps?)$/i, 'video'],
-  [/^(marquees?|wheels?|logos?|wheel-?carbon|wheel-?steel)$/i, 'marquee'],
-  [/^(screenshots?|snaps?|ss|sstitle|titlescreens?|titleshots?|thumbnails?|thumbs?|named_snaps|named_titles)$/i, 'thumb'],
+  [/^(marquees?|wheels?|logos?|wheel-?carbon|wheel-?steel|wheel-?hd)$/i, 'marquee'],
+  [/^(screenshots?|snaps?|ss|sstitle|screenshot-?title|titlescreens?|titleshots?|thumbnails?|thumbs?|named_snaps|named_titles)$/i, 'thumb'],
   [/^(box-?2d(front)?|box-?3d|boxart|boxfront|box_front|covers?|mix(images?)?|named_boxarts|fronts?)$/i, 'image'],
 ];
 
@@ -76,6 +77,8 @@ export function slotFromPath(relPath: string): MediaSlot | null {
   const ext = extOf(file);
   if (VIDEO_EXT.has(ext)) return 'video';
   if (!IMAGE_EXT.has(ext)) return null;
+  // Фон, карты, картридж, мануалы (папки Skraper) — не обложки. / Fan art, maps, cartridges, manuals: not covers.
+  if (parts.length && isNonCoverDir(parts[parts.length - 1])) return null;
   const suffix = stripMediaSuffix(stemOf(file)).slot;
   if (suffix) return suffix;
   for (let i = parts.length - 1; i >= 0; i--) {
