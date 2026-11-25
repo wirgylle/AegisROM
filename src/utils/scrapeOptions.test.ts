@@ -18,6 +18,7 @@ test('normalizeScrapeOptions drops unknown slots and keeps a fallback', () => {
     slots: ['video'],
     retryMisses: true,
     sources: fb.sources,
+    compareExisting: false,
   });
   const src = normalizeScrapeOptions({ slots: ['image'], sources: { order: ['local'], enabled: ['local'], fallback: false } }, fb).sources;
   assert.deepEqual(src.enabled, ['local']);

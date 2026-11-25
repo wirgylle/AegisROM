@@ -39,6 +39,8 @@ import {
   FolderPlus,
 } from 'lucide-react';
 import { GameInspectorCoverVideo } from './GameInspectorCoverVideo';
+import { MediaVersionsPanel, type MediaVersionsView } from './MediaVersionsPanel';
+import type { VersionSlot } from '../utils/mediaVersions';
 import { DatFilesPanel } from './DatFilesPanel';
 import { RomCheckPanel } from './RomCheckPanel';
 import type { RomCheckReport } from '../utils/romCheck';
@@ -162,6 +164,7 @@ import { WorkbenchContextPanel, type HoveredTool } from './WorkbenchContextPanel
 import { QuickTestModal, type QuickTestRequest } from './QuickTestModal';
 import { DonateModal } from './DonateModal';
 import { RomSavesPanel } from './RomSavesPanel';
+import { ManualButton } from './ManualViewer';
 import { SettingsModal } from './SettingsModal';
 import { loadAppSettings, subscribeAppSettings } from '../utils/appSettings';
 import { resolveQuickTestCore, pickCueDataTrack, pickBiosForRegion, fileExt } from '../utils/quickTest';
@@ -193,6 +196,7 @@ function sanitizeDatabasesForStorage<T extends { rows: UnifiedGameRow[] }>(dbs: 
       ? u.rows.map((r) => ({
           ...r,
           fileObj: undefined,
+          manualFile: undefined,
           companionFiles: undefined,
           parentHandle: undefined,
           discs: Array.isArray(r.discs)
@@ -290,6 +294,10 @@ export interface UnifiedGameRow {
   // Картинки по видам: боксарт, скриншот, титульный экран, баннер (utils/mediaKinds.ts).
   // Images by kind: box art, screenshot, title screen, banner (utils/mediaKinds.ts).
   media?: MediaSet;
+  // Мануал (PDF): файл сеанса (не сохраняется) и путь от папки скана.
+  // Manual (PDF): the session file (not stored) and its path from the scan folder.
+  manualFile?: File;
+  manualRel?: string;
 }
 
 interface FigmaConceptStudioProps {
@@ -333,6 +341,10 @@ interface FigmaConceptStudioProps {
     rows: UnifiedGameRow[],
     libraryPathHint?: string
   ) => Promise<UnifiedGameRow[]>;
+  /** Версии медиа рома (V1, V2…) для карточки. / A ROM's media versions for the game card. */
+  onLoadMediaVersions?: (row: UnifiedGameRow) => Promise<MediaVersionsView | null>;
+  /** Выбор версии по умолчанию; вернёт новую ссылку на картинку. / Picks the default version; returns the new image URL. */
+  onSelectMediaVersion?: (row: UnifiedGameRow, slot: VersionSlot, id: string | null) => Promise<string | null>;
   logs?: string[];
   onClearLogs?: () => void;
   onEmergencyStop?: () => void;
@@ -721,6 +733,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   mediaAccessVersion = 0,
   hasMediaFolderAccess = false,
   onResolveMediaForDbRows,
+  onLoadMediaVersions,
+  onSelectMediaVersion,
   logs = [],
   onClearLogs,
   onEmergencyStop,
@@ -1187,6 +1201,33 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     }
   };
 
+  // Новая основная картинка после выбора версии: меняем ссылки строки в открытой базе.
+  // A new main image after picking a version: update the row's URLs in the open database.
+  const [mediaVersionsRev, setMediaVersionsRev] = useState(0);
+  const patchRowMedia = (rowId: string, slot: VersionSlot, url: string) => {
+    setSavedDatabases((prev) =>
+      prev.map((db) => {
+        if (!db.rows.some((r) => r.id === rowId)) return db;
+        return {
+          ...db,
+          rows: db.rows.map((r) => {
+            if (r.id !== rowId) return r;
+            const media: MediaSet = { ...(r.media || {}) };
+            if (slot === 'image') {
+              media.boxart = url;
+              if (media.image) media.image = url;
+              return { ...r, media, boxArtUrl: url };
+            }
+            if (slot === 'thumb') media.snap = url;
+            else media.marquee = url;
+            return { ...r, media };
+          }),
+        };
+      })
+    );
+    setMediaVersionsRev((n) => n + 1);
+  };
+
   const hydrateDbRowsMedia = async (
     targetDbId: string,
     rows: UnifiedGameRow[],
@@ -1459,6 +1500,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       rows: gamesSource.map((g) => ({
         ...g,
         fileObj: undefined,
+        manualFile: undefined,
         companionFiles: undefined,
         parentHandle: undefined,
         discs: Array.isArray(g.discs)
@@ -3937,6 +3979,22 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     videoUrl={selectedGame.videoUrl}
                   />
 
+                  {/* Версии обложки: миниатюры и окно выбора (utils/mediaVersions.ts). */}
+                  {/* Cover versions: thumbnails and the picker window. */}
+                  {onLoadMediaVersions && onSelectMediaVersion && (
+                    <MediaVersionsPanel
+                      gameKey={`${selectedGame.id}|${mediaVersionsRev}`}
+                      title={selectedGame.title}
+                      load={() => onLoadMediaVersions(selectedGame)}
+                      select={async (slot, id) => {
+                        const url = await onSelectMediaVersion(selectedGame, slot, id);
+                        if (!url) return false;
+                        patchRowMedia(selectedGame.id, slot, url);
+                        return true;
+                      }}
+                    />
+                  )}
+
                   <div>
                     <h3 className="text-lg font-bold leading-snug text-slate-900 dark:text-slate-100">
                       {selectedGame.title}
@@ -4180,6 +4238,15 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <Plus className="w-4 h-4" />
                     <span>{t('lib.addToBuild')}</span>
                   </button>
+
+                  {/* Мануал (PDF из media/manuals Skraper и т. п.), только если он есть. */}
+                  {/* Manual (PDF from Skraper media/manuals etc.), only when there is one. */}
+                  <ManualButton
+                    title={selectedGame.title}
+                    file={selectedGame.manualFile}
+                    manualRel={selectedGame.manualRel}
+                    romRef={romDiskRef}
+                  />
 
                   {qtCore && (
                     <button

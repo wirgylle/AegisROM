@@ -7,6 +7,7 @@
 import { MULTI_DBS_DISK_KEY, writeDiskValue } from './nativeStorage';
 import { reviveNativeHandle } from './nativeFs';
 import { MediaKindIndex, stripBlobMedia, stripMediaSuffix } from './mediaKinds';
+import { isManualFile, isNonCoverDir, manualStem } from './skraperMedia';
 
 const IDB_NAME = 'AegisROM_FS_Handles_v5';
 const IDB_STORE = 'directory_handles';
@@ -175,25 +176,38 @@ export interface HydratedMediaIndex {
   videosByStem: Map<string, File>;
   /** Картинки по видам (боксарт, скриншот, баннер…). / Images by kind (box art, screenshot, banner…). */
   kinds: MediaKindIndex<File>;
+  /** Мануалы (PDF) по имени рома; path — путь от корня. / Manuals (PDF) by ROM name; path from the root. */
+  manualsByStem: Map<string, { file: File; path: string }>;
 }
 
 /**
  * Walks a directory handle (root + images/, videos/, console subfolders) and collects
  * local artwork and video files so a DB opened from JSON immediately gets real local covers!
  */
+// Глубина 5: корень → roms → консоль → media → images (раскладка Skraper) и ещё уровень запаса.
+// Depth 5: root → roms → console → media → images (Skraper layout) plus one spare level.
 export async function collectLocalMediaFromHandle(
   rootHandle: any,
-  maxDepth = 3
+  maxDepth = 5
 ): Promise<HydratedMediaIndex> {
   const imagesByStem = new Map<string, File>();
   const videosByStem = new Map<string, File>();
   const kinds = new MediaKindIndex<File>();
+  const manualsByStem = new Map<string, { file: File; path: string }>();
 
-  const registerFile = (file: File, dirName: string) => {
+  const registerFile = (file: File, dirName: string, path: string) => {
     const low = file.name.toLowerCase();
+    if (isManualFile(file.name, dirName)) {
+      const k = manualStem(file.name).toLowerCase();
+      const nk = normalizeStemKey(manualStem(file.name));
+      for (const key of [k, nk]) if (key && !manualsByStem.has(key)) manualsByStem.set(key, { file, path });
+      return;
+    }
     const isImg = /\.(png|jpe?g|webp|bmp)$/i.test(low);
     const isVid = /\.(mp4|webm|mkv)$/i.test(low);
     if (!isImg && !isVid) return;
+    // Фон, карты, картридж (папки Skraper) — не обложки. / Fan art, maps, cartridges: not covers.
+    if (isImg && isNonCoverDir(dirName)) return;
 
     const rawNoExt = file.name.replace(/\.[^/.]+$/, '').toLowerCase();
     const strippedSuffix = rawNoExt.replace(/-image$|-marquee$|-thumb$|-video$/i, '');
@@ -212,7 +226,7 @@ export async function collectLocalMediaFromHandle(
     }
   };
 
-  async function walk(dirHandle: any, depth: number) {
+  async function walk(dirHandle: any, depth: number, prefix: string) {
     if (!dirHandle || depth > maxDepth) return;
     try {
       for await (const entry of dirHandle.values()) {
@@ -220,12 +234,13 @@ export async function collectLocalMediaFromHandle(
         if (entry.kind === 'directory') {
           const lowDir = entry.name.toLowerCase();
           if (lowDir === '_duplicates_1g1r' || lowDir === '_baddumps_junk') continue;
-          await walk(entry, depth + 1);
+          await walk(entry, depth + 1, prefix ? `${prefix}/${entry.name}` : entry.name);
         } else if (entry.kind === 'file') {
-          if (/\.(png|jpe?g|webp|bmp|mp4|webm)$/i.test(entry.name)) {
+          if (/\.(png|jpe?g|webp|bmp|mp4|webm|pdf)$/i.test(entry.name)) {
             try {
               const f = await entry.getFile();
-              if (f.size > 0) registerFile(f, dirHandle.name || '');
+              const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+              if (f.size > 0) registerFile(f, dirHandle.name || '', path);
             } catch {}
           }
         }
@@ -233,8 +248,8 @@ export async function collectLocalMediaFromHandle(
     } catch {}
   }
 
-  await walk(rootHandle, 0);
-  return { imagesByStem, videosByStem, kinds };
+  await walk(rootHandle, 0, '');
+  return { imagesByStem, videosByStem, kinds, manualsByStem };
 }
 
 /**
@@ -277,6 +292,7 @@ export async function saveMultiDbsToIndexedDB(dbs: any[]): Promise<void> {
         ? u.rows.map((r: any) => ({
             ...r,
             fileObj: undefined,
+            manualFile: undefined,
             companionFiles: undefined,
             parentHandle: undefined,
             discs: Array.isArray(r.discs)

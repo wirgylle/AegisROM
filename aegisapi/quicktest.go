@@ -133,11 +133,12 @@ func ResolveQuickTestRom(q url.Values) (string, int) {
 	return found, http.StatusOK
 }
 
-// RegisterQuickTestRoutes adds GET /api/native/fs/rom.
+// RegisterQuickTestRoutes adds GET /api/native/fs/rom (and /api/native/fs/manual, see manual.go).
 func RegisterQuickTestRoutes(mux *http.ServeMux, touch func()) {
 	if touch == nil {
 		touch = func() {}
 	}
+	RegisterManualRoutes(mux, touch)
 	mux.HandleFunc("/api/native/fs/rom", func(w http.ResponseWriter, r *http.Request) {
 		touch()
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {

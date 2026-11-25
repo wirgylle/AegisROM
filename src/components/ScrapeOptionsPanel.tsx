@@ -50,6 +50,18 @@ export function ScrapeOptionsPanel({
           <span className="block text-slate-500 dark:text-slate-400">{t('scrape.opts.retryHint')}</span>
         </span>
       </label>
+      <label className="flex items-start gap-2 cursor-pointer pt-1">
+        <input
+          type="checkbox"
+          className="w-3.5 h-3.5 mt-0.5 accent-blue-600"
+          checked={Boolean(value.compareExisting)}
+          onChange={(e) => onChange({ ...value, compareExisting: e.target.checked })}
+        />
+        <span>
+          <span className="text-slate-800 dark:text-slate-100">{t('mv.opt.compare')}</span>
+          <span className="block text-slate-500 dark:text-slate-400">{t('mv.opt.compareHint')}</span>
+        </span>
+      </label>
     </div>
   );
 }
