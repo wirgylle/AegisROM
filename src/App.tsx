@@ -2354,13 +2354,13 @@ export function App() {
             if (Object.keys(local).length > 0) media = { ...(media || {}), ...local };
           }
           // Мануал (PDF) рядом с ромом или в media/manuals. / A manual next to the ROM or in media/manuals.
-          if (mediaIdx.manualsByStem.size > 0 && !r.manualFile) {
+          if (mediaIdx.manualsByStem.size > 0) {
             let manual: { file: File; path: string } | undefined;
             for (const k of [oldStem, cleanStem, r.title.toLowerCase(), titleNorm]) {
               if (k && !manual) manual = mediaIdx.manualsByStem.get(k);
             }
             if (manual) {
-              afterNative[i] = { ...afterNative[i], manualFile: manual.file, manualRel: r.manualRel || manual.path };
+              afterNative[i] = { ...afterNative[i], manualFile: manual.file, manualRel: manual.path };
             }
           }
           if (imgFile || vidFile) {

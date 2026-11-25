@@ -167,6 +167,7 @@ import { QuickTestModal, type QuickTestRequest } from './QuickTestModal';
 import { DonateModal } from './DonateModal';
 import { RomSavesPanel } from './RomSavesPanel';
 import { ManualButton } from './ManualViewer';
+import { MediaTidyModal } from './MediaTidyModal';
 import { SettingsModal } from './SettingsModal';
 import { loadAppSettings, subscribeAppSettings } from '../utils/appSettings';
 import { resolveQuickTestCore, pickCueDataTrack, pickBiosForRegion, fileExt } from '../utils/quickTest';
@@ -2047,6 +2048,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   // "Find media in folders": without rescanning ROMs, finds covers, videos and manuals next to the ROMs,
   // including <console>/media/<kind>/ (Skraper layout), and links them to the open database's games.
   const [mediaRefreshBusy, setMediaRefreshBusy] = useState(false);
+  const [mediaTidyOpen, setMediaTidyOpen] = useState(false);
   const mediaRefreshText = (key: 'button' | 'hint' | 'start' | 'done' | 'noDb', vars: Record<string, number> = {}) => {
     const ru = lang === 'ru';
     const dict = {
@@ -2865,17 +2867,36 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       </button>
                     </div>
 
+                    <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <button data-tool="refreshMedia"
                       type="button"
                       onClick={() => void handleRefreshFolderMedia()}
                       disabled={activeRunning || mediaRefreshBusy}
                       title={mediaRefreshText('hint')}
-                      className="mt-2 w-full bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 px-3 py-2 rounded-lg font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      className="w-full bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 px-3 py-2 rounded-lg font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
                     >
                       {mediaRefreshBusy ? <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin" /> : <ImageIcon className="w-3.5 h-3.5 shrink-0" />}
                       <span>{mediaRefreshText('button')}</span>
                     </button>
+                    <button data-tool="tidyMedia"
+                      type="button"
+                      onClick={() => setMediaTidyOpen(true)}
+                      disabled={activeRunning || mediaRefreshBusy}
+                      title={lang === 'ru' ? 'Перенести media/* Skraper в images, marquees, videos, manuals под имена ромов' : 'Move Skraper media/* into images, marquees, videos, manuals named after the ROMs'}
+                      className="w-full bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 px-3 py-2 rounded-lg font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <Wand2 className="w-3.5 h-3.5 shrink-0" />
+                      <span>{lang === 'ru' ? 'Упорядочить медиа…' : 'Tidy media…'}</span>
+                    </button>
+                    </div>
                     <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">{mediaRefreshText('hint')}</p>
+                    {mediaTidyOpen && (
+                      <MediaTidyModal
+                        onClose={() => setMediaTidyOpen(false)}
+                        onAddLog={onAddLog}
+                        onApplied={() => void handleRefreshFolderMedia()}
+                      />
+                    )}
                   </div>
 
                   {/* Данные игр: CSV / XML туда и обратно. / Game data: CSV / XML out and back in. */}
