@@ -2251,7 +2251,9 @@ export function App() {
   // Hydrates expired blob: URLs / missing covers & videos when opening an existing DB file (.json) without re-scanning
   const handleResolveMediaForDbRows = async (
     rows: UnifiedGameRow[],
-    libraryPathHint?: string
+    libraryPathHint?: string,
+    // По клику пользователя можно спросить доступ к сохранённой папке. / On a user click, folder access may be asked.
+    interactive = false
   ): Promise<UnifiedGameRow[]> => {
     if (!rows || rows.length === 0) return rows;
 
@@ -2308,7 +2310,7 @@ export function App() {
         libraryPathHint || selectedFolderName || dbState.masterLibraryPath
       );
       if (savedRec) {
-        const perm = await checkOrRequestHandlePermission(savedRec.handle, 'read', false);
+        const perm = await checkOrRequestHandlePermission(savedRec.handle, 'read', interactive);
         if (perm === 'granted') {
           activeHandle = savedRec.handle;
         }

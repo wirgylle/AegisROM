@@ -532,6 +532,10 @@ func runHybridModernDesktopApp() bool {
 						return filepath.SkipDir
 					}
 					if d.IsDir() {
+						// Фон, карты, мануалы (папки Skraper) — не обложки. / Fan art, maps, manuals: not covers.
+						if depth > 0 && aegisapi.NonCoverMediaDirs[strings.ToLower(d.Name())] {
+							return filepath.SkipDir
+						}
 						return nil
 					}
 					ext := strings.ToLower(filepath.Ext(d.Name()))

@@ -37,6 +37,8 @@ import {
   Settings as SettingsIcon,
   Coffee,
   FolderPlus,
+  Image as ImageIcon,
+  Loader2,
 } from 'lucide-react';
 import { GameInspectorCoverVideo } from './GameInspectorCoverVideo';
 import { MediaVersionsPanel, type MediaVersionsView } from './MediaVersionsPanel';
@@ -339,7 +341,8 @@ interface FigmaConceptStudioProps {
   hasMediaFolderAccess?: boolean;
   onResolveMediaForDbRows?: (
     rows: UnifiedGameRow[],
-    libraryPathHint?: string
+    libraryPathHint?: string,
+    interactive?: boolean
   ) => Promise<UnifiedGameRow[]>;
   /** Версии медиа рома (V1, V2…) для карточки. / A ROM's media versions for the game card. */
   onLoadMediaVersions?: (row: UnifiedGameRow) => Promise<MediaVersionsView | null>;
@@ -2038,6 +2041,51 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
 
   // Effective progress & single-line status text for the bottom bar
   const activeRunning = isAnyProcessRunning || simRunning;
+
+  // «Найти медиа в папках»: без пересканирования ромов ищет обложки, видео и мануалы рядом с ромами,
+  // в том числе в <консоль>/media/<вид>/ (раскладка Skraper), и привязывает их к играм открытой базы.
+  // "Find media in folders": without rescanning ROMs, finds covers, videos and manuals next to the ROMs,
+  // including <console>/media/<kind>/ (Skraper layout), and links them to the open database's games.
+  const [mediaRefreshBusy, setMediaRefreshBusy] = useState(false);
+  const mediaRefreshText = (key: 'button' | 'hint' | 'start' | 'done' | 'noDb', vars: Record<string, number> = {}) => {
+    const ru = lang === 'ru';
+    const dict = {
+      button: ru ? 'Найти медиа в папках (в т.ч. media/ Skraper)' : 'Find media in folders (incl. Skraper media/)',
+      hint: ru
+        ? 'Без пересканирования ромов: обложки, видео и мануалы рядом с ромами и в <консоль>/media/images, videos, manuals.'
+        : 'No ROM rescan: covers, videos and manuals next to the ROMs and in <console>/media/images, videos, manuals.',
+      start: ru ? '🖼 Ищу медиа в папках библиотеки ({count} игр)…' : '🖼 Looking for media in the library folders ({count} games)…',
+      done: ru
+        ? '🖼 Медиа из папок: обложки у {covers} игр, видео у {videos}, мануалы у {manuals} (всего игр {count}).'
+        : '🖼 Media from folders: covers for {covers} games, videos for {videos}, manuals for {manuals} ({count} games).',
+      noDb: ru ? '🖼 Нет открытой базы: сначала выберите папку библиотеки или сделайте полный скан.' : '🖼 No open database: choose the library folder or run a full scan first.',
+    }[key];
+    return dict.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? ''));
+  };
+  const handleRefreshFolderMedia = async () => {
+    if (!onResolveMediaForDbRows || !activeDbEntry || activeDbEntry.rows.length === 0) {
+      onAddLog?.(mediaRefreshText('noDb'));
+      return;
+    }
+    const target = activeDbEntry;
+    setMediaRefreshBusy(true);
+    onAddLog?.(mediaRefreshText('start', { count: target.rows.length }));
+    try {
+      const hydrated = await onResolveMediaForDbRows(target.rows, target.pathHint, true);
+      const isLocal = (u?: string) => Boolean(u && (u.startsWith('blob:') || u.includes('/api/native/fs/media')));
+      const covers = hydrated.filter((r) => isLocal(r.boxArtUrl)).length;
+      const videos = hydrated.filter((r) => isLocal(r.videoUrl)).length;
+      const manuals = hydrated.filter((r) => r.manualFile || r.manualRel).length;
+      setSavedDatabases((prev) => {
+        const updated = prev.map((db) => (db.id === target.id ? { ...db, rows: hydrated } : db));
+        persistDatabasesSafely(updated);
+        return updated;
+      });
+      onAddLog?.(mediaRefreshText('done', { covers, videos, manuals, count: hydrated.length }));
+    } finally {
+      setMediaRefreshBusy(false);
+    }
+  };
   const activePct = isAnyProcessRunning ? Math.max(progressPct, 5) : simRunning ? simProgress : 0;
 
   const latestLogLine =
@@ -2816,6 +2864,18 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         <span>{t('tools.lib.addFolder')}</span>
                       </button>
                     </div>
+
+                    <button data-tool="refreshMedia"
+                      type="button"
+                      onClick={() => void handleRefreshFolderMedia()}
+                      disabled={activeRunning || mediaRefreshBusy}
+                      title={mediaRefreshText('hint')}
+                      className="mt-2 w-full bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 px-3 py-2 rounded-lg font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      {mediaRefreshBusy ? <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin" /> : <ImageIcon className="w-3.5 h-3.5 shrink-0" />}
+                      <span>{mediaRefreshText('button')}</span>
+                    </button>
+                    <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">{mediaRefreshText('hint')}</p>
                   </div>
 
                   {/* Данные игр: CSV / XML туда и обратно. / Game data: CSV / XML out and back in. */}
