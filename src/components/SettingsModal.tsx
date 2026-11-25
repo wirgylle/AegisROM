@@ -8,6 +8,7 @@ import {
   saveAppSettings,
   type AppSettings,
 } from '../utils/appSettings';
+import { WindowModeSetting } from './WindowModeSetting';
 
 // Окно «Настройки»: значения по умолчанию, с которыми приложение открывается каждый раз.
 // Settings window: the defaults the app opens with every time.
@@ -263,6 +264,7 @@ export function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
                     </select>
                   )}
                 </div>
+                <WindowModeSetting />
               </>
             )}
 
