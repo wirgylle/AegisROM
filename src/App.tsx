@@ -107,6 +107,14 @@ import {
 } from './utils/localMediaIndex';
 import { emptyWriteStats, neededSlots, recordRomWrite, usefulSlots, type WriteFail } from './utils/scrapeWriteStats';
 import {
+  isManualFile,
+  isNonCoverDir,
+  ManualIndex,
+  manualStem,
+  MEDIA_CONTAINER_DIRS,
+  renameRomMediaInContainers,
+} from './utils/skraperMedia';
+import {
   findGamelistEntry,
   indexGamelistEntries,
   normalizeGamelistPath,
@@ -701,6 +709,10 @@ interface ScannedRomFile {
   scrapedVideoUrl?: string;
   // Локальные картинки по видам (blob:), см. utils/mediaKinds.ts. / Local images by kind (blob:).
   localMedia?: MediaSet;
+  // Мануал (PDF): файл сеанса и путь от папки скана (utils/skraperMedia.ts).
+  // Manual (PDF): the session file and its path from the scan folder (utils/skraperMedia.ts).
+  manualFile?: File;
+  manualRel?: string;
   mediaStatus: string;
   discNumber?: number | null;
   discCount?: number;
@@ -1605,6 +1617,8 @@ function expandMultiDiscScannedRoms(items: ScannedRomFile[]): ScannedRomFile[] {
           scrapedMarqueeUrl: d.scrapedMarqueeUrl || item.scrapedMarqueeUrl,
           scrapedVideoUrl: d.scrapedVideoUrl || item.scrapedVideoUrl,
           localMedia: d.localMedia || item.localMedia,
+          manualFile: d.manualFile || item.manualFile,
+          manualRel: d.manualRel || item.manualRel,
         });
       }
     } else {
@@ -1729,6 +1743,8 @@ function collapseMultiDiscScannedRoms(
       scrapedMarqueeUrl: marqueeUrl,
       scrapedSnapUrl: snapUrl,
       localMedia: updatedDiscs.find((d) => d.localMedia)?.localMedia || first.localMedia,
+      manualFile: updatedDiscs.find((d) => d.manualFile)?.manualFile || first.manualFile,
+      manualRel: updatedDiscs.find((d) => d.manualRel)?.manualRel || first.manualRel,
       mediaStatus: tfStatic('app.multi.inlineBadge', {
         discs: tfStatic('lib.multiDiscCount', { count: updatedDiscs.length }),
         path: `${effectiveFolderName}/${effectiveM3uName}`,
@@ -2290,7 +2306,7 @@ export function App() {
 
     if (activeHandle) {
       try {
-        const mediaIdx = await collectLocalMediaFromHandle(activeHandle, 3);
+        const mediaIdx = await collectLocalMediaFromHandle(activeHandle);
         const CHUNK_SIZE = 350;
         for (let i = 0; i < afterNative.length; i++) {
           const r = afterNative[i];
@@ -2324,10 +2340,20 @@ export function App() {
             }
             if (Object.keys(local).length > 0) media = { ...(media || {}), ...local };
           }
+          // Мануал (PDF) рядом с ромом или в media/manuals. / A manual next to the ROM or in media/manuals.
+          if (mediaIdx.manualsByStem.size > 0 && !r.manualFile) {
+            let manual: { file: File; path: string } | undefined;
+            for (const k of [oldStem, cleanStem, r.title.toLowerCase(), titleNorm]) {
+              if (k && !manual) manual = mediaIdx.manualsByStem.get(k);
+            }
+            if (manual) {
+              afterNative[i] = { ...afterNative[i], manualFile: manual.file, manualRel: r.manualRel || manual.path };
+            }
+          }
           if (imgFile || vidFile) {
             const cover = media ? preferredCoverUrl(media) : undefined;
             afterNative[i] = {
-              ...r,
+              ...afterNative[i],
               media,
               boxArtUrl: cover || (imgFile ? URL.createObjectURL(imgFile) : r.boxArtUrl),
               videoUrl: vidFile ? URL.createObjectURL(vidFile) : r.videoUrl,
@@ -3109,6 +3135,8 @@ export function App() {
     const isImg = ['.png', '.jpg', '.jpeg', '.bmp', '.webp'].includes(ext);
     const isVid = ['.mp4', '.webm', '.mkv'].includes(ext);
     if (!isImg && !isVid) return;
+    // Фон, карты, картридж, мануалы (папки Skraper) — не обложки. / Fan art, maps, cartridges, manuals: not covers.
+    if (isImg && isNonCoverDir(dirName)) return;
 
     let stem = file.name.slice(0, dot).trim();
     const suffixes = [
@@ -3145,11 +3173,27 @@ export function App() {
     if (isImg && kindIndex) kindIndex.addFile(keys, file.name, dirName, file);
   };
 
+  // Мануал (PDF из manuals/, media/manuals/ или с суффиксом -manual) под ключами имени рома.
+  // A manual (PDF from manuals/, media/manuals/ or with a -manual suffix) under the ROM name keys.
+  const registerManualFile = (file: File, relPath: string, manuals: ManualIndex<File>): boolean => {
+    const parts = relPath.split('/');
+    if (!isManualFile(file.name, parts.slice(0, -1).join('/'))) return false;
+    const stem = manualStem(file.name);
+    const keys = [stem.toLowerCase()];
+    const coreKey = extractCoreNumberKey(stem);
+    if (coreKey) keys.push(coreKey.toLowerCase());
+    const compKey = buildComparisonKey(extractCleanTitle(stem));
+    if (compKey && compKey.length >= 2) keys.push(compKey);
+    manuals.add(keys, file, relPath);
+    return true;
+  };
+
   const attachLocalMediaToRom = async (
     rom: ScannedRomFile,
     imgMap: Map<string, File>,
     vidMap: Map<string, File>,
-    kindIndex?: MediaKindIndex<File>
+    kindIndex?: MediaKindIndex<File>,
+    manuals?: ManualIndex<File>
   ): Promise<ScannedRomFile> => {
     const baseNoExt = rom.fileName.replace(/\.[^/.]+$/, '').trim().toLowerCase();
     const coreKey = extractCoreNumberKey(rom.fileName)?.toLowerCase();
@@ -3214,12 +3258,15 @@ export function App() {
       mediaStatus = t('app.scan.localMediaVideo');
     }
 
+    const manual = manuals && manuals.size > 0 ? manuals.lookup(candidateKeys) : undefined;
+
     return {
       ...rom,
       scrapedBoxArtUrl: boxArtUrl,
       scrapedVideoUrl: videoUrl,
       localMedia,
       mediaStatus,
+      ...(manual ? { manualFile: manual.file, manualRel: manual.relPath } : {}),
     };
   };
 
@@ -3822,6 +3869,7 @@ export function App() {
     const localImageFilesMap = new Map<string, File>();
     const localVideoFilesMap = new Map<string, File>();
     const localMediaKinds = new MediaKindIndex<File>();
+    const localManuals = new ManualIndex<File>();
     // Файлы патчей из папок patch/. / Patch files from patch/ folders.
     const discoveredPatches: Array<{ file: File; relPath: string }> = [];
     // Сохранения (.srm, .sav, .state…) по папкам: имена в нижнем регистре.
@@ -3831,13 +3879,15 @@ export function App() {
     const rootFolderTitle = rootHandle.name.toLowerCase();
     const prefixStart = CONSOLE_CATALOG[rootFolderTitle] ? rootHandle.name : '';
 
-    async function walkMediaFolderHandle(mediaDirHandle: any) {
+    // relPath — путь папки медиа от папки скана (для мануалов). / relPath: the media folder path from the scan folder.
+    async function walkMediaFolderHandle(mediaDirHandle: any, relPath: string) {
       try {
         for await (const mEntry of mediaDirHandle.values()) {
           if (stopRequestedRef.current) break;
           if (mEntry.kind === 'file') {
             try {
               const mFile = await mEntry.getFile();
+              if (registerManualFile(mFile, `${relPath}/${mEntry.name}`, localManuals)) continue;
               registerLocalMediaFile(mFile, localImageFilesMap, localVideoFilesMap, localMediaKinds, mediaDirHandle.name);
             } catch {}
           }
@@ -3861,6 +3911,19 @@ export function App() {
         if (entry.name.startsWith('.')) continue;
         const lowerName = entry.name.toLowerCase();
         if (entry.kind === 'directory') {
+          const mediaRel = prefix ? `${prefix}/${entry.name}` : entry.name;
+          // Skraper: <консоль>/media/images, media/videos, media/manuals… — обходим каждую подпапку.
+          // Skraper: <console>/media/images, media/videos, media/manuals… — walk every subfolder.
+          if (MEDIA_CONTAINER_DIRS.has(lowerName)) {
+            await walkMediaFolderHandle(entry, mediaRel);
+            try {
+              for await (const sub of entry.values()) {
+                if (stopRequestedRef.current) break;
+                if (sub.kind === 'directory') await walkMediaFolderHandle(sub, `${mediaRel}/${sub.name}`);
+              }
+            } catch {}
+            continue;
+          }
           if (
             OFFICIAL_R36S_MEDIA_DIRS.has(lowerName) ||
             Boolean(PHANTOM_MEDIA_DIR_KEYS[lowerName]) ||
@@ -3877,7 +3940,7 @@ export function App() {
               'logos',
             ].includes(lowerName)
           ) {
-            await walkMediaFolderHandle(entry);
+            await walkMediaFolderHandle(entry, mediaRel);
             continue;
           }
           if (
@@ -3921,6 +3984,10 @@ export function App() {
             try {
               const mFile = await entry.getFile();
               registerLocalMediaFile(mFile, localImageFilesMap, localVideoFilesMap, localMediaKinds, dirHandle.name);
+            } catch {}
+          } else if (ext === '.pdf') {
+            try {
+              registerManualFile(await entry.getFile(), relCandidate, localManuals);
             } catch {}
           }
         }
@@ -3974,7 +4041,9 @@ export function App() {
           entry.pairedFormatExt
         );
         if (item) {
-          inspected.push(await attachLocalMediaToRom(item, localImageFilesMap, localVideoFilesMap, localMediaKinds));
+          inspected.push(
+            await attachLocalMediaToRom(item, localImageFilesMap, localVideoFilesMap, localMediaKinds, localManuals)
+          );
         }
         if (pairedDiscovered.length > 0) {
           setProgressPct(Math.round(((i + 1) / pairedDiscovered.length) * 100));
@@ -4118,6 +4187,7 @@ export function App() {
     const localImageFilesMap = new Map<string, File>();
     const localVideoFilesMap = new Map<string, File>();
     const localMediaKinds = new MediaKindIndex<File>();
+    const localManuals = new ManualIndex<File>();
 
     for (const f of files) {
       const lowerName = f.name.toLowerCase();
@@ -4132,7 +4202,9 @@ export function App() {
       } else {
         const dot = lowerName.lastIndexOf('.');
         const ext = dot !== -1 ? lowerName.slice(dot) : '';
-        if (['.png', '.jpg', '.jpeg', '.bmp', '.webp', '.mp4', '.webm'].includes(ext)) {
+        if (ext === '.pdf') {
+          registerManualFile(f, (f as any).webkitRelativePath || f.name, localManuals);
+        } else if (['.png', '.jpg', '.jpeg', '.bmp', '.webp', '.mp4', '.webm'].includes(ext)) {
           const relMedia = (f as any).webkitRelativePath || f.name;
           const relParts = relMedia.split('/');
           registerLocalMediaFile(
@@ -4202,7 +4274,9 @@ export function App() {
         entry.pairedFormatExt
       );
       if (item) {
-        inspected.push(await attachLocalMediaToRom(item, localImageFilesMap, localVideoFilesMap, localMediaKinds));
+        inspected.push(
+          await attachLocalMediaToRom(item, localImageFilesMap, localVideoFilesMap, localMediaKinds, localManuals)
+        );
       }
       if (i % 5 === 0 || i === pairedDiscovered.length - 1) {
         setProgressPct(Math.round(((i + 1) / Math.max(1, pairedDiscovered.length)) * 100));
@@ -4436,6 +4510,8 @@ export function App() {
                 }
               } catch {}
             }
+            // Медиа и мануалы Skraper в media/* тоже едут за ромом. / Skraper media and manuals in media/* follow the ROM.
+            await renameRomMediaInContainers(r.parentHandle, oldBaseNoExt, safeBase);
           } catch {}
         }
 
@@ -4653,6 +4729,10 @@ export function App() {
                 }
               }
             } catch {}
+            // Медиа и мануалы Skraper в media/*. / Skraper media and manuals in media/*.
+            for (const oldSt of mediaCandidateStems) {
+              await renameRomMediaInContainers(rootDirHandle, oldSt, m.proposedBaseName);
+            }
           } catch {}
         }
       }
@@ -9237,12 +9317,29 @@ export function App() {
     const candidateBases = Array.from(
       new Set([baseNoExt, cleanTitle.replace(/[<>:"/\\|?*]/g, '_').trim(), cleanTitle.trim()].filter(Boolean))
     );
-    const imgFolders = ['images', 'downloaded_images', 'download_images', 'boxart', 'snap'];
+    // Папка по пути «a/b» (раскладка Skraper: media/images). / A folder by an "a/b" path (Skraper: media/images).
+    const subDirOf = async (path: string) => {
+      let d = consoleDirHandle;
+      for (const part of path.split('/')) d = await d.getDirectoryHandle(part);
+      return d;
+    };
+    const imgFolders = [
+      'images',
+      'downloaded_images',
+      'download_images',
+      'boxart',
+      'snap',
+      'media/images',
+      'media/box2dfront',
+      'media/thumbnails',
+      'media/mixrbv2',
+      'media/screenshot',
+    ];
     const imgSuffixes = ['-image.png', '.png', '-image.jpg', '.jpg', '.jpeg', '-thumb.png', '-thumb.jpg'];
 
     for (const folder of imgFolders) {
       try {
-        const subDir = await consoleDirHandle.getDirectoryHandle(folder);
+        const subDir = await subDirOf(folder);
         for (const base of candidateBases) {
           for (const sfx of imgSuffixes) {
             try {
@@ -9263,39 +9360,45 @@ export function App() {
     if (!thumbRel && imgRel) thumbRel = imgRel;
     if (!imgRel && thumbRel) imgRel = thumbRel;
 
-    try {
-      const mDir = await consoleDirHandle.getDirectoryHandle('marquees');
-      for (const base of candidateBases) {
-        for (const sfx of ['-marquee.png', '.png', '-marquee.jpg', '.jpg']) {
-          try {
-            const fh = await mDir.getFileHandle(`${base}${sfx}`);
-            const f = await fh.getFile();
-            if (f.size > 0) {
-              marqueeRel = `./marquees/${base}${sfx}`;
-              break;
-            }
-          } catch {}
+    for (const folder of ['marquees', 'media/marquee', 'media/marquees', 'media/wheel', 'media/wheels']) {
+      if (marqueeRel) break;
+      try {
+        const mDir = await subDirOf(folder);
+        for (const base of candidateBases) {
+          for (const sfx of ['-marquee.png', '.png', '-marquee.jpg', '.jpg']) {
+            try {
+              const fh = await mDir.getFileHandle(`${base}${sfx}`);
+              const f = await fh.getFile();
+              if (f.size > 0) {
+                marqueeRel = `./${folder}/${base}${sfx}`;
+                break;
+              }
+            } catch {}
+          }
+          if (marqueeRel) break;
         }
-        if (marqueeRel) break;
-      }
-    } catch {}
+      } catch {}
+    }
 
-    try {
-      const vDir = await consoleDirHandle.getDirectoryHandle('videos');
-      for (const base of candidateBases) {
-        for (const sfx of ['-video.mp4', '.mp4']) {
-          try {
-            const fh = await vDir.getFileHandle(`${base}${sfx}`);
-            const f = await fh.getFile();
-            if (f.size > 0) {
-              videoRel = `./videos/${base}${sfx}`;
-              break;
-            }
-          } catch {}
+    for (const folder of ['videos', 'media/videos', 'media/video']) {
+      if (videoRel) break;
+      try {
+        const vDir = await subDirOf(folder);
+        for (const base of candidateBases) {
+          for (const sfx of ['-video.mp4', '.mp4']) {
+            try {
+              const fh = await vDir.getFileHandle(`${base}${sfx}`);
+              const f = await fh.getFile();
+              if (f.size > 0) {
+                videoRel = `./${folder}/${base}${sfx}`;
+                break;
+              }
+            } catch {}
+          }
+          if (videoRel) break;
         }
-        if (videoRel) break;
-      }
-    } catch {}
+      } catch {}
+    }
 
     return { imgRel, thumbRel, marqueeRel, videoRel };
   };
@@ -9793,6 +9896,8 @@ export function App() {
       boxArtUrl: r.scrapedBoxArtUrl,
       videoUrl: r.scrapedVideoUrl,
       media: scannedRomMediaSet(r),
+      manualFile: r.manualFile,
+      manualRel: r.manualRel,
       fileObj: r.fileObj,
       companionFiles: r.companionFiles,
       parentHandle: r.parentHandle,

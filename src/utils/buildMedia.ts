@@ -13,6 +13,7 @@ import {
   parseGamelistEntries,
   splitRelativeMediaPath,
 } from './gamelistXml.ts';
+import { listMediaKindDirs } from './skraperMedia.ts';
 
 export type BuildMediaKind = 'image' | 'thumbnail' | 'marquee' | 'video';
 export const BUILD_MEDIA_KINDS: BuildMediaKind[] = ['thumbnail', 'image', 'marquee', 'video'];
@@ -159,9 +160,17 @@ const MEDIA_DIRS: Record<string, BuildMediaKind> = {
   downloaded_images: 'image',
   download_images: 'image',
   media: 'image',
+  // Skraper: мини-картинки, коллажи, титульный экран. / Skraper: mixes and title screens.
+  mix: 'image',
+  mixrbv1: 'image',
+  mixrbv2: 'image',
+  miximages: 'image',
+  screenshottitle: 'image',
+  box3d: 'image',
   boxart: 'thumbnail',
   boxarts: 'thumbnail',
   box2dfront: 'thumbnail',
+  boxfront: 'thumbnail',
   covers: 'thumbnail',
   cover: 'thumbnail',
   thumbnails: 'thumbnail',
@@ -170,6 +179,9 @@ const MEDIA_DIRS: Record<string, BuildMediaKind> = {
   marquee: 'marquee',
   wheel: 'marquee',
   wheels: 'marquee',
+  wheelhd: 'marquee',
+  wheelcarbon: 'marquee',
+  wheelsteel: 'marquee',
   logos: 'marquee',
   videos: 'video',
   video: 'video',
@@ -260,9 +272,11 @@ export class MediaSourceIndex {
       gamelist = indexGamelistEntries(parseGamelistEntries(text));
     } catch {}
     try {
-      for await (const entry of dir.values()) {
-        if (entry.kind !== 'directory') continue;
-        const dirKind = MEDIA_DIRS[String(entry.name).toLowerCase()];
+      // Папки консоли и media/* (Skraper кладёт всё в <консоль>/media/<вид>/).
+      // The console's folders and media/* (Skraper puts everything in <console>/media/<kind>/).
+      for (const { handle: entry } of await listMediaKindDirs<any>(dir)) {
+        const low = String(entry.name).toLowerCase();
+        const dirKind = MEDIA_DIRS[low];
         if (!dirKind) continue;
         try {
           for await (const f of entry.values()) {
