@@ -629,6 +629,14 @@ func runHybridModernDesktopApp() bool {
 		})
 	})
 
+	// Проверка готового CHD (заголовок, дорожки, chdman verify). / Checking a finished CHD (header, tracks, chdman verify).
+	mux.HandleFunc("/api/native/converter/verify", func(w http.ResponseWriter, r *http.Request) {
+		atomic.StoreInt64(&lastHeartbeatUnix, time.Now().Unix())
+		aegisapi.HandleChdVerify(w, r, findChdmanExecutable(), func(c *exec.Cmd) {
+			c.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		})
+	})
+
 	mux.HandleFunc("/api/native/converter/chd", func(w http.ResponseWriter, r *http.Request) {
 		atomic.StoreInt64(&lastHeartbeatUnix, time.Now().Unix())
 		if r.Method != http.MethodPost {
@@ -663,8 +671,8 @@ func runHybridModernDesktopApp() bool {
 			http.Error(w, "outDir: "+err.Error(), http.StatusForbidden)
 			return
 		}
-		baseName := strings.TrimSpace(r.FormValue("baseName"))
-		if baseName == "" {
+		baseName := filepath.Base(strings.ReplaceAll(strings.TrimSpace(r.FormValue("baseName")), `\`, `/`))
+		if baseName == "" || baseName == "." || baseName == "/" {
 			baseName = "Converted_Game"
 		}
 
@@ -722,40 +730,15 @@ func runHybridModernDesktopApp() bool {
 		}
 
 		if targetExt == ".chd" {
-			chdInputPath := entryPath
-			lowEntry := strings.ToLower(entryPath)
-			// Alcohol .mds+.mdf or standalone .mdf/.img: normalize to .cue + .bin first so chdman.exe always succeeds!
-			if strings.HasSuffix(lowEntry, ".mds") || strings.HasSuffix(lowEntry, ".mdf") || strings.HasSuffix(lowEntry, ".img") {
-				rawPayload := entryPath
-				if strings.HasSuffix(lowEntry, ".mds") {
-					// Locate the .mdf file uploaded in tmpDir
-					if entries, rErr := os.ReadDir(tmpDir); rErr == nil {
-						for _, ent := range entries {
-							if strings.HasSuffix(strings.ToLower(ent.Name()), ".mdf") {
-								rawPayload = filepath.Join(tmpDir, ent.Name())
-								break
-							}
-						}
-					}
-				}
-				if strings.HasSuffix(lowEntry, ".mds") || strings.HasSuffix(lowEntry, ".mdf") || strings.HasSuffix(lowEntry, ".img") {
-					normCue := filepath.Join(tmpDir, baseName+"_norm.cue")
-					normBin := filepath.Join(tmpDir, baseName+"_norm.bin")
-					if nErr := aegiscore.NormalizeDiscImageToCueAndBin(rawPayload, normCue, normBin); nErr == nil {
-						chdInputPath = normCue
-					}
-				}
-			}
-
-			outChd := filepath.Join(tmpDir, baseName+".chd")
-			cmd := exec.CommandContext(r.Context(), chdmanExe, "createcd", "-f", "-i", chdInputPath, "-o", outChd)
-			cmd.Dir = tmpDir
-			cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-			cmdOut, runErr := cmd.CombinedOutput()
-			if runErr != nil {
-				http.Error(w, "chdman createcd error: "+runErr.Error()+"\n"+string(cmdOut), http.StatusInternalServerError)
+			// Вход готовит aegiscore.PrepareCDInput (.bin/.img/.ccd/.mdf/ISO 2048 для PS1), результат проверяется.
+			// aegiscore.PrepareCDInput prepares the input (.bin/.img/.ccd/.mdf/PS1 ISO 2048); the output is checked.
+			outChd, notes, cErr := aegisapi.CreateCDCHD(r.Context(), chdmanExe, entryPath, tmpDir, baseName,
+				r.FormValue("console"), func(c *exec.Cmd) { c.SysProcAttr = &syscall.SysProcAttr{HideWindow: true} })
+			if cErr != nil {
+				http.Error(w, cErr.Error(), http.StatusInternalServerError)
 				return
 			}
+			aegisapi.SetConverterNotes(w, notes)
 			if outDir != "" {
 				aegisapi.SendConverterOutputs(w, tmpDir, outDir, []string{baseName + ".chd"})
 				return

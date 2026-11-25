@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -114,5 +115,50 @@ func TestHandleChdStopsWhenRequestIsCancelled(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "Cancelled.chd")); !os.IsNotExist(err) {
 		t.Fatal("no output expected after cancel")
+	}
+}
+
+// PS1 ISO 2048 без .cue: конвертер перестраивает его в MODE2/2352, а /verify не находит ошибок.
+// PS1 ISO 2048 without a .cue: the converter rebuilds it as MODE2/2352 and /verify finds no errors.
+func TestHandleChdPSXIsoBecomesRawAndVerifies(t *testing.T) {
+	chdman, root, _ := chdTestSetup(t)
+	iso := bytes.Repeat([]byte("AEGISROM"), 300*2048/8)
+	copy(iso[16*2048:], append([]byte{1}, []byte("CD001")...))
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	for k, v := range map[string]string{"targetExt": ".chd", "baseName": "Game (Disc 1)", "outDir": root, "console": "psx"} {
+		_ = mw.WriteField(k, v)
+	}
+	fw, _ := mw.CreateFormFile("entryFile", "Game.iso")
+	_, _ = fw.Write(iso)
+	_ = mw.Close()
+	req := httptest.NewRequest(http.MethodPost, "/api/native/converter/chd", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	rec := httptest.NewRecorder()
+	handleChd(rec, req, chdman)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("X-Converter-Notes") == "" {
+		t.Fatal("expected a converter note about the ISO rebuild")
+	}
+	out := filepath.Join(root, "Game (Disc 1).chd")
+	vreq := httptest.NewRequest(http.MethodPost, "/api/native/converter/verify",
+		strings.NewReader("path="+url.QueryEscape(out)+"&console=psx&deep=1"))
+	vreq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	vrec := httptest.NewRecorder()
+	aegisapi.HandleChdVerify(vrec, vreq, chdman, nil)
+	var v struct {
+		Info struct {
+			Tracks []struct{ Type string } `json:"tracks"`
+		} `json:"info"`
+		Issues []struct{ Level string } `json:"issues"`
+		Deep   struct{ Ran, Ok bool }   `json:"deep"`
+	}
+	if err := json.Unmarshal(vrec.Body.Bytes(), &v); err != nil {
+		t.Fatalf("verify: %v %s", err, vrec.Body.String())
+	}
+	if len(v.Info.Tracks) != 1 || v.Info.Tracks[0].Type != "MODE2_RAW" || len(v.Issues) != 0 || !v.Deep.Ran || !v.Deep.Ok {
+		t.Fatalf("verify answer: %s", vrec.Body.String())
 	}
 }

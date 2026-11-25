@@ -1644,6 +1644,9 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
             const form = new FormData();
             form.append('targetExt', item.targetExt);
             form.append('baseName', stemWithRegion);
+            // Код консоли: для PS1 Go перестраивает ISO 2048 в MODE2/2352 и проверяет готовый CHD.
+            // Console code: for PS1 Go rebuilds a 2048-byte ISO as MODE2/2352 and checks the finished CHD.
+            form.append('console', String(item.game.consoleShort || '').toLowerCase());
             form.append('entryFile', srcFile, srcFile.name);
             for (const cf of companionTracks) {
               form.append('companionFiles', cf, cf.name);
@@ -1672,6 +1675,14 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
               throw new Error(`chdman error: ${errTxt}`);
             }
             const outMode = resp.headers.get('X-Output-Mode');
+            const convNotes = resp.headers.get('X-Converter-Notes');
+            if (convNotes) {
+              let txt = convNotes;
+              try {
+                txt = decodeURIComponent(convNotes);
+              } catch {}
+              onAddLog?.(`${stemWithRegion}: ${txt}`);
+            }
             let finalEntry = item.targetExt === '.bin+.cue' ? `${stemWithRegion}.cue` : singleOutName;
             if (outMode === 'disk') {
               await resp.json().catch(() => null);

@@ -42,6 +42,8 @@ import { GameInspectorCoverVideo } from './GameInspectorCoverVideo';
 import { MediaVersionsPanel, type MediaVersionsView } from './MediaVersionsPanel';
 import type { VersionSlot } from '../utils/mediaVersions';
 import { DatFilesPanel } from './DatFilesPanel';
+import { RomCheckPanel } from './RomCheckPanel';
+import type { RomCheckReport } from '../utils/romCheck';
 import { ScrapeReportCard, ScreenScraperPanel } from './ScreenScraperPanel';
 import type { ScrapeReport } from '../utils/scrapeReport';
 import { PatcherPanel } from './PatcherPanel';
@@ -364,6 +366,12 @@ interface FigmaConceptStudioProps {
   scrapeReport?: ScrapeReport | null;
   // Системы Libretro из библиотеки (для автозагрузки DAT). / Libretro systems in the library (DAT auto-download).
   datSystems?: string[];
+  // Проверка ромов (инструмент). / ROM check (tool).
+  onCheckRoms?: (ids?: string[], deepChd?: boolean) => void;
+  onStopRomCheck?: () => void;
+  romCheckReport?: RomCheckReport | null;
+  romCheckRunning?: boolean;
+  romCheckProgress?: string;
   onScanPhantomFolders?: () => void;
   onRepairSdCard?: (firmwareId?: string) => void;
   sdTargetFolderName?: string;
@@ -743,6 +751,11 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   onOnlineRename,
   scrapeReport = null,
   datSystems,
+  onCheckRoms,
+  onStopRomCheck,
+  romCheckReport = null,
+  romCheckRunning = false,
+  romCheckProgress = '',
   onScanPhantomFolders,
   onRepairSdCard,
   sdTargetFolderName = '',
@@ -2866,6 +2879,15 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       }}
                     />
                   )}
+
+                  <RomCheckPanel
+                    disabled={activeRunning}
+                    running={romCheckRunning}
+                    progressText={romCheckProgress}
+                    report={romCheckReport}
+                    onRun={onCheckRoms ? (deep) => openScope('romCheck', (ids) => onCheckRoms(ids, deep)) : undefined}
+                    onStop={onStopRomCheck}
+                  />
 
                   <DatFilesPanel disabled={activeRunning} systems={datSystems} />
 

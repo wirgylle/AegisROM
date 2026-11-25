@@ -216,6 +216,11 @@ import {
   type RomModInfo,
 } from './utils/romHacks';
 import { isPatchFileName, readPatchInfo } from './utils/romPatcher';
+import { runRomCheck, type ChdVerifyAnswer, type NamedBlob, type RomCheckReport, type RomCheckTarget } from './utils/romCheck';
+import { nativePathOf } from './utils/nativeFs';
+import { loadBiosScanCache } from './utils/biosScan';
+import { buildBiosReport } from './utils/biosCheck';
+import { BIOS_GUIDE } from './data/bios/biosGuide';
 import { carryRomSaves, countSavesForRom, looksLikeSaveFile, romStem } from './utils/saveFiles';
 import {
   carryMediaVersions,
@@ -1780,6 +1785,10 @@ export function App() {
   const [isScanningPhantoms, setIsScanningPhantoms] = useState(false);
   const [isRepairingSd, setIsRepairingSd] = useState(false);
   const [isApplyingXml, setIsApplyingXml] = useState(false);
+  // Проверка ромов (Инструменты). / ROM check (Tools).
+  const [isCheckingRoms, setIsCheckingRoms] = useState(false);
+  const [romCheckReport, setRomCheckReport] = useState<RomCheckReport | null>(null);
+  const [romCheckProgress, setRomCheckProgress] = useState('');
   const [isProcessingBuffer, setIsProcessingBuffer] = useState(false);
   const [xmlModalOpen, setXmlModalOpen] = useState(false);
   const [progressPct, setProgressPct] = useState(0);
@@ -1996,6 +2005,7 @@ export function App() {
     isCleaningMedia ||
     isRepairingSd ||
     isApplyingXml ||
+    isCheckingRoms ||
     isProcessingBuffer;
 
   const handleEmergencyStop = () => {
@@ -2008,6 +2018,7 @@ export function App() {
     setIsCleaningMedia(false);
     setIsRepairingSd(false);
     setIsApplyingXml(false);
+    setIsCheckingRoms(false);
     setIsProcessingBuffer(false);
     setIsScanningPhantoms(false);
     const stopMsg = t('status.stoppedByUser');
@@ -7882,6 +7893,123 @@ export function App() {
     await handleScrapeR36SMedia(list, false, rootDirHandle || libraryDirHandle || null, opts);
   };
 
+  // Проверка ромов: файлы на месте, не обрезаны, .cue/.m3u ссылаются на существующие файлы, CHD годятся
+  // для консоли, BIOS есть. Ромов в сеансе нет — берём записи базы без скана; не найденные на диске
+  // попадают в отчёт как ошибка «нет файла».
+  // ROM check: files in place and complete, .cue/.m3u point to existing files, CHDs suit the console,
+  // BIOS present. With no session ROMs, database records are used without a scan; records not found on
+  // disk go into the report as a "missing file" error.
+  const handleCheckRoms = async (onlyIds?: string[], deepChd = false) => {
+    if (isAnyProcessRunning) return;
+    const ids = onlyIds ? new Set(onlyIds) : null;
+    let roms: ScannedRomFile[] = romsRef.current.filter((r) => r.status === 'verified');
+    const missingTargets: RomCheckTarget[] = [];
+    stopRequestedRef.current = false;
+    setIsCheckingRoms(true);
+    setRomCheckProgress('');
+    try {
+      if (roms.length === 0) {
+        const active = activeDbRef.current;
+        if (!active || active.builtin || active.rows.length === 0) {
+          const msg = t('rc.noRoms');
+          setCurrentActionText(msg);
+          addLog(msg);
+          return;
+        }
+        const root = await resolveLibraryRootWithPermission();
+        if (!root) {
+          const msg = t('app.scrape.needFolder');
+          setCurrentActionText(msg);
+          addLog(msg);
+          return;
+        }
+        const rows = ids ? active.rows.filter((r) => ids.has(r.id)) : active.rows;
+        const { roms: hydrated } = await hydrateRomsFromDbRows(root, rows);
+        roms = hydrated;
+        const found = new Set(hydrated.map((r) => r.id));
+        for (const row of rows) {
+          if (found.has(row.id)) continue;
+          missingTargets.push({
+            id: row.id,
+            title: row.title,
+            console: String(row.consoleShort || '').toLowerCase(),
+            relativePath: row.relativePath || row.oldFile || '',
+            missing: true,
+          });
+        }
+      } else if (ids) {
+        roms = roms.filter((r) => ids.has(r.id));
+      }
+      const toTarget = (r: ScannedRomFile): RomCheckTarget => ({
+        id: r.id,
+        title: r.cleanTitle || r.fileName,
+        console: String(r.consoleCode || '').toLowerCase(),
+        relativePath: r.relativePath,
+        file: (r.fileObj as unknown as NamedBlob) || null,
+        companions: r.companionFiles as unknown as NamedBlob[] | undefined,
+        cueText: r.cueText,
+        parentHandle: r.parentHandle,
+        discNumber: r.discNumber ?? undefined,
+        discs: r.isMultiDisc && r.discs && r.discs.length > 1 ? r.discs.map(toTarget) : undefined,
+      });
+      const targets = [...roms.map(toTarget), ...missingTargets];
+      if (targets.length === 0) {
+        const msg = ids ? t('scope.emptyResult') : t('rc.noRoms');
+        setCurrentActionText(msg);
+        addLog(msg);
+        return;
+      }
+      const verifyChd = async (file: NamedBlob, consoleCode: string, deep: boolean): Promise<ChdVerifyAnswer | null> => {
+        const path = nativePathOf(file);
+        if (!path) return null;
+        const form = new FormData();
+        form.append('path', path);
+        form.append('console', consoleCode);
+        if (deep) form.append('deep', '1');
+        const resp = await fetch('/api/native/converter/verify', { method: 'POST', body: form });
+        return resp.ok ? ((await resp.json()) as ChdVerifyAnswer) : null;
+      };
+      const signal = {
+        get aborted() {
+          return stopRequestedRef.current;
+        },
+      };
+      const report = await runRomCheck(targets, {
+        deepChd,
+        verifyChd,
+        signal,
+        onProgress: (done, total, title) => {
+          if (done % 10 !== 0 && done !== total) return;
+          const msg = tf('rc.progress', { done, total, title });
+          setRomCheckProgress(msg);
+          setCurrentActionText(msg);
+          setProgressPct(Math.round((done / Math.max(1, total)) * 100));
+        },
+      });
+      // BIOS: по последней проверке раздела Среда → BIOS. / BIOS: from the last Environment → BIOS check.
+      const consoles = new Set(report.results.map((r) => r.console));
+      const needing = BIOS_GUIDE.filter((g) => g.need === 'required' && g.consoleKeys.some((k) => consoles.has(k)));
+      const cache = loadBiosScanCache();
+      if (needing.length > 0) {
+        if (!cache) report.biosUnchecked = true;
+        else {
+          const bios = buildBiosReport(cache.files);
+          report.biosMissing = bios.systems
+            .filter((s) => s.status === 'missing' && needing.some((n) => n.id === s.system.id))
+            .map((s) => s.system.name);
+        }
+      }
+      setRomCheckReport(report);
+      const doneMsg = tf('rc.done', report.counts);
+      setCurrentActionText(doneMsg);
+      addLog(doneMsg);
+    } finally {
+      setIsCheckingRoms(false);
+      setRomCheckProgress('');
+      setProgressPct(100);
+    }
+  };
+
   const handleScrapeR36SMedia = async (
     targetList: ScannedRomFile[] = romsRef.current,
     exportBatAfter = false,
@@ -10060,6 +10188,13 @@ export function App() {
         onOnlineRename={(ids?: string[]) => void runWithSessionRoms('handleOnlineRenameRoms', ids)}
         scrapeReport={scrapeReport}
         datSystems={datSystems}
+        onCheckRoms={(ids?: string[], deep?: boolean) => void handleCheckRoms(ids, Boolean(deep))}
+        onStopRomCheck={() => {
+          stopRequestedRef.current = true;
+        }}
+        romCheckReport={romCheckReport}
+        romCheckRunning={isCheckingRoms}
+        romCheckProgress={romCheckProgress}
         onScanPhantomFolders={() => void runWithSessionRoms('handleScanPhantomFolders')}
         onRepairSdCard={(fw) => handleRepairR36SSDCard(fw as any)}
         sdTargetFolderName={sdTargetFolderName}
