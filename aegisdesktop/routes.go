@@ -153,6 +153,9 @@ func RegisterRoutes(mux *http.ServeMux, o Options) {
 		res["error"] = errString(err)
 		writeJSON(w, res)
 	})
+	h("/api/native/converter/verify", func(w http.ResponseWriter, r *http.Request) {
+		aegisapi.HandleChdVerify(w, r, plat.FindChdman(appDir), nil)
+	})
 	h("/api/native/converter/chd", func(w http.ResponseWriter, r *http.Request) {
 		handleChd(w, r, plat.FindChdman(appDir))
 	})
@@ -421,30 +424,13 @@ func handleChd(w http.ResponseWriter, r *http.Request, chdman string) {
 
 	switch targetExt {
 	case ".chd":
-		input := entry
-		low := strings.ToLower(entry)
-		if strings.HasSuffix(low, ".mds") || strings.HasSuffix(low, ".mdf") || strings.HasSuffix(low, ".img") {
-			raw := entry
-			if strings.HasSuffix(low, ".mds") {
-				if entries, err := os.ReadDir(tmpDir); err == nil {
-					for _, e := range entries {
-						if strings.HasSuffix(strings.ToLower(e.Name()), ".mdf") {
-							raw = filepath.Join(tmpDir, e.Name())
-							break
-						}
-					}
-				}
-			}
-			cue := filepath.Join(tmpDir, baseName+"_norm.cue")
-			bin := filepath.Join(tmpDir, baseName+"_norm.bin")
-			if aegiscore.NormalizeDiscImageToCueAndBin(raw, cue, bin) == nil {
-				input = cue
-			}
+		out, notes, err := aegisapi.CreateCDCHD(r.Context(), chdman, entry, tmpDir, baseName, r.FormValue("console"), nil)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
-		out := filepath.Join(tmpDir, baseName+".chd")
-		if runChdman("createcd", "-f", "-i", input, "-o", out) {
-			sendFile(out, baseName+".chd")
-		}
+		aegisapi.SetConverterNotes(w, notes)
+		sendFile(out, baseName+".chd")
 	case ".iso":
 		cue := filepath.Join(tmpDir, baseName+"_tmp.cue")
 		bin := filepath.Join(tmpDir, baseName+"_tmp.bin")
