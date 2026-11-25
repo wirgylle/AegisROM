@@ -48,7 +48,7 @@
 
 ### Своё окно (этап 2)
 
-С 0.6.1 `AegisROM.exe` по умолчанию открывает своё окно (WebView2). Edge остаётся запасным вариантом и включается сам:
+С 0.6.2 `AegisROM.exe` по умолчанию открывает своё окно (WebView2). Edge остаётся запасным вариантом и включается сам:
 
 - нет WebView2 Runtime (в Windows 11 он есть всегда);
 - окно не загрузило страницу за 30 секунд: в том же запуске открывается Edge;
@@ -130,7 +130,7 @@ Each stage is a separate PR into `dev`; after testing it ships to `main` in a re
 
 ### Native window (stage 2)
 
-Since 0.6.1 `AegisROM.exe` opens its own window (WebView2) by default. Edge stays as the fallback and switches on by itself when:
+Since 0.6.2 `AegisROM.exe` opens its own window (WebView2) by default. Edge stays as the fallback and switches on by itself when:
 
 - the WebView2 Runtime is missing (Windows 11 always has it);
 - the window did not load the page within 30 seconds: Edge opens in the same launch;

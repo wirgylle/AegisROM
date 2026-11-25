@@ -11,10 +11,10 @@ name: Release (Windows 11 x64 + macOS)
 #     Don't create the release by hand in the Releases UI: immutable releases are enabled,
 #     so assets can't be added after a release is published.
 #
-# RU: Каждый push в dev собирает тестовую сборку с версией 0.6.1-dev+<коммит> и публикует её
+# RU: Каждый push в dev собирает тестовую сборку с версией 0.6.2-dev+<коммит> и публикует её
 #     как Pre-release с тегом dev-build-<номер> (последний релиз «Latest» остаётся стабильным).
 #     Хранятся 3 последние dev-сборки, старые удаляются. Копия есть и в Actions → Artifacts.
-# EN: Every push to dev builds a test build versioned 0.6.1-dev+<commit> and publishes it
+# EN: Every push to dev builds a test build versioned 0.6.2-dev+<commit> and publishes it
 #     as a Pre-release tagged dev-build-<n> ("Latest" stays on the stable release).
 #     The 3 newest dev builds are kept, older ones are deleted. A copy is also in Actions → Artifacts.
 

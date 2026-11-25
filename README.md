@@ -11,7 +11,7 @@ Tidies up your collection, removes duplicates, downloads box art and builds a re
 
 [Download](https://github.com/wirgylle/AegisROM/releases) · [Features](#features) · [Installation](#installation) · [Quick start](#quick-start) · [FAQ](#faq) · [Roadmap](#roadmap)
 
-![Version](https://img.shields.io/badge/version-0.6.0_beta-orange)
+![Version](https://img.shields.io/badge/version-0.6.2_beta-orange)
 ![Platform](https://img.shields.io/badge/Windows_11-x64-blue)
 ![macOS](https://img.shields.io/badge/macOS-beta-lightgrey)
 ![Languages](https://img.shields.io/badge/UI_languages-9-green)
@@ -82,7 +82,7 @@ The app scans your collection and identifies games by checksums and disc serial 
 - Fitting to SD card size: 16, 32, 64, 128, 256 GB, leaving room for firmware and BIOS.
 - Syncing a build with the main library, showing the differences.
 - **Fast export**: several ROMs are copied at once and files already there with the same size are skipped, so a repeated export only copies what's new. Media (box art, image, banner, video) and a `gamelist.xml` with titles and descriptions go with the build, laid out for your device. Copying and disc conversion run side by side, a stuck file is skipped after a time limit and listed in the report, and an export can be stopped and resumed into the same folder.
-- **Upload over Wi-Fi** `beta`: SFTP or SMB straight to the handheld, no need to take the card out. Only new and changed files are sent, an interrupted upload resumes. Ready-made profiles for ArkOS, muOS, Knulli, Batocera, Onion, TrimUI and Steam Deck; passwords are kept in the system password store. Details: [docs/wifi-transfer.md](docs/wifi-transfer.md).
+- **Upload over Wi-Fi** `beta`: SFTP, SMB or WebDAV straight to the handheld, no need to take the card out. Only new and changed files are sent, an interrupted upload resumes. Ready-made profiles for ArkOS, muOS, Knulli, Batocera, Onion, TrimUI and Steam Deck; passwords are kept in the system password store. Saves are synced with the handheld during upload. Details: [docs/wifi-transfer.md](docs/wifi-transfer.md).
 - **Saves with the build**: when exporting to a folder or SD card, saves can go along and newer saves from the card come back.
 - **Image converter**: `.cue/.bin`, `.iso`, `.gdi` → `.chd` (via `chdman`), plus `.pbp` and `.cso`.
 - **PortMaster catalog** `beta`: list of ports with a "ready to run" / "needs files from Steam or GOG" filter and automatic placement into `ports/`.
@@ -173,10 +173,11 @@ Open an [Issue](https://github.com/wirgylle/AegisROM/issues) and describe what y
 
 | Version | What's coming |
 |---|---|
+| **0.6.2** (released) | WebDAV upload and save sync over Wi-Fi. The app's own window by default on Windows (Edge as the fallback). ROM check and CHD for R36S, "Find media in folders" and "Tidy media" for Skraper folders, image versions with a default pick. Compressed xdelta patches and patches for ROMs over 16 MB. Builds take media from the same sources as the Library. PortMaster catalog fixed. |
 | **0.6.0** (released) | Saves next to the ROM with history, saves follow renames and go with builds. Upload over Wi-Fi (SFTP / SMB). macOS version `beta`. Your own collections and series with suggestions, studio grouping, game data in CSV / XML. Scraper source choice (Libretro, ScreenScraper, Skraper / ES-DE folder), settings window and system theme, faster build export with media and `gamelist.xml`. |
 | **0.5.6** (released) | Hacks and patches module with an IPS/UPS/BPS/xdelta patcher, BIOS section with MD5 check, playing games in the app window, first-run setup wizard and tour, library collections, settings stored on disk. |
 | **0.5.7 – 0.5.8** | Manual editing in Editor view (names, details, media paths), Series in the library (a whole game franchise), better online renaming, compressed xdelta patches. |
-| **0.6.x** | Saves over Wi-Fi, WebDAV upload, checking macOS and Wi-Fi upload on real devices. The app's own window instead of Edge or Chrome. PortMaster on Windows through a Linux environment (WSL). |
+| **0.6.x** | Checking macOS and Wi-Fi upload on real devices. PortMaster on Windows through a Linux environment (WSL). |
 | **0.7.0** | RetroAchievements: checking achievement support by ROM hash. PDF manuals, walkthrough maps and a soundtrack player in the game card. |
 | **after 1.0** | After the move to a server + client setup: streaming to local media servers such as Plex and Kodi, play in the browser, and an optional ready-made hosted server by subscription. |
 
