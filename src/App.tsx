@@ -211,11 +211,13 @@ import {
   isInPatchFolder,
   isModded,
   linkPatchesToRom,
+  needsFullCrcForPatches,
   modTag,
   refineModWithDat,
   type PatchFileRef,
   type RomModInfo,
 } from './utils/romHacks';
+import { computeRomCrc } from './utils/patchRunner';
 import { isPatchFileName, readPatchInfo } from './utils/romPatcher';
 import { runRomCheck, type ChdVerifyAnswer, type NamedBlob, type RomCheckReport, type RomCheckTarget } from './utils/romCheck';
 import { nativePathOf } from './utils/nativeFs';
@@ -1332,6 +1334,16 @@ function detectConsoleFromPathAndExt(relPath: string, ext: string): string {
   }
   if (ext === '.sh' && relPath.toLowerCase().includes('port')) return 'ports';
   return EXT_TO_DEFAULT_CONSOLE[ext] || 'arcade';
+}
+
+// Файл с данными рома (для набора .cue/.gdi — первый трек), как в inspectFileObject.
+// The ROM payload file (first track for a .cue/.gdi set), as in inspectFileObject.
+function payloadFilesByRel(
+  entries: Array<{ file: File; relPath: string; companionFiles?: File[] }>
+): Map<string, File> {
+  const map = new Map<string, File>();
+  for (const e of entries) map.set(e.relPath, e.companionFiles?.[0] || e.file);
+  return map;
 }
 
 function analyzeSubfolderContext(relPath: string): {
@@ -2879,7 +2891,10 @@ export function App() {
   // Patches from patch/: BPS and UPS store source and target CRC32, used to link ROMs and patches.
   const linkScannedPatches = async (
     inspected: ScannedRomFile[],
-    patchFiles: Array<{ file: File; relPath: string }>
+    patchFiles: Array<{ file: File; relPath: string }>,
+    // Файл с данными рома по relativePath: для ромов больше 16 МБ считаем полный CRC32.
+    // ROM payload file by relativePath: ROMs over 16 MB get a full CRC32.
+    payloadByRel?: Map<string, File>
   ) => {
     if (patchFiles.length === 0) return;
     const patchRefs: PatchFileRef[] = [];
@@ -2893,17 +2908,30 @@ export function App() {
           relativePath: p.relPath,
           sourceCrc32: info.sourceCrc32,
           targetCrc32: info.targetCrc32,
+          sourceSize: info.sourceSize,
+          targetSize: info.targetSize,
         });
       } catch {}
     }
+    let fullHashed = 0;
     for (let k = 0; k < inspected.length; k++) {
       const it = inspected[k];
       if (!it.mod) continue;
+      const crcs: Array<string | undefined> = [it.crc32, it.headerlessCrc32];
+      const payload = payloadByRel?.get(it.relativePath);
+      if (payload && needsFullCrcForPatches(payload.size, patchRefs)) {
+        try {
+          const full = await computeRomCrc(payload);
+          crcs.push(full.crc, full.headerless);
+          fullHashed++;
+        } catch {}
+      }
       inspected[k] = {
         ...it,
-        mod: linkPatchesToRom(it.mod, [it.crc32, it.headerlessCrc32], patchRefs),
+        mod: linkPatchesToRom(it.mod, crcs, patchRefs),
       };
     }
+    if (fullHashed > 0) addLog(tf('app.scan.patchFullCrc', { count: fullHashed }));
     addLog(tf('app.scan.patchesFound', { count: patchRefs.length }));
   };
 
@@ -4064,7 +4092,7 @@ export function App() {
         }
       }
 
-      await linkScannedPatches(inspected, discoveredPatches);
+      await linkScannedPatches(inspected, discoveredPatches, payloadFilesByRel(pairedDiscovered));
 
       // Сохранения рядом с ромами: число видов у каждой игры и итог в журнал.
       // Saves next to ROMs: how many kinds each game has, plus a log summary.
@@ -4297,7 +4325,7 @@ export function App() {
       }
     }
 
-    await linkScannedPatches(inspected, fallbackPatches);
+    await linkScannedPatches(inspected, fallbackPatches, payloadFilesByRel(pairedDiscovered));
 
     const deduplicatedIncoming = deduplicateAcrossSubfolders(
       inspected,
