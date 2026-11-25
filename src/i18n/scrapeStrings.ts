@@ -68,7 +68,18 @@ const EN: Dict = {
   'scrape.src.nothingToRun': 'No source is available: choose a folder, connect ScreenScraper or turn on Libretro.',
   'scrape.src.localStart': 'Ready-made media: looking in “{folder}” for {count} ROMs…',
   'scrape.src.localNoConsole': 'Ready-made media: no folder for “{console}” in “{folder}”.',
-  'scrape.src.localFound': 'Ready-made media: found for {count} ROMs.',
+  'scrape.src.localFound': 'Ready-made media: new files for {count} ROMs.',
+  'scrape.src.localFoundNothingNew':
+    'Ready-made media: {count} more ROMs are in the folder, but only with types they already have (for example box art, while a video or logo is missing). They go on to the next source.',
+  'scrape.src.localNothingNew': 'Ready-made media: only types the ROM already has',
+  'scrape.write.summary': 'Written to disk: files for {written} ROMs. Title found, but nothing new to add: {nothingNew}. Found, but not written: {failed}.',
+  'scrape.write.nothingNew':
+    'Nothing new for {count} ROMs: they already had the other media, the source has none of the missing types. Missing: {lacked}. Untick those types in the start dialog to skip such ROMs.',
+  'scrape.write.failed':
+    'Not written for {count} ROMs: symlink file whose target is missing — {link}; placeholder or broken file (too small or not an image) — {rejected}; read/write or download error — {io}.',
+  'scrape.write.viaLink': 'Read through symlink files (libretro-thumbnails git clone): {count}.',
+  'scrape.write.toSearch':
+    'Searching media for {count} ROMs: without box art — {noCover}; with box art but missing a chosen type (logo, video) — {hasCover}.',
   'scrape.src.localNoAccess': 'Ready-made media: no access to the folder. Open the media window and press “Allow access”.',
 };
 
@@ -135,7 +146,18 @@ const RU: Dict = {
   'scrape.src.nothingToRun': 'Нет доступного источника: выберите папку, подключите ScreenScraper или включите Libretro.',
   'scrape.src.localStart': 'Готовые медиа: ищу в «{folder}» для {count} ромов…',
   'scrape.src.localNoConsole': 'Готовые медиа: в «{folder}» нет папки для «{console}».',
-  'scrape.src.localFound': 'Готовые медиа: найдено для {count} ромов.',
+  'scrape.src.localFound': 'Готовые медиа: новые файлы для {count} ромов.',
+  'scrape.src.localFoundNothingNew':
+    'Готовые медиа: ещё {count} ромов есть в папке, но только с теми типами, что у них уже есть (например, обложка, а не хватает видео или логотипа). Они идут к следующему источнику.',
+  'scrape.src.localNothingNew': 'Готовые медиа: есть только типы, которые у рома уже есть',
+  'scrape.write.summary': 'Записано на диск: файлы у {written} ромов. Название найдено, но добавить нечего: {nothingNew}. Найдено, но не записано: {failed}.',
+  'scrape.write.nothingNew':
+    'Нечего добавить у {count} ромов: остальное медиа у них уже было, а нужных типов у источника нет. Не хватало: {lacked}. Снимите эти типы в окне запуска, чтобы такие ромы не искались.',
+  'scrape.write.failed':
+    'Не записано у {count} ромов: файл-ссылка (симлинк) без цели — {link}; заглушка или битый файл (слишком маленький или не картинка) — {rejected}; ошибка чтения/записи или скачивания — {io}.',
+  'scrape.write.viaLink': 'Прочитано через файлы-ссылки (git-клон libretro-thumbnails): {count}.',
+  'scrape.write.toSearch':
+    'Ищу медиа для {count} ромов: без обложки — {noCover}; обложка есть, но не хватает выбранного типа (логотип, видео) — {hasCover}.',
   'scrape.src.localNoAccess': 'Готовые медиа: нет доступа к папке. Откройте окно медиа и нажмите «Разрешить доступ».',
 };
 

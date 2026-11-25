@@ -100,9 +100,12 @@ import {
   buildLocalConsoleIndex,
   findConsoleDir,
   lookupLocalMedia,
+  readLocalMedia,
   type LocalConsoleIndex,
+  type LocalMediaEntry,
   type LocalSlots,
 } from './utils/localMediaIndex';
+import { emptyWriteStats, neededSlots, recordRomWrite, usefulSlots, type WriteFail } from './utils/scrapeWriteStats';
 import {
   findGamelistEntry,
   indexGamelistEntries,
@@ -186,6 +189,7 @@ import {
 import {
   auditRomMediaOnDisk,
   isFetchedMediaPayloadValid,
+  MIN_SCREENSHOT_BYTES,
   type FolderMediaSignatureStats,
   type RomMediaAuditResult,
 } from './utils/mediaPlaceholderDetector';
@@ -7784,6 +7788,9 @@ export function App() {
       let skippedRealMediaCount = 0;
       let placeholderDetectedCount = 0;
       let missingMediaCount = 0;
+      // Сколько из «нужно искать» без обложки, а сколько с обложкой, но без логотипа или видео.
+      // Of those to search: how many lack box art, and how many have it but lack a logo or video.
+      let needCoverCount = 0;
 
       for (let i = 0; i < winners.length; i++) {
         if (stopRequestedRef.current) break;
@@ -7840,6 +7847,7 @@ export function App() {
             missingMediaCount++;
           }
           placeholderReasonsById.set(w.id, audit.summaryReason);
+          if (audit.image.status !== 'valid') needCoverCount++;
           romsNeedingScrape.push(w);
         } else {
           // URL-only session check: treat known tiny/dead URLs as needing scrape
@@ -7876,6 +7884,15 @@ export function App() {
         })
       );
       if (skippedKnownMissCount > 0) addLog(tf('scrape.skippedKnownMisses', { count: skippedKnownMissCount }));
+      if (romsNeedingScrape.length > 0) {
+        addLog(
+          tf('scrape.write.toSearch', {
+            count: romsNeedingScrape.length,
+            noCover: needCoverCount,
+            hasCover: romsNeedingScrape.length - needCoverCount,
+          })
+        );
+      }
 
       if (romsNeedingScrape.length === 0) {
         const allOkMsg = tf('app.scrape.allOk', { count: skippedRealMediaCount });
@@ -7928,6 +7945,9 @@ export function App() {
       const runLocal = async (list: ScannedRomFile[]) => {
         addLog(tf('scrape.src.localStart', { folder: localFolderName, count: list.length }));
         let found = 0;
+        // Нашлись файлы, но только тех типов, что у рома уже есть: идём к следующему источнику.
+        // Files found, but only of types the ROM already has: go on to the next source.
+        let foundNothingNew = 0;
         for (let i = 0; i < list.length; i++) {
           if (stopRequestedRef.current) break;
           const w = list[i];
@@ -7951,7 +7971,11 @@ export function App() {
           const hit: LocalSlots | null = idx
             ? lookupLocalMedia(idx, romStem, w.cleanTitle, (n) => buildComparisonKey(extractCleanTitle(n)))
             : null;
-          const usable = hit ? (Object.keys(hit) as MediaSlot[]).filter((sl) => wantedSlots.has(sl)) : [];
+          const usable = usefulSlots(
+            neededSlots(slotsToDownload(auditsById.get(w.id) || null, wantVideo), wantedSlots),
+            hit
+          );
+          if (hit && usable.length === 0) foundNothingNew++;
           if (hit && usable.length > 0) {
             found++;
             mergeSourceResult({
@@ -7966,12 +7990,13 @@ export function App() {
               id: w.id,
               matched: false,
               reasonCode: idx ? 'not-in-db' : 'no-system',
-              reason: t('scrape.src.local.name'),
+              reason: hit ? t('scrape.src.localNothingNew') : t('scrape.src.local.name'),
             });
           }
           if (i % 25 === 0) setCurrentActionText(tf('scrape.src.localStart', { folder: localFolderName, count: list.length - i }));
         }
         addLog(tf('scrape.src.localFound', { count: found }));
+        if (foundNothingNew > 0) addLog(tf('scrape.src.localFoundNothingNew', { count: foundNothingNew }));
       };
 
       const runLibretro = async (list: ScannedRomFile[]) => {
@@ -8032,6 +8057,7 @@ export function App() {
 
       const nextRoms = [...targetList];
       let downloadedMediaCount = 0;
+      const writeStats = emptyWriteStats();
       // Учёт «медиа нет» для следующих запусков. / "No media" record for the next runs.
       const missSet: Record<string, ScrapeMiss> = {};
       const missClear: string[] = [];
@@ -8067,8 +8093,8 @@ export function App() {
         const hasDisk = Boolean(activeRoot && consoleDirHandle);
         const saved: Partial<Record<MediaSlot, boolean>> | null = hasDisk ? {} : null;
         if (hasDisk && titleMatched && saved) {
-          const slots = slotsToDownload(auditsById.get(r.id) || null, wantVideo);
-          for (const sl of Array.from(slots)) if (!wantedSlots.has(sl)) slots.delete(sl);
+          const slots = neededSlots(slotsToDownload(auditsById.get(r.id) || null, wantVideo), wantedSlots);
+          const results: Partial<Record<MediaSlot, 'ok' | WriteFail>> = {};
           const romBaseNoExt = (
             r.isMultiDisc && r.multiDiscFolderName
               ? r.multiDiscFolderName
@@ -8092,17 +8118,39 @@ export function App() {
             const local = localFiles?.[slot];
             if ((!url && !local) || !slots.has(slot)) continue;
             const dh = await dirFor(folder);
-            if (!dh) continue;
+            if (!dh) {
+              results[slot] = 'io-error';
+              continue;
+            }
+            const minBytes = slot === 'thumb' ? MIN_SCREENSHOT_BYTES : undefined;
             if (local) {
               // Готовый файл: расширение оставляем (jpg остаётся jpg), видео — только mp4.
               // A ready-made file keeps its extension (jpg stays jpg); video: mp4 only.
               const ext = (local.path.match(/\.[^./]+$/)?.[0] || '.png').toLowerCase();
-              if (kind === 'video' && ext !== '.mp4') continue;
-              saved[slot] = await copyLocalMediaToHandle(local.handle, dh, fileName.replace(/\.[^.]+$/, ext), kind);
+              if (kind === 'video' && ext !== '.mp4') {
+                results[slot] = 'rejected';
+                continue;
+              }
+              const res = await copyLocalMediaToHandle(local, dh, fileName.replace(/\.[^.]+$/, ext), kind, minBytes);
+              if (res.viaLink && res.status === 'ok') writeStats.viaLink++;
+              results[slot] = res.status;
+              saved[slot] = res.status === 'ok';
             } else if (url) {
-              saved[slot] = await saveRemoteMediaToHandle(url, dh, fileName, kind);
+              saved[slot] = await saveRemoteMediaToHandle(url, dh, fileName, kind, minBytes);
+              results[slot] = saved[slot] ? 'ok' : 'io-error';
             }
           }
+          recordRomWrite(
+            writeStats,
+            slots,
+            usefulSlots(slots, {
+              image: localFiles?.image || m.boxArtUrl,
+              thumb: localFiles?.thumb || m.snapUrl,
+              marquee: localFiles?.marquee || m.marqueeUrl,
+              video: localFiles?.video || m.videoUrl,
+            }),
+            results
+          );
         }
 
         const savedSlots = saved ? (Object.keys(saved) as MediaSlot[]).filter((k) => saved[k]) : [];
@@ -8196,6 +8244,30 @@ export function App() {
       // Report by reason and next-step hints (buttons are in the "Last scraper run" card).
       addLog(tf('app.scrape.reportFound', { libretro: report.libretro, ss: report.screenscraper }));
       if (report.local > 0) addLog(tf('scrape.src.reportLocal', { count: report.local }));
+      // «Найдено» — это совпавшее название, а не записанный файл. Показываем разницу и причины.
+      // "Found" is a matched title, not a written file. Show the gap and its reasons.
+      const ws = writeStats;
+      if (ws.written + ws.nothingNew + ws.failed > 0) {
+        addLog(tf('scrape.write.summary', { written: ws.written, nothingNew: ws.nothingNew, failed: ws.failed }));
+        if (ws.nothingNew > 0) {
+          const lacked = (['image', 'marquee', 'video'] as MediaSlot[])
+            .filter((sl) => ws.nothingNewLacked[sl] > 0)
+            .map((sl) => `${t(`scrape.opts.slot.${sl}`)} — ${ws.nothingNewLacked[sl]}`)
+            .join(', ');
+          addLog(tf('scrape.write.nothingNew', { count: ws.nothingNew, lacked }));
+        }
+        if (ws.failed > 0) {
+          addLog(
+            tf('scrape.write.failed', {
+              count: ws.failed,
+              link: ws.failedBy['link-broken'],
+              rejected: ws.failedBy.rejected,
+              io: ws.failedBy['io-error'],
+            })
+          );
+        }
+        if (ws.viaLink > 0) addLog(tf('scrape.write.viaLink', { count: ws.viaLink }));
+      }
       const missedTotal = totalMissed(report);
       if (missedTotal > 0) {
         addLog(
@@ -8228,22 +8300,28 @@ export function App() {
 
   // Копия готового файла из папки другой программы (источник «Готовые медиа»).
   // Copy a ready-made file from another program's folder (the "ready-made media" source).
+  // Копия готового файла. Ссылки-симлинки из git-клона libretro-thumbnails проходим до настоящей картинки.
+  // Copy a ready-made file. Symlink stubs from a libretro-thumbnails git clone are followed to the real image.
   const copyLocalMediaToHandle = async (
-    src: any,
+    src: LocalMediaEntry,
     dirHandle: any,
     fileName: string,
-    kind: 'image' | 'video' = 'image'
-  ): Promise<boolean> => {
+    kind: 'image' | 'video' = 'image',
+    minImageBytes?: number
+  ): Promise<{ status: 'ok' | WriteFail; viaLink: boolean }> => {
+    let viaLink = false;
     try {
-      const buf = await (await src.getFile()).arrayBuffer();
-      if (!isFetchedMediaPayloadValid(buf, kind)) return false;
+      const read = await readLocalMedia(src);
+      viaLink = read.viaLink;
+      if (read.status !== 'ok' || !read.buf) return { status: 'link-broken', viaLink };
+      if (!isFetchedMediaPayloadValid(read.buf, kind, minImageBytes)) return { status: 'rejected', viaLink };
       const fh = await dirHandle.getFileHandle(fileName, { create: true });
       const writable = await fh.createWritable();
-      await writable.write(buf);
+      await writable.write(read.buf);
       await writable.close();
-      return true;
+      return { status: 'ok', viaLink };
     } catch {
-      return false;
+      return { status: 'io-error', viaLink };
     }
   };
 
@@ -8251,14 +8329,15 @@ export function App() {
     remoteUrl: string,
     dirHandle: any,
     fileName: string,
-    kind: 'image' | 'video' = 'image'
+    kind: 'image' | 'video' = 'image',
+    minImageBytes?: number
   ): Promise<boolean> => {
     if (!remoteUrl) return false;
     try {
       const resp = await fetch(mediaFetchUrl(remoteUrl));
       if (!resp.ok) return false;
       const buf = await resp.arrayBuffer();
-      if (!isFetchedMediaPayloadValid(buf, kind)) {
+      if (!isFetchedMediaPayloadValid(buf, kind, minImageBytes)) {
         return false; // Reject remote HTTP 1.5KB placeholder stub!
       }
       const fh = await dirHandle.getFileHandle(fileName, { create: true });
