@@ -17,6 +17,11 @@ export interface ScrapeOptions {
   retryMisses: boolean;
   // Источники, их порядок и автопереход к следующему. / Sources, their order and fallback.
   sources: ScrapeSourceChoice;
+  // true — ромы с рабочими картинками тоже ищутся: найденное сохраняется как версия (V2, V3…),
+  // основной становится, только если явно лучше (utils/mediaVersions.ts).
+  // true: ROMs with working images are searched too; finds are kept as versions and become the
+  // main image only when clearly better (utils/mediaVersions.ts).
+  compareExisting?: boolean;
 }
 
 export function defaultScrapeOptions(wantVideo = true): ScrapeOptions {
@@ -24,6 +29,7 @@ export function defaultScrapeOptions(wantVideo = true): ScrapeOptions {
     slots: wantVideo ? [...MEDIA_SLOTS] : ['image', 'thumb', 'marquee'],
     retryMisses: false,
     sources: defaultSourceChoice(),
+    compareExisting: false,
   };
 }
 
@@ -37,6 +43,7 @@ export function normalizeScrapeOptions(raw: unknown, fallback: ScrapeOptions): S
     slots: slots.length ? slots : fallback.slots,
     retryMisses: Boolean(r.retryMisses),
     sources: r.sources === undefined ? fallback.sources : normalizeSourceChoice(r.sources),
+    compareExisting: Boolean(r.compareExisting),
   };
 }
 

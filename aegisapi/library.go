@@ -38,7 +38,7 @@ func RegisterLibraryRoutes(mux *http.ServeMux, appDir string, touch func()) {
 			_, _ = w.Write(raw)
 			return
 		}
-		_, _ = w.Write([]byte(`{"version":"0.6.0","masterLibraryPath":"D:/AegisROM_MasterLibrary","sdCardMountPath":"E:/EASYROMS","bufferZonePath":"D:/AegisROM_MasterLibrary/_Combain_Inbox","preferredRegionOrder":["Russia","USA","Europe","Japan"],"emulatorCustomPaths":{},"starredEmulatorsByConsole":{"nes":"retroarch_fceumm","snes":"retroarch_snes9x","genesis":"retroarch_genesis_plus_gx","gba":"mgba_standalone","psx":"duckstation","ps2":"pcsx2","ps3":"rpcs3","switch":"ryujinx","xbox":"xemu"},"records":[]}`))
+		_, _ = w.Write([]byte(`{"version":"0.6.1-dev","masterLibraryPath":"D:/AegisROM_MasterLibrary","sdCardMountPath":"E:/EASYROMS","bufferZonePath":"D:/AegisROM_MasterLibrary/_Combain_Inbox","preferredRegionOrder":["Russia","USA","Europe","Japan"],"emulatorCustomPaths":{},"starredEmulatorsByConsole":{"nes":"retroarch_fceumm","snes":"retroarch_snes9x","genesis":"retroarch_genesis_plus_gx","gba":"mgba_standalone","psx":"duckstation","ps2":"pcsx2","ps3":"rpcs3","switch":"ryujinx","xbox":"xemu"},"records":[]}`))
 	})
 
 	mux.HandleFunc("/api/db/sync", func(w http.ResponseWriter, r *http.Request) {

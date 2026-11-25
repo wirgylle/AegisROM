@@ -36,9 +36,16 @@ import {
   Wand2,
   Settings as SettingsIcon,
   Coffee,
+  FolderPlus,
+  Image as ImageIcon,
+  Loader2,
 } from 'lucide-react';
 import { GameInspectorCoverVideo } from './GameInspectorCoverVideo';
+import { MediaVersionsPanel, type MediaVersionsView } from './MediaVersionsPanel';
+import type { VersionSlot } from '../utils/mediaVersions';
 import { DatFilesPanel } from './DatFilesPanel';
+import { RomCheckPanel } from './RomCheckPanel';
+import type { RomCheckReport } from '../utils/romCheck';
 import { ScrapeReportCard, ScreenScraperPanel } from './ScreenScraperPanel';
 import type { ScrapeReport } from '../utils/scrapeReport';
 import { PatcherPanel } from './PatcherPanel';
@@ -50,6 +57,7 @@ import {
   ZIP_PKG_FILENAME,
 } from '../version';
 import { SmartBuildsAndConverterTab } from './SmartBuildsAndConverterTab';
+import { requestBuildStop } from '../utils/buildQueue';
 import {
   EnvironmentEmulatorsTab,
   resolvePriorityEmulatorForConsole,
@@ -76,6 +84,7 @@ import { EditorToolbar, GameEditModal, useManualEditsVersion } from './LibraryEd
 import { applyManualEditToRow, exportManualEdits, importManualEdits } from '../utils/manualEdits';
 import { CollectionModal } from './CollectionModal';
 import { ManualGroupsModal } from './ManualGroupsModal';
+import { AddToGroupModal } from './AddToGroupModal';
 import { useManualGroupsVersion } from './useManualGroups';
 import {
   applyManualGroups,
@@ -157,6 +166,8 @@ import { WorkbenchContextPanel, type HoveredTool } from './WorkbenchContextPanel
 import { QuickTestModal, type QuickTestRequest } from './QuickTestModal';
 import { DonateModal } from './DonateModal';
 import { RomSavesPanel } from './RomSavesPanel';
+import { ManualButton } from './ManualViewer';
+import { MediaTidyModal } from './MediaTidyModal';
 import { SettingsModal } from './SettingsModal';
 import { loadAppSettings, subscribeAppSettings } from '../utils/appSettings';
 import { resolveQuickTestCore, pickCueDataTrack, pickBiosForRegion, fileExt } from '../utils/quickTest';
@@ -188,6 +199,7 @@ function sanitizeDatabasesForStorage<T extends { rows: UnifiedGameRow[] }>(dbs: 
       ? u.rows.map((r) => ({
           ...r,
           fileObj: undefined,
+          manualFile: undefined,
           companionFiles: undefined,
           parentHandle: undefined,
           discs: Array.isArray(r.discs)
@@ -285,6 +297,10 @@ export interface UnifiedGameRow {
   // Картинки по видам: боксарт, скриншот, титульный экран, баннер (utils/mediaKinds.ts).
   // Images by kind: box art, screenshot, title screen, banner (utils/mediaKinds.ts).
   media?: MediaSet;
+  // Мануал (PDF): файл сеанса (не сохраняется) и путь от папки скана.
+  // Manual (PDF): the session file (not stored) and its path from the scan folder.
+  manualFile?: File;
+  manualRel?: string;
 }
 
 interface FigmaConceptStudioProps {
@@ -326,8 +342,13 @@ interface FigmaConceptStudioProps {
   hasMediaFolderAccess?: boolean;
   onResolveMediaForDbRows?: (
     rows: UnifiedGameRow[],
-    libraryPathHint?: string
+    libraryPathHint?: string,
+    interactive?: boolean
   ) => Promise<UnifiedGameRow[]>;
+  /** Версии медиа рома (V1, V2…) для карточки. / A ROM's media versions for the game card. */
+  onLoadMediaVersions?: (row: UnifiedGameRow) => Promise<MediaVersionsView | null>;
+  /** Выбор версии по умолчанию; вернёт новую ссылку на картинку. / Picks the default version; returns the new image URL. */
+  onSelectMediaVersion?: (row: UnifiedGameRow, slot: VersionSlot, id: string | null) => Promise<string | null>;
   logs?: string[];
   onClearLogs?: () => void;
   onEmergencyStop?: () => void;
@@ -349,6 +370,12 @@ interface FigmaConceptStudioProps {
   scrapeReport?: ScrapeReport | null;
   // Системы Libretro из библиотеки (для автозагрузки DAT). / Libretro systems in the library (DAT auto-download).
   datSystems?: string[];
+  // Проверка ромов (инструмент). / ROM check (tool).
+  onCheckRoms?: (ids?: string[], deepChd?: boolean) => void;
+  onStopRomCheck?: () => void;
+  romCheckReport?: RomCheckReport | null;
+  romCheckRunning?: boolean;
+  romCheckProgress?: string;
   onScanPhantomFolders?: () => void;
   onRepairSdCard?: (firmwareId?: string) => void;
   sdTargetFolderName?: string;
@@ -710,6 +737,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   mediaAccessVersion = 0,
   hasMediaFolderAccess = false,
   onResolveMediaForDbRows,
+  onLoadMediaVersions,
+  onSelectMediaVersion,
   logs = [],
   onClearLogs,
   onEmergencyStop,
@@ -726,6 +755,11 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   onOnlineRename,
   scrapeReport = null,
   datSystems,
+  onCheckRoms,
+  onStopRomCheck,
+  romCheckReport = null,
+  romCheckRunning = false,
+  romCheckProgress = '',
   onScanPhantomFolders,
   onRepairSdCard,
   sdTargetFolderName = '',
@@ -1013,6 +1047,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     saveMediaPrefs(p);
   };
   const [collectionModalLeadId, setCollectionModalLeadId] = useState<string | null>(null);
+  // «В коллекцию или серию…»: id ромов, которые добавляем. / ROM ids being added to a group.
+  const [addToGroupIds, setAddToGroupIds] = useState<string[] | null>(null);
   const [manualGroupsTab, setManualGroupsTab] = useState<null | 'groups' | 'suggest' | 'detached'>(null);
 
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -1167,6 +1203,33 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     if (nextActionMsg) {
       onAddLog?.(nextActionMsg);
     }
+  };
+
+  // Новая основная картинка после выбора версии: меняем ссылки строки в открытой базе.
+  // A new main image after picking a version: update the row's URLs in the open database.
+  const [mediaVersionsRev, setMediaVersionsRev] = useState(0);
+  const patchRowMedia = (rowId: string, slot: VersionSlot, url: string) => {
+    setSavedDatabases((prev) =>
+      prev.map((db) => {
+        if (!db.rows.some((r) => r.id === rowId)) return db;
+        return {
+          ...db,
+          rows: db.rows.map((r) => {
+            if (r.id !== rowId) return r;
+            const media: MediaSet = { ...(r.media || {}) };
+            if (slot === 'image') {
+              media.boxart = url;
+              if (media.image) media.image = url;
+              return { ...r, media, boxArtUrl: url };
+            }
+            if (slot === 'thumb') media.snap = url;
+            else media.marquee = url;
+            return { ...r, media };
+          }),
+        };
+      })
+    );
+    setMediaVersionsRev((n) => n + 1);
   };
 
   const hydrateDbRowsMedia = async (
@@ -1441,6 +1504,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       rows: gamesSource.map((g) => ({
         ...g,
         fileObj: undefined,
+        manualFile: undefined,
         companionFiles: undefined,
         parentHandle: undefined,
         discs: Array.isArray(g.discs)
@@ -1793,6 +1857,25 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     () => indexCollections(enrichedGamesSource),
     [enrichedGamesSource]
   );
+  // Кнопка на карточке: в сгруппированном виде берём все версии игры, в таблице без группировки — один файл.
+  // Card button: grouped views take every version of the game, an ungrouped table takes one file.
+  const openAddToGroup = useCallback(
+    (id: string, wholeGame: boolean) => {
+      const members = wholeGame
+        ? libraryCollectionIndex.byKey.get(libraryCollectionIndex.keyOfId.get(id) || '')?.members
+        : undefined;
+      setAddToGroupIds(members && members.length > 0 ? members.map((m) => m.id) : [id]);
+    },
+    [libraryCollectionIndex]
+  );
+  const groupedForAdd = Boolean(groupedLibraryView);
+  const onCardAddToGroup = useCallback((id: string) => openAddToGroup(id, groupedForAdd), [openAddToGroup, groupedForAdd]);
+  const addToGroupTargets = React.useMemo(() => {
+    if (!addToGroupIds) return [];
+    const set = new Set(addToGroupIds);
+    return enrichedGamesSource.filter((g) => set.has(g.id));
+  }, [addToGroupIds, enrichedGamesSource]);
+
   const libraryLeadByKey = React.useMemo(() => {
     const m = new Map<string, string>();
     for (const [k, c] of libraryCollectionIndex.byKey) m.set(k, c.lead.id);
@@ -1896,6 +1979,9 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     setSimRunning(false);
     setSimProgress(0);
     setSimActionText(`⏹ ${t('status.stoppedByUser')}`);
+    // Выгрузка сборки живёт в своей вкладке: раньше СТОП только прятал её прогресс.
+    // The build export lives in its own tab: STOP used to only hide its progress.
+    requestBuildStop();
     onEmergencyStop?.();
   };
 
@@ -1956,6 +2042,52 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
 
   // Effective progress & single-line status text for the bottom bar
   const activeRunning = isAnyProcessRunning || simRunning;
+
+  // «Найти медиа в папках»: без пересканирования ромов ищет обложки, видео и мануалы рядом с ромами,
+  // в том числе в <консоль>/media/<вид>/ (раскладка Skraper), и привязывает их к играм открытой базы.
+  // "Find media in folders": without rescanning ROMs, finds covers, videos and manuals next to the ROMs,
+  // including <console>/media/<kind>/ (Skraper layout), and links them to the open database's games.
+  const [mediaRefreshBusy, setMediaRefreshBusy] = useState(false);
+  const [mediaTidyOpen, setMediaTidyOpen] = useState(false);
+  const mediaRefreshText = (key: 'button' | 'hint' | 'start' | 'done' | 'noDb', vars: Record<string, number> = {}) => {
+    const ru = lang === 'ru';
+    const dict = {
+      button: ru ? 'Найти медиа в папках (в т.ч. media/ Skraper)' : 'Find media in folders (incl. Skraper media/)',
+      hint: ru
+        ? 'Без пересканирования ромов: обложки, видео и мануалы рядом с ромами и в <консоль>/media/images, videos, manuals.'
+        : 'No ROM rescan: covers, videos and manuals next to the ROMs and in <console>/media/images, videos, manuals.',
+      start: ru ? '🖼 Ищу медиа в папках библиотеки ({count} игр)…' : '🖼 Looking for media in the library folders ({count} games)…',
+      done: ru
+        ? '🖼 Медиа из папок: обложки у {covers} игр, видео у {videos}, мануалы у {manuals} (всего игр {count}).'
+        : '🖼 Media from folders: covers for {covers} games, videos for {videos}, manuals for {manuals} ({count} games).',
+      noDb: ru ? '🖼 Нет открытой базы: сначала выберите папку библиотеки или сделайте полный скан.' : '🖼 No open database: choose the library folder or run a full scan first.',
+    }[key];
+    return dict.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? ''));
+  };
+  const handleRefreshFolderMedia = async () => {
+    if (!onResolveMediaForDbRows || !activeDbEntry || activeDbEntry.rows.length === 0) {
+      onAddLog?.(mediaRefreshText('noDb'));
+      return;
+    }
+    const target = activeDbEntry;
+    setMediaRefreshBusy(true);
+    onAddLog?.(mediaRefreshText('start', { count: target.rows.length }));
+    try {
+      const hydrated = await onResolveMediaForDbRows(target.rows, target.pathHint, true);
+      const isLocal = (u?: string) => Boolean(u && (u.startsWith('blob:') || u.includes('/api/native/fs/media')));
+      const covers = hydrated.filter((r) => isLocal(r.boxArtUrl)).length;
+      const videos = hydrated.filter((r) => isLocal(r.videoUrl)).length;
+      const manuals = hydrated.filter((r) => r.manualFile || r.manualRel).length;
+      setSavedDatabases((prev) => {
+        const updated = prev.map((db) => (db.id === target.id ? { ...db, rows: hydrated } : db));
+        persistDatabasesSafely(updated);
+        return updated;
+      });
+      onAddLog?.(mediaRefreshText('done', { covers, videos, manuals, count: hydrated.length }));
+    } finally {
+      setMediaRefreshBusy(false);
+    }
+  };
   const activePct = isAnyProcessRunning ? Math.max(progressPct, 5) : simRunning ? simProgress : 0;
 
   const latestLogLine =
@@ -2603,6 +2735,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                 }
                 collections={groupedLibraryView?.badges}
                 onOpenCollection={setCollectionModalLeadId}
+                onAddToGroup={onCardAddToGroup}
                 mediaPrefs={libraryMediaPrefs}
                 checkedGameIds={checkedGameIds}
                 onSelectGame={handleSelectGame}
@@ -2733,7 +2866,48 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         <span>{t('tools.lib.addFolder')}</span>
                       </button>
                     </div>
+
+                    <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <button data-tool="refreshMedia"
+                      type="button"
+                      onClick={() => void handleRefreshFolderMedia()}
+                      disabled={activeRunning || mediaRefreshBusy}
+                      title={mediaRefreshText('hint')}
+                      className="w-full bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 px-3 py-2 rounded-lg font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      {mediaRefreshBusy ? <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin" /> : <ImageIcon className="w-3.5 h-3.5 shrink-0" />}
+                      <span>{mediaRefreshText('button')}</span>
+                    </button>
+                    <button data-tool="tidyMedia"
+                      type="button"
+                      onClick={() => setMediaTidyOpen(true)}
+                      disabled={activeRunning || mediaRefreshBusy}
+                      title={lang === 'ru' ? 'Перенести media/* Skraper в images, marquees, videos, manuals под имена ромов' : 'Move Skraper media/* into images, marquees, videos, manuals named after the ROMs'}
+                      className="w-full bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 px-3 py-2 rounded-lg font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <Wand2 className="w-3.5 h-3.5 shrink-0" />
+                      <span>{lang === 'ru' ? 'Упорядочить медиа…' : 'Tidy media…'}</span>
+                    </button>
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">{mediaRefreshText('hint')}</p>
+                    {mediaTidyOpen && (
+                      <MediaTidyModal
+                        onClose={() => setMediaTidyOpen(false)}
+                        onAddLog={onAddLog}
+                        onApplied={() => void handleRefreshFolderMedia()}
+                      />
+                    )}
                   </div>
+
+                  {/* Проверка ромов: сразу под папкой библиотеки, чтобы её было видно. / ROM check: right below the library folder so it is easy to find. */}
+                  <RomCheckPanel
+                    disabled={activeRunning}
+                    running={romCheckRunning}
+                    progressText={romCheckProgress}
+                    report={romCheckReport}
+                    onRun={onCheckRoms ? (deep) => openScope('romCheck', (ids) => onCheckRoms(ids, deep)) : undefined}
+                    onStop={onStopRomCheck}
+                  />
 
                   {/* Данные игр: CSV / XML туда и обратно. / Game data: CSV / XML out and back in. */}
                   <GameDataPanel
@@ -3887,6 +4061,22 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     videoUrl={selectedGame.videoUrl}
                   />
 
+                  {/* Версии обложки: миниатюры и окно выбора (utils/mediaVersions.ts). */}
+                  {/* Cover versions: thumbnails and the picker window. */}
+                  {onLoadMediaVersions && onSelectMediaVersion && (
+                    <MediaVersionsPanel
+                      gameKey={`${selectedGame.id}|${mediaVersionsRev}`}
+                      title={selectedGame.title}
+                      load={() => onLoadMediaVersions(selectedGame)}
+                      select={async (slot, id) => {
+                        const url = await onSelectMediaVersion(selectedGame, slot, id);
+                        if (!url) return false;
+                        patchRowMedia(selectedGame.id, slot, url);
+                        return true;
+                      }}
+                    />
+                  )}
+
                   <div>
                     <h3 className="text-lg font-bold leading-snug text-slate-900 dark:text-slate-100">
                       {selectedGame.title}
@@ -3961,6 +4151,15 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   </div>
 
                   {/* Versions, series and description */}
+                  <button
+                    type="button"
+                    onClick={() => openAddToGroup(selectedGame.id, true)}
+                    className="w-full h-8 px-3 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center justify-center gap-1.5 cursor-pointer transition"
+                  >
+                    <FolderPlus className="w-3.5 h-3.5" />
+                    {t('atg.button')}
+                  </button>
+
                   <GameRelationsPanel
                     game={selectedGame}
                     versions={
@@ -4122,6 +4321,15 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     <span>{t('lib.addToBuild')}</span>
                   </button>
 
+                  {/* Мануал (PDF из media/manuals Skraper и т. п.), только если он есть. */}
+                  {/* Manual (PDF from Skraper media/manuals etc.), only when there is one. */}
+                  <ManualButton
+                    title={selectedGame.title}
+                    file={selectedGame.manualFile}
+                    manualRel={selectedGame.manualRel}
+                    romRef={romDiskRef}
+                  />
+
                   {qtCore && (
                     <button
                       type="button"
@@ -4276,6 +4484,15 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
             setCollectionModalLeadId(null);
             setManualGroupsTab('groups');
           }}
+        />
+      )}
+
+      {addToGroupTargets.length > 0 && (
+        <AddToGroupModal
+          games={enrichedGamesSource}
+          targets={addToGroupTargets}
+          onClose={() => setAddToGroupIds(null)}
+          onLog={onAddLog}
         />
       )}
 

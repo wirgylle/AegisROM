@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Sparkles,
   Eye,
@@ -26,6 +26,7 @@ import {
   History,
   GitCompare,
   Wrench,
+  OctagonX,
 } from 'lucide-react';
 import { BuildBiosStrip } from './BuildBiosStrip';
 import { BuildContentsModal } from './BuildContentsModal';
@@ -81,13 +82,31 @@ import { buildRomSubfolder, joinLocalPath, rememberLastBuildFolder } from '../ut
 import {
   DirCache,
   copyFileToDir,
-  createLimiter,
   defaultCopyConcurrency,
   runPool,
   throttle,
   type CopyOutcome,
 } from '../utils/buildCopy';
 import { romStem, syncRomSavesWithDevice } from '../utils/saveFiles';
+import {
+  BUILD_REPORT_FILE,
+  BuildCancelledError,
+  BuildJournal,
+  BuildReport,
+  BuildTaskTimeoutError,
+  CONVERT_IDLE_MS,
+  SpeedMeter,
+  convertTimeoutMs,
+  copyTimeoutMs,
+  fileExistsNonEmpty,
+  journalKey,
+  planBuildLanes,
+  registerBuildStop,
+  runGuarded,
+  summarizeBuildPlan,
+  type BuildLane,
+  type GuardHandle,
+} from '../utils/buildQueue';
 import {
   MediaSourceIndex,
   buildGamelistXml,
@@ -649,6 +668,9 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
   const [copyBiosToBuild, setCopyBiosToBuild] = useState<boolean>(() => loadBuildCopyBiosPref());
   // Окно параметров выгрузки (медиа, пропуск готовых) / Export settings dialog (media, skipping)
   const [exportOptionsOpen, setExportOptionsOpen] = useState(false);
+  // Идёт выгрузка и её отмена (кнопка «Остановить» и общая СТОП). / A running export and its cancel.
+  const [exportRunning, setExportRunning] = useState(false);
+  const exportCancelRef = useRef<AbortController | null>(null);
   // Заливка по Wi-Fi: окно и папка последней выгруженной сборки (если путь известен).
   // Wi-Fi upload: the window and the folder of the last exported build (when the path is known).
   const [wifiOpen, setWifiOpen] = useState(false);
@@ -1027,11 +1049,35 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
     onAddLog?.(doneMsg);
   };
 
+  // Предварительная проверка: у скольких игр рядом с ромом есть медиа (для окна параметров).
+  // Pre-check: how many games have media next to the ROM (for the settings dialog).
+  const checkMediaForPlan = async (): Promise<{ found: number; total: number }> => {
+    const index = new MediaSourceIndex();
+    let found = 0;
+    let total = 0;
+    for (const r of conversionPlanRows) {
+      const g = r.game;
+      if (!g.fileObj && !g.discs?.some((d) => d.fileObj)) continue;
+      total++;
+      const srcDir = g.parentHandle || g.discs?.[0]?.parentHandle;
+      if (!srcDir) continue;
+      const names = [g.m3uFileName, g.multiDiscFolderName, g.discs?.[0]?.oldFile, g.isMultiDisc ? '' : g.oldFile].filter(
+        (x): x is string => Boolean(x)
+      );
+      const primary = r.isMultiDisc ? names[0] || g.title : g.oldFile;
+      try {
+        const m = await index.find(srcDir, primary, [...names, g.title]);
+        if (Object.keys(m).length > 0) found++;
+      } catch {}
+    }
+    return { found, total };
+  };
+
   // ==========================================================================
   // EXECUTE REAL EXPORT + FOLDER HIERARCHY CREATION + GENUINE FORMAT CONVERSION + PORTMASTER
   // ==========================================================================
   const handleRunBuildExportAndConversion = async (opts: BuildExportOptions) => {
-    if ((conversionPlanRows.length === 0 && queuedPortMasterGames.length === 0) || activeRunning)
+    if ((conversionPlanRows.length === 0 && queuedPortMasterGames.length === 0) || activeRunning || exportRunning)
       return;
 
     const win = window as any;
@@ -1063,6 +1109,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
     let skippedExistingCount = 0;
     let skippedChdCount = 0;
     let errorCount = 0;
+    let timeoutCount = 0;
     let doneCount = 0;
     let noFileCount = 0;
     let mediaFilesCount = 0;
@@ -1083,15 +1130,59 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
     const nativeMode = isNativeFsEnabled();
     const concurrency = defaultCopyConcurrency(nativeMode);
     const copyOpts = { skipSame: opts.skipExisting, diskCopy: nativeCopyFile };
-    // Конвертации по одной, копирование параллельно. / Conversions one at a time, copies in parallel.
-    const conversionLimit = createLimiter(1);
 
-    // Прогресс не чаще 3 раз в секунду: раньше окно перерисовывалось на каждом куске файла.
-    // Progress at most 3 times a second: the window used to re-render on every file chunk.
+    // Две линии: копирование (несколько потоков) и конвертация (один поток) идут одновременно.
+    // Two lanes: copy (several at a time) and convert (one at a time) run side by side.
+    const lanes = planBuildLanes(conversionPlanRows, chdmanStatus.available);
+    const plan = summarizeBuildPlan(conversionPlanRows, chdmanStatus.available);
+    const laneOf = new Map<number, BuildLane>();
+    lanes.copy.forEach((i) => laneOf.set(i, 'copy'));
+    lanes.convert.forEach((i) => laneOf.set(i, 'convert'));
+
+    // Отмена, журнал для продолжения, отчёт. / Cancel, resume journal, report.
+    const cancelCtl = new AbortController();
+    exportCancelRef.current = cancelCtl;
+    setExportRunning(true);
+    const unregisterStop = registerBuildStop(() => cancelCtl.abort());
+    const isCancelled = () => cancelCtl.signal.aborted;
+    const journal = new BuildJournal(targetRootHandle);
+    const resumeKnown = opts.skipExisting ? await journal.load() : 0;
+    const report = new BuildReport();
+    const speed = new SpeedMeter();
+    speed.add(0);
+
+    // Состояние линий для строки прогресса. / Lane state for the progress line.
+    const laneState = {
+      copy: { done: 0, total: lanes.copy.length, detail: '' },
+      convert: { done: 0, total: lanes.convert.length, detail: '', title: '', startedAt: 0 },
+    };
     const overallPct = () => Math.max(3, Math.round((doneCount / Math.max(1, totalItems)) * 95));
-    const progressText = throttle((text: string) => {
-      onUpdateLiveProgress?.(true, overallPct(), text);
-    }, 300);
+    const composeStatus = () => {
+      const parts: string[] = [];
+      if (laneState.copy.total > 0) {
+        parts.push(
+          tf('bq.status.copy', { done: laneState.copy.done, total: laneState.copy.total }) +
+            (laneState.copy.detail ? `: ${laneState.copy.detail}` : '')
+        );
+      }
+      if (laneState.convert.total > 0) {
+        const c = laneState.convert;
+        const running = c.startedAt ? ` (${formatDuration(Date.now() - c.startedAt)})` : '';
+        parts.push(
+          tf('bq.status.convert', { done: c.done, total: c.total }) +
+            (c.detail || c.title ? `: ${c.detail || c.title}${running}` : '')
+        );
+      }
+      const mbs = speed.mbPerSec();
+      if (mbs !== null) parts.push(tf('bq.status.speed', { mbs: mbs >= 10 ? Math.round(mbs) : mbs.toFixed(1) }));
+      parts.push(formatDuration(Date.now() - startedAt));
+      return parts.join(' · ');
+    };
+    // Раз в секунду: видно, что процесс жив, даже если один файл конвертируется долго.
+    // Once a second: shows the process is alive even when one file takes long to convert.
+    const ticker = window.setInterval(() => {
+      onUpdateLiveProgress?.(true, overallPct(), composeStatus());
+    }, 1000);
     const progressLog = throttle(() => {
       onAddLog?.(
         tf('bx.log.progress', {
@@ -1103,6 +1194,9 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
         })
       );
     }, 10000);
+    const saveJournalSoon = throttle(() => {
+      journal.save().catch(() => {});
+    }, 15000);
 
     onUpdateLiveProgress?.(
       true,
@@ -1116,6 +1210,16 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
         folder: targetRootHandle.name,
       })
     );
+    onAddLog?.(
+      tf('bq.log.plan', {
+        copy: plan.copy.count,
+        copyGb: (plan.copy.mb / 1024).toFixed(1),
+        conv: plan.convert.count,
+        convGb: (plan.convert.mb / 1024).toFixed(1),
+      })
+    );
+    if (plan.chdmanMissing > 0) onAddLog?.(tf('bq.log.noChdman', { count: plan.chdmanMissing }));
+    if (resumeKnown > 0) onAddLog?.(tf('bq.log.resume', { count: resumeKnown }));
     onAddLog?.(
       tf('bx.log.mode', {
         n: concurrency,
@@ -1158,7 +1262,110 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
       return rel;
     };
 
-    const processItem = async (item: (typeof conversionPlanRows)[number], idx: number) => {
+    // Готовые ромы и медиа по индексу: запись gamelist.xml появляется, когда есть и то и другое
+    // (медиа конвертируемых игр копируются в линии копирования, не дожидаясь конвертации).
+    // Finished ROMs and media by index: the gamelist.xml entry appears once both exist (media of
+    // converted games are copied in the copy lane without waiting for the conversion).
+    const romDoneByIdx = new Map<number, string>();
+    const mediaByIdx = new Map<number, Partial<Record<BuildMediaKind, string>>>();
+    const gamelistAdded = new Set<number>();
+    const addGamelistIfReady = async (idx: number) => {
+      if (!wantGamelist || gamelistAdded.has(idx)) return;
+      const writtenRelativePath = romDoneByIdx.get(idx);
+      const media = mediaByIdx.get(idx);
+      if (writtenRelativePath === undefined || media === undefined) return;
+      gamelistAdded.add(idx);
+      const item = conversionPlanRows[idx];
+      const g = item.game;
+      const srcDir = g.parentHandle || g.discs?.[0]?.parentHandle;
+      const srcEntry = await mediaIndex.gamelistEntry(
+        srcDir,
+        item.isMultiDisc ? g.m3uFileName || g.discs?.[0]?.oldFile || '' : g.oldFile
+      );
+      const info: Record<string, string> = {};
+      for (const tag of GAMELIST_INFO_TAGS) {
+        if (srcEntry?.fields[tag]) info[tag] = srcEntry.fields[tag];
+      }
+      // Ручные правки редактора важнее. / Manual editor edits win.
+      if (g.desc) info.desc = escapeXml(g.desc);
+      if (g.developer) info.developer = escapeXml(g.developer);
+      if (g.publisher) info.publisher = escapeXml(g.publisher);
+      if (g.players) info.players = escapeXml(g.players);
+      if (g.rating) info.rating = escapeXml(g.rating);
+      const prefix = `${item.folderPath}/`;
+      const relInConsole = writtenRelativePath.startsWith(prefix)
+        ? writtenRelativePath.slice(prefix.length)
+        : writtenRelativePath;
+      const list = gamelistByFolder.get(item.folderPath) || [];
+      list.push({ path: relInConsole, name: g.title, media, info });
+      gamelistByFolder.set(item.folderPath, list);
+    };
+
+    const itemHasFile = (item: (typeof conversionPlanRows)[number]) =>
+      Boolean(item.game.fileObj) || Boolean(item.game.discs?.some((d) => d.fileObj));
+
+    // Медиа конвертируемой игры (задача линии копирования). / A converted game's media (copy-lane task).
+    const processMediaOnly = async (idx: number) => {
+      const item = conversionPlanRows[idx];
+      if (!itemHasFile(item)) return;
+      try {
+        await dirCache.get(item.folderPath);
+        mediaByIdx.set(idx, wantMedia ? await copyGameMedia(item, item.baseWithRegion) : {});
+        await addGamelistIfReady(idx);
+      } catch (err: any) {
+        report.add('error', item.game.title, `media: ${String(err?.message || err)}`);
+      }
+    };
+
+    // Ошибка задачи: таймаут и остановка пишутся в отчёт отдельно. / Task error: timeouts and stops are reported apart.
+    const noteTaskError = (title: string, err: any): string => {
+      if (err instanceof BuildCancelledError) {
+        report.add('cancelled', title, t('bq.report.cancelled'));
+        return 'cancelled';
+      }
+      errorCount++;
+      const msg = String(err?.message || err);
+      if (err instanceof BuildTaskTimeoutError) {
+        timeoutCount++;
+        report.add('timeout', title, msg);
+        onAddLog?.(tf('bq.log.timeout', { title, err: msg }));
+        return `timeout: ${msg}`;
+      }
+      report.add('error', title, msg);
+      onAddLog?.(tf('builds.conv.itemErrLog', { title, err: msg }));
+      return `error: ${msg}`;
+    };
+
+    const processItem = async (item: (typeof conversionPlanRows)[number], idx: number, lane: BuildLane) => {
+      const laneInfo = laneState[lane];
+      // Текст прогресса текущей задачи: показывается в строке линии и сбрасывает сторож.
+      // Current task progress text: shown on the lane line and resets the watchdog.
+      let guard: GuardHandle | null = null;
+      const progressText = (text: string) => {
+        guard?.touch();
+        laneInfo.detail = text;
+      };
+      // Задача с пределом времени; у конвертаций с процентами ещё и сторож «нет прогресса».
+      // A task with a time limit; conversions that report percent also get a "no progress" watchdog.
+      const guarded = <T,>(fn: () => Promise<T>, sizeMB: number): Promise<T> =>
+        runGuarded(
+          (g) => {
+            guard = g;
+            return fn();
+          },
+          lane === 'convert'
+            ? {
+                timeoutMs: convertTimeoutMs(sizeMB),
+                idleMs: item.rule.requiresChdman ? undefined : CONVERT_IDLE_MS,
+                parent: cancelCtl.signal,
+              }
+            : { timeoutMs: copyTimeoutMs(sizeMB), parent: cancelCtl.signal }
+        );
+      if (lane === 'convert') {
+        laneState.convert.title = item.game.title;
+        laneState.convert.detail = '';
+        laneState.convert.startedAt = Date.now();
+      }
       try {
         const currDir = await dirCache.get(item.folderPath);
         if (!preparedFolders.has(item.folderPath)) {
@@ -1169,9 +1376,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
             } catch {}
           }
         }
-        progressText(
-          tf('bx.prog', { done: doneCount, total: totalItems, title: item.game.title })
-        );
+        progressText(item.game.title);
         const exportSinglePayloadToDir = async (
           destDirHandle: any,
           destFolderRelPath: string,
@@ -1439,10 +1644,18 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
             const form = new FormData();
             form.append('targetExt', item.targetExt);
             form.append('baseName', stemWithRegion);
+            // Код консоли: для PS1 Go перестраивает ISO 2048 в MODE2/2352 и проверяет готовый CHD.
+            // Console code: for PS1 Go rebuilds a 2048-byte ISO as MODE2/2352 and checks the finished CHD.
+            form.append('console', String(item.game.consoleShort || '').toLowerCase());
             form.append('entryFile', srcFile, srcFile.name);
             for (const cf of companionTracks) {
               form.append('companionFiles', cf, cf.name);
             }
+            // Нативное окно: Go кладёт результат сразу в папку сборки, без пересылки через страницу.
+            // Native window: Go puts the output straight into the build folder, no trip through the page.
+            const diskOut =
+              destDirHandle?.__aegisNativeFs && typeof destDirHandle.path === 'string' ? destDirHandle.path : '';
+            if (diskOut) form.append('outDir', diskOut);
             progressText(
               tf('builds.conv.chdmanRunning', {
                 i: idx + 1,
@@ -1455,14 +1668,46 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
             const resp = await fetch('/api/native/converter/chd', {
               method: 'POST',
               body: form,
+              signal: guard?.signal,
             });
             if (!resp.ok) {
               const errTxt = await resp.text();
               throw new Error(`chdman error: ${errTxt}`);
             }
             const outMode = resp.headers.get('X-Output-Mode');
+            const convNotes = resp.headers.get('X-Converter-Notes');
+            if (convNotes) {
+              let txt = convNotes;
+              try {
+                txt = decodeURIComponent(convNotes);
+              } catch {}
+              onAddLog?.(`${stemWithRegion}: ${txt}`);
+            }
+            let finalEntry = item.targetExt === '.bin+.cue' ? `${stemWithRegion}.cue` : singleOutName;
+            if (outMode === 'disk') {
+              await resp.json().catch(() => null);
+              let outBytes = 0;
+              try {
+                const mainName = item.targetExt === '.bin+.cue' ? `${stemWithRegion}.bin` : singleOutName;
+                outBytes = (await (await destDirHandle.getFileHandle(mainName)).getFile()).size || 0;
+              } catch {}
+              realConvertedCount++;
+              onAddLog?.(
+                tf('builds.conv.chdmanDone', {
+                  name: stemWithRegion,
+                  src: unitSourceExt,
+                  dst: item.targetExt,
+                  mb: (outBytes / (1024 * 1024)).toFixed(1),
+                })
+              );
+              return {
+                writtenRelPath: `${destFolderRelPath}/${finalEntry}`,
+                entryFileName: finalEntry,
+                resultStatus: 'converted_chdman',
+              };
+            }
             const blobBuf = await resp.arrayBuffer();
-            let finalEntry = singleOutName;
+            finalEntry = singleOutName;
             if (outMode === 'zip-store') {
               const entries = extractStoredZipEntries(new Uint8Array(blobBuf));
               for (const ent of entries) {
@@ -1537,15 +1782,28 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
             : `${item.folderPath}/${item.outputFileName}`;
         let actualResultStatus = 'manifest_only';
         let romWritten = false;
-        const isConversion = item.rule.conversionKind !== 'copy';
+        let romComplete = false;
+        // Продолжение: конвертация из журнала, файл на месте — не делаем заново.
+        // Resume: a conversion from the journal whose file is in place is not redone.
+        const jKey = journalKey(item.folderPath, item.baseWithRegion, item.targetExt);
+        const prevDone = lane === 'convert' && opts.skipExisting ? journal.get(jKey) : undefined;
+        const resumed = prevDone ? await fileExistsNonEmpty(targetRootHandle, prevDone.path) : false;
+        if (prevDone && !resumed) journal.forget(jKey);
 
-        if (item.isMultiDisc && item.game.discs && item.game.discs.length > 1) {
+        if (resumed && prevDone) {
+          writtenRelativePath = prevDone.path;
+          actualResultStatus = 'skipped_already_converted';
+          romWritten = true;
+          skippedExistingCount++;
+        } else if (item.isMultiDisc && item.game.discs && item.game.discs.length > 1) {
           // Multi-disc game: dedicated subfolder + convert/copy every disc + write .m3u playlist!
           const subRelPath = `${item.folderPath}/${item.baseWithRegion}`;
           const gameSubDir = await dirCache.get(subRelPath);
           const m3uEntries: string[] = [];
+          let discFailed = false;
 
           for (let dIdx = 0; dIdx < item.game.discs.length; dIdx++) {
+            if (isCancelled()) throw new BuildCancelledError();
             const disc = item.game.discs[dIdx];
             const discNum = disc.discNumber || dIdx + 1;
             const discStem = `${item.baseWithRegion} (Disc ${discNum})`;
@@ -1563,17 +1821,12 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
                     disc.cueText,
                     disc.sourceExt || item.sourceExt
                   );
-                const res = isConversion ? await conversionLimit(runDisc) : await runDisc();
+                const res = await guarded(runDisc, (discFile.size || 0) / (1024 * 1024));
                 m3uEntries.push(res.entryFileName);
               } catch (discErr: any) {
-                errorCount++;
-                onAddLog?.(
-                  tf('builds.conv.discErrLog', {
-                    disc: discNum,
-                    title: item.game.title,
-                    err: String(discErr?.message || discErr),
-                  })
-                );
+                discFailed = true;
+                if (discErr instanceof BuildCancelledError) throw discErr;
+                noteTaskError(`${item.game.title} (Disc ${discNum})`, discErr);
               }
             } else {
               const fallbackExt =
@@ -1600,6 +1853,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
             writtenRelativePath = `${subRelPath}/${m3uName}`;
             actualResultStatus = `multi_disc_${m3uEntries.length}_with_m3u`;
             romWritten = item.game.discs.some((d) => Boolean(d.fileObj));
+            romComplete = romWritten && !discFailed;
             onAddLog?.(
               tf('builds.conv.multiDiscDone', {
                 title: item.game.title,
@@ -1621,10 +1875,11 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
                 item.game.cueText,
                 item.sourceExt
               );
-            const res = isConversion ? await conversionLimit(runRom) : await runRom();
+            const res = await guarded(runRom, item.game.sizeMB || (fileObj.size || 0) / (1024 * 1024));
             writtenRelativePath = res.writtenRelPath;
             actualResultStatus = res.resultStatus;
             romWritten = true;
+            romComplete = true;
             if (opts.syncSaves && item.game.parentHandle) {
               try {
                 const sv = await syncRomSavesWithDevice(
@@ -1639,14 +1894,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
               } catch {}
             }
           } catch (itemErr: any) {
-            errorCount++;
-            actualResultStatus = `error: ${String(itemErr?.message || itemErr)}`;
-            onAddLog?.(
-              tf('builds.conv.itemErrLog', {
-                title: item.game.title,
-                err: String(itemErr?.message || itemErr),
-              })
-            );
+            actualResultStatus = noteTaskError(item.game.title, itemErr);
           }
         } else {
           // Built-in catalog reference item without local ROM file loaded from disk
@@ -1662,33 +1910,18 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
         }
 
         // Медиа и запись для gamelist.xml / Media and the gamelist.xml entry
-        if (romWritten && (wantMedia || wantGamelist)) {
-          const media = wantMedia ? await copyGameMedia(item, item.baseWithRegion) : {};
-          if (wantGamelist) {
-            const g = item.game;
-            const srcDir = g.parentHandle || g.discs?.[0]?.parentHandle;
-            const srcEntry = await mediaIndex.gamelistEntry(
-              srcDir,
-              item.isMultiDisc ? g.m3uFileName || g.discs?.[0]?.oldFile || '' : g.oldFile
-            );
-            const info: Record<string, string> = {};
-            for (const tag of GAMELIST_INFO_TAGS) {
-              if (srcEntry?.fields[tag]) info[tag] = srcEntry.fields[tag];
-            }
-            // Ручные правки редактора важнее. / Manual editor edits win.
-            if (g.desc) info.desc = escapeXml(g.desc);
-            if (g.developer) info.developer = escapeXml(g.developer);
-            if (g.publisher) info.publisher = escapeXml(g.publisher);
-            if (g.players) info.players = escapeXml(g.players);
-            if (g.rating) info.rating = escapeXml(g.rating);
-            const prefix = `${item.folderPath}/`;
-            const relInConsole = writtenRelativePath.startsWith(prefix)
-              ? writtenRelativePath.slice(prefix.length)
-              : writtenRelativePath;
-            const list = gamelistByFolder.get(item.folderPath) || [];
-            list.push({ path: relInConsole, name: g.title, media, info });
-            gamelistByFolder.set(item.folderPath, list);
+        if (romWritten) {
+          romDoneByIdx.set(idx, writtenRelativePath);
+          if (lane === 'copy' && (wantMedia || wantGamelist)) {
+            mediaByIdx.set(idx, wantMedia ? await copyGameMedia(item, item.baseWithRegion) : {});
           }
+          await addGamelistIfReady(idx);
+        }
+        // Журнал: готовая конвертация не повторяется при следующем запуске.
+        // Journal: a finished conversion is not repeated on the next run.
+        if (lane === 'convert' && romComplete) {
+          journal.mark(jKey, writtenRelativePath, actualResultStatus);
+          saveJournalSoon();
         }
 
         exportedManifestItems[idx] = {
@@ -1709,26 +1942,26 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
           resultStatus: actualResultStatus,
         };
       } catch (err: any) {
-        errorCount++;
-        onAddLog?.(
-          tf('builds.conv.itemErrLog', {
-            title: item.game.title,
-            err: String(err?.message || err),
-          })
-        );
+        noteTaskError(item.game.title, err);
       } finally {
         doneCount++;
-        progressText(tf('bx.prog', { done: doneCount, total: totalItems, title: item.game.title }));
+        laneInfo.done++;
+        if (lane === 'convert') {
+          laneState.convert.startedAt = 0;
+          laneState.convert.title = '';
+        }
+        laneInfo.detail = '';
+        speed.add((item.game.sizeMB || 0) * 1024 * 1024);
         progressLog();
       }
     };
 
-    try {
-      await runPool(conversionPlanRows, concurrency, processItem);
-      progressText.flush();
-      progressLog.flush();
-
-      // gamelist.xml по папкам консолей / gamelist.xml per console folder
+    // gamelist.xml по папкам консолей. Пишется после линии копирования и ещё раз в конце (и при
+    // остановке); записи других игр в файле сохраняются, наши заменяются.
+    // gamelist.xml per console folder. Written after the copy lane and again at the end (and on stop);
+    // other games' entries in the file are kept, ours are replaced.
+    let gamelistWrites = 0;
+    const flushGamelists = async (final: boolean) => {
       for (const [folder, games] of gamelistByFolder) {
         try {
           const dir = await dirCache.get(folder);
@@ -1740,11 +1973,81 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
           const w = await fh.createWritable();
           await w.write(buildGamelistXml(games, existing));
           await w.close();
-          onAddLog?.(tf('bx.log.gamelist', { path: `${folder}/gamelist.xml`, count: games.length }));
+          gamelistWrites++;
+          if (final) onAddLog?.(tf('bx.log.gamelist', { path: `${folder}/gamelist.xml`, count: games.length }));
         } catch (err) {
           onAddLog?.(tf('bx.log.gamelistErr', { path: folder, err: String(err) }));
         }
       }
+    };
+
+    // BIOS: копируем проверенные файлы для консолей сборки (не ждёт конвертаций).
+    // BIOS: copy verified files for the build's consoles (does not wait for conversions).
+    let biosCopiedCount = 0;
+    let biosDone = false;
+    const copyBiosStep = async () => {
+      if (biosDone) return;
+      biosDone = true;
+      if (!copyBiosToBuild || conversionPlanRows.length === 0) return;
+      try {
+        const bios = await copyBiosIntoBuild(
+          targetRootHandle,
+          selectedProfile.id,
+          conversionPlanRows.map((r) => r.game.consoleShort)
+        );
+        biosCopiedCount = bios.copied;
+        if (bios.copied > 0) {
+          onAddLog?.(tf('bios.build.copiedLog', { count: bios.copied, dir: bios.dir || '' }));
+        } else if (bios.skipped && bios.skipped !== 'noFolder') {
+          onAddLog?.(tf('bios.build.skippedLog', { reason: t(`bios.build.${bios.skipped}`) }));
+        }
+      } catch (err) {
+        onAddLog?.(tf('bios.build.skippedLog', { reason: String(err) }));
+      }
+    };
+
+    try {
+      // Линия копирования: сначала ромы без конвертации, затем медиа конвертируемых игр.
+      // Copy lane: ROMs that need no conversion first, then the media of games being converted.
+      type CopyTask = { idx: number; kind: 'rom' | 'media' };
+      const copyQueue: CopyTask[] = [
+        ...lanes.copy.map((idx) => ({ idx, kind: 'rom' as const })),
+        ...(wantMedia || wantGamelist ? lanes.convert.map((idx) => ({ idx, kind: 'media' as const })) : []),
+      ];
+      const copyLane = runPool(
+        copyQueue,
+        concurrency,
+        (task) =>
+          task.kind === 'rom'
+            ? processItem(conversionPlanRows[task.idx], task.idx, 'copy')
+            : processMediaOnly(task.idx),
+        isCancelled
+      ).then(async () => {
+        if (isCancelled()) return;
+        laneState.copy.detail = '';
+        await flushGamelists(false);
+        await copyBiosStep();
+        if (lanes.convert.length > 0 && laneState.convert.done < lanes.convert.length) {
+          onAddLog?.(
+            tf('bq.log.copyLaneDone', {
+              done: laneState.copy.done,
+              left: lanes.convert.length - laneState.convert.done,
+            })
+          );
+        }
+      });
+      // Линия конвертации: по одной, от маленьких к большим. / Convert lane: one at a time, smallest first.
+      const convertLane = runPool(
+        lanes.convert,
+        1,
+        (idx) => processItem(conversionPlanRows[idx], idx, 'convert'),
+        isCancelled
+      );
+      await Promise.all([copyLane, convertLane]);
+      progressLog.flush();
+      const cancelled = isCancelled();
+
+      await flushGamelists(true);
       if (wantMedia) {
         onAddLog?.(tf('bx.log.media', { files: mediaFilesCount, missing: mediaMissingCount }));
       }
@@ -1759,7 +2062,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
       // PORTMASTER GAMES DEPLOYMENT (Unpack official .zip + copy game sources into exact required subfolder!)
       // ----------------------------------------------------------------------
       let portMasterDeployedCount = 0;
-      if (queuedPortMasterGames.length > 0) {
+      if (queuedPortMasterGames.length > 0 && !cancelled) {
         const { portsRoot, consoleLaunchNote } = resolvePortMasterRootDirForProfile(
           selectedProfile.id
         );
@@ -1803,7 +2106,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
 
         const pmReadmeLines: string[] = [
           '==================================================================',
-          `AegisROM v0.6.0 (Beta) — PortMaster (${selectedProfile.shortName})`,
+          `AegisROM v0.6.1-dev (Beta) — PortMaster (${selectedProfile.shortName})`,
           '==================================================================',
           consoleLaunchNote,
           '',
@@ -1928,25 +2231,31 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
       }));
       await persistCurrentBuildRecord(targetRootHandle.name, savedItems);
 
-      // BIOS: копируем проверенные файлы для консолей сборки / copy verified BIOS for the build's consoles
-      let biosCopiedCount = 0;
-      if (copyBiosToBuild && conversionPlanRows.length > 0) {
-        try {
-          const bios = await copyBiosIntoBuild(
-            targetRootHandle,
-            selectedProfile.id,
-            conversionPlanRows.map((r) => r.game.consoleShort)
-          );
-          biosCopiedCount = bios.copied;
-          if (bios.copied > 0) {
-            onAddLog?.(tf('bios.build.copiedLog', { count: bios.copied, dir: bios.dir || '' }));
-          } else if (bios.skipped && bios.skipped !== 'noFolder') {
-            onAddLog?.(tf('bios.build.skippedLog', { reason: t(`bios.build.${bios.skipped}`) }));
-          }
-        } catch (err) {
-          onAddLog?.(tf('bios.build.skippedLog', { reason: String(err) }));
-        }
+      if (!cancelled) await copyBiosStep();
+
+      // Журнал и отчёт / Journal and report
+      try {
+        await journal.save(true);
+      } catch {}
+      if (noFileCount > 0) report.add('skipped', t('bq.report.noFileTitle'), tf('bx.log.noFileSummary', { count: noFileCount }));
+      if (cancelled) {
+        const notStarted = totalItems - doneCount;
+        if (notStarted > 0) report.add('cancelled', t('bq.report.notStartedTitle'), String(notStarted));
       }
+      try {
+        const rfh = await targetRootHandle.getFileHandle(BUILD_REPORT_FILE, { create: true });
+        const rw = await rfh.createWritable();
+        await rw.write(
+          report.render([
+            `AegisROM — ${customBuildName} (${selectedProfile.name})`,
+            new Date().toISOString(),
+            `${t('bq.report.total')}: ${totalItems} · ${t('bq.report.copied')}: ${realCopiedCount} · ${t('bq.report.converted')}: ${realConvertedCount} · ${t('bq.report.skipped')}: ${skippedExistingCount} · ${t('bq.report.errors')}: ${errorCount} · ${t('bq.report.timeouts')}: ${timeoutCount}`,
+            cancelled ? t('bq.report.stopped') : '',
+          ])
+        );
+        await rw.close();
+        if (report.lines.length > 0) onAddLog?.(tf('bq.log.report', { file: BUILD_REPORT_FILE, count: report.lines.length }));
+      } catch {}
 
       // Write build manifest into root of chosen export folder
       const manifestJson = JSON.stringify(
@@ -1962,6 +2271,8 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
           skippedChdCount,
           skippedExistingCount,
           errorCount,
+          timeoutCount,
+          stoppedByUser: cancelled,
           items: manifestItems,
         },
         null,
@@ -1988,6 +2299,14 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
           : '') +
         (errorCount > 0 ? tf('builds.conv.exportSummaryErrs', { count: errorCount }) : '') +
         t('builds.conv.exportSummarySaved');
+      if (cancelled) {
+        const stopMsg = tf('bq.log.stopped', { done: doneCount, total: totalItems });
+        onUpdateLiveProgress?.(false, overallPct(), stopMsg);
+        onAddLog?.(stopMsg);
+        onAddLog?.(summaryMsg);
+        onAddLog?.(tf('bx.log.time', { time: formatDuration(Date.now() - startedAt) }));
+        return;
+      }
       onUpdateLiveProgress?.(false, 100, summaryMsg);
       onAddLog?.(summaryMsg);
       onAddLog?.(tf('bx.log.time', { time: formatDuration(Date.now() - startedAt) }));
@@ -2003,6 +2322,11 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
       const errMsg = tf('builds.conv.exportErrLog', { err: String(err) });
       onUpdateLiveProgress?.(false, 0, errMsg);
       onAddLog?.(errMsg);
+    } finally {
+      window.clearInterval(ticker);
+      unregisterStop();
+      exportCancelRef.current = null;
+      setExportRunning(false);
     }
   };
 
@@ -2018,7 +2342,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
       '@echo off',
       'chcp 65001 >nul',
       'echo ============================================================================',
-      'echo  AegisROM v0.6.0 (Beta) - Real Build Converter & Folder Hierarchy Export',
+      'echo  AegisROM v0.6.1-dev (Beta) - Real Build Converter & Folder Hierarchy Export',
       `echo  Build: ${customBuildName} (${conversionPlanRows.length})`,
       `echo  Target: ${selectedProfile.name}`,
       'echo  NOTE: Never performs fake extension renaming!',
@@ -2997,6 +3321,20 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
                   <span>{t('builds.conv.exportNowBtn')}</span>
                 </button>
 
+                {exportRunning && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      exportCancelRef.current?.abort();
+                      onAddLog?.(t('bq.log.stopRequested'));
+                    }}
+                    className="px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <OctagonX className="w-3.5 h-3.5" />
+                    <span>{t('bq.stopBtn')}</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={() => setWifiOpen(true)}
@@ -3403,6 +3741,8 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
           totalSizeLabel={
             totalSourceMB >= 1024 ? `${(totalSourceMB / 1024).toFixed(1)} GB` : `${totalSourceMB} MB`
           }
+          plan={summarizeBuildPlan(conversionPlanRows, chdmanStatus.available)}
+          checkMedia={checkMediaForPlan}
           onClose={() => setExportOptionsOpen(false)}
           onConfirm={(o) => {
             const prev = loadBuildExportOptions();

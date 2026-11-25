@@ -153,6 +153,9 @@ func RegisterRoutes(mux *http.ServeMux, o Options) {
 		res["error"] = errString(err)
 		writeJSON(w, res)
 	})
+	h("/api/native/converter/verify", func(w http.ResponseWriter, r *http.Request) {
+		aegisapi.HandleChdVerify(w, r, plat.FindChdman(appDir), nil)
+	})
 	h("/api/native/converter/chd", func(w http.ResponseWriter, r *http.Request) {
 		handleChd(w, r, plat.FindChdman(appDir))
 	})
@@ -291,6 +294,10 @@ func indexMedia(root string) (map[string]string, map[string]string) {
 			if strings.Count(filepath.Clean(p), string(filepath.Separator))-baseSep > 4 {
 				return filepath.SkipDir
 			}
+			// Фон, карты, картридж, мануалы (папки Skraper) — не обложки. / Fan art, maps, manuals: not covers.
+			if p != root && aegisapi.NonCoverMediaDirs[strings.ToLower(d.Name())] {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		ext := strings.ToLower(filepath.Ext(d.Name()))
@@ -338,6 +345,12 @@ func handleChd(w http.ResponseWriter, r *http.Request, chdman string) {
 		}
 	}()
 	targetExt := strings.ToLower(strings.TrimSpace(r.FormValue("targetExt")))
+	// outDir: результат сразу в папку сборки. / outDir: output straight into the build folder.
+	outDir, err := aegisapi.ConverterOutDir(r)
+	if err != nil {
+		http.Error(w, "outDir: "+err.Error(), http.StatusForbidden)
+		return
+	}
 	baseName := filepath.Base(strings.ReplaceAll(strings.TrimSpace(r.FormValue("baseName")), `\`, `/`))
 	if baseName == "" || baseName == "." || baseName == "/" {
 		baseName = "Converted_Game"
@@ -386,7 +399,9 @@ func handleChd(w http.ResponseWriter, r *http.Request, chdman string) {
 		}
 	}
 	runChdman := func(args ...string) bool {
-		cmd := exec.Command(chdman, args...)
+		// Контекст запроса: отмена на странице (таймаут, «Стоп») завершает chdman.
+		// Request context: a cancel on the page (timeout, Stop) kills chdman.
+		cmd := exec.CommandContext(r.Context(), chdman, args...)
 		cmd.Dir = tmpDir
 		if out, err := cmd.CombinedOutput(); err != nil {
 			http.Error(w, "chdman "+args[0]+" error: "+err.Error()+"\n"+string(out), http.StatusInternalServerError)
@@ -395,6 +410,10 @@ func handleChd(w http.ResponseWriter, r *http.Request, chdman string) {
 		return true
 	}
 	sendFile := func(p, name string) {
+		if outDir != "" {
+			aegisapi.SendConverterOutputs(w, tmpDir, outDir, []string{filepath.Base(p)})
+			return
+		}
 		f, err := os.Open(p)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -409,30 +428,13 @@ func handleChd(w http.ResponseWriter, r *http.Request, chdman string) {
 
 	switch targetExt {
 	case ".chd":
-		input := entry
-		low := strings.ToLower(entry)
-		if strings.HasSuffix(low, ".mds") || strings.HasSuffix(low, ".mdf") || strings.HasSuffix(low, ".img") {
-			raw := entry
-			if strings.HasSuffix(low, ".mds") {
-				if entries, err := os.ReadDir(tmpDir); err == nil {
-					for _, e := range entries {
-						if strings.HasSuffix(strings.ToLower(e.Name()), ".mdf") {
-							raw = filepath.Join(tmpDir, e.Name())
-							break
-						}
-					}
-				}
-			}
-			cue := filepath.Join(tmpDir, baseName+"_norm.cue")
-			bin := filepath.Join(tmpDir, baseName+"_norm.bin")
-			if aegiscore.NormalizeDiscImageToCueAndBin(raw, cue, bin) == nil {
-				input = cue
-			}
+		out, notes, err := aegisapi.CreateCDCHD(r.Context(), chdman, entry, tmpDir, baseName, r.FormValue("console"), nil)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
-		out := filepath.Join(tmpDir, baseName+".chd")
-		if runChdman("createcd", "-f", "-i", input, "-o", out) {
-			sendFile(out, baseName+".chd")
-		}
+		aegisapi.SetConverterNotes(w, notes)
+		sendFile(out, baseName+".chd")
 	case ".iso":
 		cue := filepath.Join(tmpDir, baseName+"_tmp.cue")
 		bin := filepath.Join(tmpDir, baseName+"_tmp.bin")
@@ -449,6 +451,10 @@ func handleChd(w http.ResponseWriter, r *http.Request, chdman string) {
 		cue := filepath.Join(tmpDir, baseName+".cue")
 		bin := filepath.Join(tmpDir, baseName+".bin")
 		if !runChdman("extractcd", "-f", "-i", entry, "-o", cue, "-ob", bin) {
+			return
+		}
+		if outDir != "" {
+			aegisapi.SendConverterOutputs(w, tmpDir, outDir, []string{baseName + ".bin", baseName + ".cue"})
 			return
 		}
 		w.Header().Set("Content-Type", "application/zip")
