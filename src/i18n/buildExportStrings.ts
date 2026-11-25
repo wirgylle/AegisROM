@@ -10,7 +10,7 @@ const EN: Dict = {
   'bx.summary': '{count} games, about {size}',
   'bx.mediaToggle': 'Copy media with the ROMs',
   'bx.mediaHint':
-    'Media is looked up next to each ROM: the paths in gamelist.xml first, then files named after the ROM in images, videos, marquees, boxart and similar folders.',
+    'Media comes from the same places as in the Library: first the picture or video linked to the game in the library, then the paths in gamelist.xml, then files named after the ROM in images, videos, marquees, boxart, media/* and similar folders. Internet links are not downloaded.',
   'bx.kind.thumbnail': 'Box art / cover (thumbnail)',
   'bx.kind.image': 'Main picture: screenshot or cover (image)',
   'bx.kind.marquee': 'Banner / logo (marquee)',
@@ -40,9 +40,9 @@ const EN: Dict = {
   'bq.planNoConvert': 'Nothing needs converting.',
   'bq.planNoChdman': 'chdman not found: {count} games will be copied without conversion.',
   'bq.planNoFile': 'No file in this session: {count} games (scan the library folder to include them).',
-  'bq.planMediaChecking': 'Checking media next to the ROMs…',
+  'bq.planMediaChecking': 'Checking the games\' media…',
   'bq.planMedia': 'Media found for {found} of {total} games.',
-  'bq.planMediaNone': 'No media found next to the ROMs: the build will have no pictures. Run the scraper (or import a Skraper folder) first.',
+  'bq.planMediaNone': 'No media found for these games: the build will have no pictures. Run the scraper (or import a Skraper folder) first.',
   'bq.planOrder':
     'Copies and media start right away; conversion runs in parallel, one file at a time, smallest first. gamelist.xml is written as soon as the copies are done and again at the end. A stuck file is skipped after a time limit and listed in aegisrom_build_report.txt. Running again into the same folder skips what is already done.',
   'bq.stopBtn': 'Stop export',
@@ -74,7 +74,7 @@ const RU: Dict = {
   'bx.summary': '{count} игр, примерно {size}',
   'bx.mediaToggle': 'Копировать медиа вместе с ромами',
   'bx.mediaHint':
-    'Медиа ищется рядом с каждым ромом: сначала пути из gamelist.xml, затем файлы с именем рома в папках images, videos, marquees, boxart и похожих.',
+    'Медиа берётся там же, где его показывает Библиотека: сначала картинка или видео, привязанные к игре в библиотеке, затем пути из gamelist.xml, затем файлы с именем рома в папках images, videos, marquees, boxart, media/* и похожих. Ссылки на интернет не скачиваются.',
   'bx.kind.thumbnail': 'Боксарт / обложка (thumbnail)',
   'bx.kind.image': 'Основная картинка: скриншот или обложка (image)',
   'bx.kind.marquee': 'Баннер / логотип (marquee)',
@@ -104,9 +104,9 @@ const RU: Dict = {
   'bq.planNoConvert': 'Конвертировать ничего не нужно.',
   'bq.planNoChdman': 'chdman не найден: {count} игр будут скопированы без конвертации.',
   'bq.planNoFile': 'Нет файла в этом сеансе: {count} игр (просканируйте папку библиотеки, чтобы их включить).',
-  'bq.planMediaChecking': 'Проверяю медиа рядом с ромами…',
+  'bq.planMediaChecking': 'Проверяю медиа игр…',
   'bq.planMedia': 'Медиа найдены у {found} из {total} игр.',
-  'bq.planMediaNone': 'Рядом с ромами медиа не найдено: в сборке не будет картинок. Сначала запустите скраппер (или импорт папки Skraper).',
+  'bq.planMediaNone': 'Медиа у этих игр не найдено: в сборке не будет картинок. Сначала запустите скраппер (или импорт папки Skraper).',
   'bq.planOrder':
     'Копирование и медиа начинаются сразу; конвертация идёт параллельно, по одному файлу, от маленьких к большим. gamelist.xml пишется, как только закончены копии, и ещё раз в конце. Зависший файл пропускается по пределу времени и попадает в aegisrom_build_report.txt. Повторный запуск в ту же папку пропускает уже готовое.',
   'bq.stopBtn': 'Остановить выгрузку',

@@ -7,6 +7,7 @@ import {
   type AppSettings,
   type LibraryViewMode,
 } from './utils/appSettings';
+import { mergeSessionRowIntoDbRow } from './utils/sessionRowMerge';
 import {
   FolderOpen,
   Download,
@@ -10051,41 +10052,7 @@ export function App() {
       saveCount: r.saveCount || undefined,
     };
     if (!r.dbRow) return row;
-    // Ром взят из базы без скана: поля, которых у рома нет (жанр, год, ручные правки, PortMaster),
-    // сохраняем из записи, а меняем только то, что операции могли поменять у файла.
-    // ROM taken from the database without a scan: fields the ROM lacks (genre, year, manual edits,
-    // PortMaster) are kept from the record; only what operations may change on the file is replaced.
-    return {
-      ...r.dbRow,
-      id: row.id,
-      title: row.title,
-      oldFile: row.oldFile,
-      cleanFile: row.cleanFile,
-      relativePath: row.relativePath,
-      size: row.size,
-      totalBytes: row.totalBytes,
-      crc32: row.crc32 || r.dbRow.crc32,
-      boxArtUrl: row.boxArtUrl,
-      videoUrl: row.videoUrl,
-      status: row.status || r.dbRow.status,
-      fileObj: row.fileObj,
-      companionFiles: row.companionFiles,
-      cueText: row.cueText,
-      trackCount: row.trackCount,
-      sourceExt: row.sourceExt,
-      isMultiDisc: row.isMultiDisc,
-      discCount: row.discCount,
-      discs: row.discs,
-      multiDiscFolderName: row.multiDiscFolderName,
-      m3uFileName: row.m3uFileName,
-      titleSource: row.titleSource || r.dbRow.titleSource,
-      titleNote: row.titleNote,
-      modKind: row.modKind,
-      modTag: row.modTag,
-      modLang: row.modLang,
-      modNote: row.modNote,
-      saveCount: row.saveCount,
-    };
+    return mergeSessionRowIntoDbRow(row, r.dbRow);
   };
 
   renderCountRef.current++;

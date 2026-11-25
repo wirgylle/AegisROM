@@ -14,6 +14,7 @@ import {
   splitRelativeMediaPath,
 } from './gamelistXml.ts';
 import { listMediaKindDirs } from './skraperMedia.ts';
+import { type MediaKind, type MediaSet, mediaSetOf } from './mediaKinds.ts';
 
 export type BuildMediaKind = 'image' | 'thumbnail' | 'marquee' | 'video';
 export const BUILD_MEDIA_KINDS: BuildMediaKind[] = ['thumbnail', 'image', 'marquee', 'video'];
@@ -304,12 +305,15 @@ export class MediaSourceIndex {
 
   /**
    * Медиа рома: сначала пути из gamelist.xml, затем файлы по имени рома.
+   * verify: путь из gamelist.xml берётся, только если файл есть, иначе ищем по имени.
    * A ROM's media: gamelist.xml paths first, then files named after the ROM.
+   * verify: a gamelist.xml path counts only if the file exists, else the name lookup is used.
    */
   async find(
     dir: any,
     romFileName: string,
-    extraStems: string[] = []
+    extraStems: string[] = [],
+    verify = false
   ): Promise<Partial<Record<BuildMediaKind, FoundMedia>>> {
     const out: Partial<Record<BuildMediaKind, FoundMedia>> = {};
     if (!dir) return out;
@@ -322,6 +326,7 @@ export class MediaSourceIndex {
         if (!rel) continue;
         const parts = splitRelativeMediaPath(rel);
         if (!parts) continue;
+        if (verify && !(await existsInDir(dir, parts))) continue;
         const name = parts[parts.length - 1];
         out[kind] = {
           ext: extOf(name),
@@ -400,4 +405,178 @@ export function buildGamelistXml(games: BuildGamelistGame[], existingXml?: strin
   }
   lines.push('</gameList>', '');
   return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Медиа из библиотеки: ссылки строки базы / Library media: the database row's links
+// ---------------------------------------------------------------------------
+
+/** Поля строки, где Библиотека хранит медиа. / Row fields where the Library keeps media. */
+export interface BuildMediaRow {
+  media?: MediaSet;
+  boxArtUrl?: string;
+  videoUrl?: string;
+  /** Ручные правки редактора (utils/manualEdits.ts). / Editor manual edits. */
+  manualMedia?: Partial<Record<BuildMediaKind, string>>;
+}
+
+/** Виды Библиотеки по порядку для каждого вида сборки. / Library kinds in order for each build kind. */
+const LIBRARY_KINDS_FOR: Record<Exclude<BuildMediaKind, 'video'>, MediaKind[]> = {
+  thumbnail: ['boxart'],
+  image: ['image', 'snap', 'title'],
+  marquee: ['marquee'],
+};
+
+/**
+ * Локальная ли ссылка (файл на этом компьютере): blob: сеанса или /api/native/fs/media.
+ * Ссылки в интернет (libretro, ScreenScraper) сборка не скачивает.
+ * Is the link local (a file on this computer): a session blob: or /api/native/fs/media.
+ * The build does not download internet links (libretro, ScreenScraper).
+ */
+export function isLocalMediaUrl(url?: string): boolean {
+  return Boolean(url && (url.startsWith('blob:') || url.includes('/api/native/fs/media')));
+}
+
+/**
+ * Ссылки медиа строки по видам сборки, только локальные. Порядок: правка редактора, media, boxArtUrl/videoUrl.
+ * The row's media links by build kind, local only. Order: editor edit, media, boxArtUrl/videoUrl.
+ */
+export function rowMediaUrls(row: BuildMediaRow | undefined): Partial<Record<BuildMediaKind, string>> {
+  const out: Partial<Record<BuildMediaKind, string>> = {};
+  if (!row) return out;
+  const set = mediaSetOf(row);
+  for (const kind of BUILD_MEDIA_KINDS) {
+    const manual = row.manualMedia?.[kind];
+    if (isLocalMediaUrl(manual)) {
+      out[kind] = manual;
+      continue;
+    }
+    if (kind === 'video') {
+      if (isLocalMediaUrl(row.videoUrl)) out.video = row.videoUrl;
+      continue;
+    }
+    for (const lk of LIBRARY_KINDS_FOR[kind]) {
+      if (isLocalMediaUrl(set[lk])) {
+        out[kind] = set[lk];
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+const TYPE_EXT: Record<string, string> = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/jpg': '.jpg',
+  'image/webp': '.webp',
+  'image/gif': '.gif',
+  'image/bmp': '.bmp',
+  'video/mp4': '.mp4',
+  'video/webm': '.webm',
+};
+
+/** Расширение по ссылке: path=… для нативной, иначе пусто. / Extension from a link: path=… for native, else empty. */
+export function extOfMediaUrl(url: string): string {
+  const q = url.indexOf('path=');
+  if (q === -1) return '';
+  let p = url.slice(q + 5).split('&')[0];
+  try {
+    p = decodeURIComponent(p.replace(/\+/g, ' '));
+  } catch {}
+  const name = p.split(/[\\/]/).pop() || '';
+  const ext = extOf(name);
+  return IMAGE_EXTS.has(ext) || VIDEO_EXTS.has(ext) ? ext : '';
+}
+
+/** Загрузчик ссылок; в тестах подменяется. / Link fetcher; replaced in tests. */
+export type MediaUrlFetch = (url: string, init?: { method?: string }) => Promise<Response>;
+
+/**
+ * Медиа по ссылке из базы. Проверка: файл отвечает (HEAD для нативной ссылки), расширение берём из пути
+ * или из Content-Type. null — файла нет.
+ * Media from a database link. Check: the file answers (HEAD for a native link); the extension comes
+ * from the path or from Content-Type. null: the file is missing.
+ */
+export async function probeMediaUrl(url: string, fetchUrl: MediaUrlFetch, kind: BuildMediaKind): Promise<FoundMedia | null> {
+  try {
+    const res = await fetchUrl(url, url.startsWith('blob:') ? undefined : { method: 'HEAD' });
+    if (!res.ok) return null;
+    const type = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    // Тело blob: не читаем, только заголовки. / The blob: body is not read, headers only.
+    try {
+      await res.body?.cancel();
+    } catch {}
+    const ext = extOfMediaUrl(url) || TYPE_EXT[type] || (kind === 'video' ? '.mp4' : '.png');
+    return {
+      ext,
+      getFile: async () => {
+        const r = await fetchUrl(url);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const blob = await r.blob();
+        return new File([blob], `media${ext}`, { type: blob.type || type });
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Проверяет, что файл по пути из gamelist.xml есть. / Checks that the gamelist.xml path's file exists. */
+async function existsInDir(dir: any, parts: string[]): Promise<boolean> {
+  try {
+    let d = dir;
+    for (let i = 0; i < parts.length - 1; i++) d = await d.getDirectoryHandle(parts[i]);
+    await d.getFileHandle(parts[parts.length - 1]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export interface ResolveGameMediaInput {
+  index: MediaSourceIndex;
+  /** Папка рома (handle), если есть. / The ROM's folder handle, if any. */
+  dir: any;
+  romFileName: string;
+  extraStems?: string[];
+  row?: BuildMediaRow;
+  fetchUrl?: MediaUrlFetch;
+}
+
+/**
+ * Медиа игры для сборки из тех же источников, что у Библиотеки. По каждому виду берётся первый
+ * существующий файл: 1) ссылка из базы (то, что видно в карточке), 2) путь из gamelist.xml,
+ * 3) файл с именем рома в images/, videos/, media/* и т. п. Одна функция и для подсчёта в окне,
+ * и для копирования, поэтому число в окне совпадает с тем, что будет скопировано.
+ *
+ * A game's media for the build from the same sources as the Library. For each kind the first
+ * existing file wins: 1) the database link (what the card shows), 2) the gamelist.xml path,
+ * 3) a file named after the ROM in images/, videos/, media/* etc. One function for both the count
+ * in the dialog and the copy, so the count matches what gets copied.
+ */
+export async function resolveGameMedia(input: ResolveGameMediaInput): Promise<Partial<Record<BuildMediaKind, FoundMedia>>> {
+  const { index, dir, romFileName, extraStems = [], row } = input;
+  const fetchUrl: MediaUrlFetch | undefined =
+    input.fetchUrl || (typeof fetch === 'function' ? (u, init) => fetch(u, init as RequestInit) : undefined);
+  const out: Partial<Record<BuildMediaKind, FoundMedia>> = {};
+
+  const urls = rowMediaUrls(row);
+  if (fetchUrl) {
+    await Promise.all(
+      BUILD_MEDIA_KINDS.map(async (kind) => {
+        const u = urls[kind];
+        if (!u) return;
+        const m = await probeMediaUrl(u, fetchUrl, kind);
+        if (m) out[kind] = m;
+      })
+    );
+  }
+  if (BUILD_MEDIA_KINDS.every((k) => out[k]) || !dir) return out;
+
+  const local = await index.find(dir, romFileName, extraStems, true);
+  for (const kind of BUILD_MEDIA_KINDS) {
+    if (!out[kind] && local[kind]) out[kind] = local[kind];
+  }
+  return out;
 }
