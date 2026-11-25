@@ -1,4 +1,4 @@
-// Package aegistransfer заливает папку сборки на приставку по сети (SFTP, SMB).
+// Package aegistransfer заливает папку сборки на приставку по сети (SFTP, SMB, WebDAV).
 //
 // RU: Сборка сначала выгружается в обычную папку на диске (существующий механизм),
 // затем эта папка зеркалится в папку ромов на устройстве. Заливаются только новые
@@ -30,13 +30,16 @@ type Protocol string
 const (
 	ProtoSFTP Protocol = "sftp"
 	ProtoSMB  Protocol = "smb"
+	// ProtoWebDAV — HTTP(S) WebDAV: RemoteDir — путь в URL, Share не нужен.
+	// ProtoWebDAV is HTTP(S) WebDAV: RemoteDir is the URL path, no Share.
+	ProtoWebDAV Protocol = "webdav"
 )
 
 // Auth — способ входа / how to log in.
 const (
 	AuthPassword = "password"
 	AuthKey      = "key"   // SSH-ключ / SSH key file (SFTP only)
-	AuthGuest    = "guest" // гостевой вход / guest access (SMB only)
+	AuthGuest    = "guest" // гостевой вход / guest access (SMB, WebDAV)
 )
 
 // Profile — одно устройство / one device.
@@ -63,14 +66,22 @@ type Profile struct {
 	// LocalDir — последняя папка сборки, которую заливали на это устройство.
 	// LocalDir is the last build folder uploaded to this device.
 	LocalDir string `json:"localDir,omitempty"`
+	// TLS — WebDAV по https / WebDAV over https.
+	TLS bool `json:"tls,omitempty"`
 
 	HasPassword bool `json:"hasPassword"`
 }
 
 // DefaultPort — порт по умолчанию / default port.
 func (p Profile) DefaultPort() int {
-	if p.Protocol == ProtoSMB {
+	switch p.Protocol {
+	case ProtoSMB:
 		return 445
+	case ProtoWebDAV:
+		if p.TLS {
+			return 443
+		}
+		return 80
 	}
 	return 22
 }
@@ -92,9 +103,9 @@ func (p *Profile) Validate() error {
 	p.RemoteDir = strings.TrimSpace(strings.ReplaceAll(p.RemoteDir, `\`, "/"))
 	p.KeyPath = strings.TrimSpace(p.KeyPath)
 	switch p.Protocol {
-	case ProtoSFTP, ProtoSMB:
+	case ProtoSFTP, ProtoSMB, ProtoWebDAV:
 	default:
-		return errors.New("protocol must be sftp or smb")
+		return errors.New("protocol must be sftp, smb or webdav")
 	}
 	if p.Host == "" || strings.ContainsAny(p.Host, " /\\@") {
 		return errors.New("host is empty or invalid")
@@ -109,13 +120,31 @@ func (p *Profile) Validate() error {
 			return errors.New("an SSH key needs SFTP and a key file")
 		}
 	case AuthGuest:
-		if p.Protocol != ProtoSMB {
-			return errors.New("guest access is for SMB only")
+		if p.Protocol == ProtoSFTP {
+			return errors.New("guest access is for SMB and WebDAV only")
 		}
 	default:
 		return errors.New("auth must be password, key or guest")
 	}
-	if p.Protocol == ProtoSFTP {
+	if p.Protocol != ProtoWebDAV {
+		p.TLS = false
+	}
+	switch p.Protocol {
+	case ProtoWebDAV:
+		if p.Auth == AuthPassword && p.User == "" {
+			return errors.New("WebDAV with a password needs a login")
+		}
+		if p.RemoteDir == "" {
+			p.RemoteDir = "/"
+		}
+		if !strings.HasPrefix(p.RemoteDir, "/") {
+			p.RemoteDir = "/" + p.RemoteDir
+		}
+		p.RemoteDir = path.Clean(p.RemoteDir)
+		p.Share = ""
+		p.KeyPath = ""
+		p.HostKey = ""
+	case ProtoSFTP:
 		if p.User == "" {
 			return errors.New("SFTP needs a login")
 		}
@@ -124,7 +153,7 @@ func (p *Profile) Validate() error {
 		}
 		p.RemoteDir = path.Clean(p.RemoteDir)
 		p.Share = ""
-	} else {
+	default:
 		if p.Share == "" {
 			return errors.New("SMB needs a share name")
 		}
@@ -141,7 +170,8 @@ func (p *Profile) Validate() error {
 // sameEndpoint: тот же адрес и протокол (иначе отпечаток ключа сбрасывается).
 // sameEndpoint: same address and protocol (otherwise the key fingerprint is reset).
 func sameEndpoint(a, b Profile) bool {
-	return a.Protocol == b.Protocol && strings.EqualFold(a.Host, b.Host) && a.EffectivePort() == b.EffectivePort()
+	return a.Protocol == b.Protocol && strings.EqualFold(a.Host, b.Host) && a.EffectivePort() == b.EffectivePort() &&
+		a.TLS == b.TLS
 }
 
 func newID() string {

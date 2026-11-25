@@ -21,6 +21,7 @@ import {
   type TransferPreset,
   type TransferProfile,
   cancelTransfer,
+  defaultPort,
   deleteProfile,
   formatBytes,
   isTransferAvailable,
@@ -28,14 +29,15 @@ import {
   listProfiles,
   pickLocalFolder,
   profileFromPreset,
+  remoteLabel,
   saveProfile,
   startTransfer,
   testProfile,
   transferStatus,
 } from '../utils/wifiTransfer';
 
-// Окно заливки сборки на приставку по Wi-Fi (SFTP, SMB): устройства, проверка соединения,
-// папка сборки и прогресс. Сама передача идёт в Go (aegistransfer), окно только спрашивает состояние.
+// Окно заливки сборки на приставку по Wi-Fi (SFTP, SMB, WebDAV): устройства, проверка соединения,
+// папка сборки, сверка сохранений и прогресс. Сама передача идёт в Go (aegistransfer), окно только спрашивает состояние.
 // Wi-Fi build upload window (SFTP, SMB): devices, connection test, build folder and progress.
 // The transfer itself runs in Go (aegistransfer); the window only polls its state.
 
@@ -85,6 +87,10 @@ export const WifiTransferModal: React.FC<WifiTransferModalProps> = ({ isOpen, on
   const [localDir, setLocalDir] = useState(initialLocalDir || '');
   const [job, setJob] = useState<TransferJob | null>(null);
   const [startError, setStartError] = useState('');
+  // Сверять сохранения с библиотекой (по связям, которые пишет выгрузка сборки).
+  // Reconcile saves with the library (via the links the build export writes).
+  const [syncSaves, setSyncSaves] = useState(true);
+  const [savesNote, setSavesNote] = useState('');
   const speedRef = useRef<{ at: number; bytes: number; speed: number }>({ at: 0, bytes: 0, speed: 0 });
   const loggedRef = useRef<string>('');
 
@@ -138,7 +144,8 @@ export const WifiTransferModal: React.FC<WifiTransferModalProps> = ({ isOpen, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
 
-  const running = job && (job.state === 'connecting' || job.state === 'planning' || job.state === 'uploading');
+  const running =
+    job && (job.state === 'connecting' || job.state === 'planning' || job.state === 'uploading' || job.state === 'saves');
 
   // Опрос состояния заливки. / Poll the upload state.
   useEffect(() => {
@@ -170,6 +177,7 @@ export const WifiTransferModal: React.FC<WifiTransferModalProps> = ({ isOpen, on
       onAddLog?.(
         tf('wifi.log.done', { name: job.profileName, uploaded: job.uploaded, skipped: job.skipped, failed: job.failed })
       );
+      if (job.syncSaves && job.saves) onAddLog?.(`💾 ${tf('wifi.log.saves', { name: job.profileName, ...job.saves })}`);
     } else if (job.state === 'failed') {
       onAddLog?.(tf('wifi.log.failed', { name: job.profileName, err: errText(job.errorCode || 'error', job.error || '') }));
     }
@@ -239,10 +247,12 @@ export const WifiTransferModal: React.FC<WifiTransferModalProps> = ({ isOpen, on
   const start = async () => {
     if (!selected || !localDir) return;
     setStartError('');
+    setSavesNote('');
     speedRef.current = { at: 0, bytes: 0, speed: 0 };
     try {
-      const j = await startTransfer(selected.id, localDir);
+      const j = await startTransfer(selected.id, localDir, syncSaves);
       setJob(j);
+      if (syncSaves && j.saveLinks === 0) setSavesNote(t('wifi.saves.noLinks'));
       onAddLog?.(tf('wifi.log.start', { local: localDir, name: selected.name, remote: selected.remoteDir }));
     } catch (err) {
       const e = err as TransferError;
@@ -251,16 +261,12 @@ export const WifiTransferModal: React.FC<WifiTransferModalProps> = ({ isOpen, on
   };
 
   const needsKeyConfirm = selected?.protocol === 'sftp' && !selected.hostKey;
-  const remoteLabel = (p: TransferProfile) =>
-    p.protocol === 'smb'
-      ? `smb://${p.host}${p.port ? `:${p.port}` : ''}/${p.share}/${p.remoteDir}`
-      : `sftp://${p.user}@${p.host}${p.port ? `:${p.port}` : ''}${p.remoteDir}`;
-
   // ---------- форма профиля / profile form ----------
   const renderForm = () => {
     if (!draft) return null;
     const set = (patch: Draft) => setDraft((d) => ({ ...(d || {}), ...patch }));
     const isSmb = draft.protocol === 'smb';
+    const isDav = draft.protocol === 'webdav';
     const pr = draft.preset ? presetById.get(draft.preset) : undefined;
     const presetHint = draft.preset ? t(`wifi.preset.${draft.preset}`, '') : '';
     const editingSaved = Boolean(draft.id);
@@ -283,15 +289,23 @@ export const WifiTransferModal: React.FC<WifiTransferModalProps> = ({ isOpen, on
               className={inputCls}
               value={draft.protocol}
               onChange={(e) => {
-                const protocol = e.target.value as 'sftp' | 'smb';
+                const protocol = e.target.value as 'sftp' | 'smb' | 'webdav';
                 set({
                   protocol,
-                  auth: protocol === 'smb' ? (draft.auth === 'key' ? 'password' : draft.auth) : draft.auth === 'guest' ? 'password' : draft.auth,
+                  auth:
+                    protocol === 'sftp'
+                      ? draft.auth === 'guest'
+                        ? 'password'
+                        : draft.auth
+                      : draft.auth === 'key'
+                        ? 'password'
+                        : draft.auth,
                 });
               }}
             >
               <option value="sftp">SFTP (SSH)</option>
               <option value="smb">SMB (Samba)</option>
+              <option value="webdav">WebDAV (HTTP)</option>
             </select>
           </div>
           <div className="sm:col-span-2 grid grid-cols-[1fr_6rem] gap-3">
@@ -309,19 +323,30 @@ export const WifiTransferModal: React.FC<WifiTransferModalProps> = ({ isOpen, on
               <input
                 className={inputCls}
                 inputMode="numeric"
-                placeholder={isSmb ? '445' : '22'}
+                placeholder={String(defaultPort({ protocol: draft.protocol || 'sftp', tls: draft.tls }))}
                 value={draft.port || ''}
                 onChange={(e) => set({ port: Number(e.target.value.replace(/\D/g, '')) || undefined })}
               />
             </div>
             <p className="col-span-2 -mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">{t('wifi.f.hostHint')}</p>
+            {isDav && (
+              <label className="col-span-2 -mt-1 flex items-center gap-1.5 text-[11px] text-slate-600 dark:text-slate-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="accent-emerald-600"
+                  checked={Boolean(draft.tls)}
+                  onChange={(e) => set({ tls: e.target.checked })}
+                />
+                {t('wifi.f.tls')}
+              </label>
+            )}
           </div>
           <div>
             <label className={labelCls}>{t('wifi.f.auth')}</label>
             <select className={inputCls} value={draft.auth} onChange={(e) => set({ auth: e.target.value as Draft['auth'] })}>
               <option value="password">{t('wifi.auth.password')}</option>
               {!isSmb && <option value="key">{t('wifi.auth.key')}</option>}
-              {isSmb && <option value="guest">{t('wifi.auth.guest')}</option>}
+              {(isSmb || isDav) && <option value="guest">{t('wifi.auth.guest')}</option>}
             </select>
           </div>
           {draft.auth !== 'guest' && (
@@ -376,7 +401,9 @@ export const WifiTransferModal: React.FC<WifiTransferModalProps> = ({ isOpen, on
             </div>
           )}
           <div className={isSmb ? '' : 'sm:col-span-2'}>
-            <label className={labelCls}>{isSmb ? t('wifi.f.remoteDirSmb') : t('wifi.f.remoteDir')}</label>
+            <label className={labelCls}>
+              {isSmb ? t('wifi.f.remoteDirSmb') : isDav ? t('wifi.f.remoteDirDav') : t('wifi.f.remoteDir')}
+            </label>
             <input
               className={`${inputCls} font-mono`}
               value={draft.remoteDir || ''}
@@ -431,6 +458,9 @@ export const WifiTransferModal: React.FC<WifiTransferModalProps> = ({ isOpen, on
       case 'uploading':
         headline = tf('wifi.state.uploading', { done: job.uploaded + job.failed, total: job.toUpload });
         break;
+      case 'saves':
+        headline = tf('wifi.state.saves', { roms: job.saves?.roms || 0 });
+        break;
       case 'done':
         headline = tf('wifi.state.done', { uploaded: job.uploaded, skipped: job.skipped });
         break;
@@ -483,6 +513,9 @@ export const WifiTransferModal: React.FC<WifiTransferModalProps> = ({ isOpen, on
         <p className="text-[11px] text-slate-500 dark:text-slate-400">
           {tf('wifi.stats', { skipped: job.skipped, resumed: job.resumed, reconnects: job.reconnects, failed: job.failed })}
         </p>
+        {job.syncSaves && job.saves && (
+          <p className="text-[11px] text-slate-600 dark:text-slate-300">💾 {tf('wifi.saves.stats', { ...job.saves })}</p>
+        )}
         {job.state === 'failed' && job.errorCode && (
           <p className="text-rose-700 dark:text-rose-300">{errText(job.errorCode, job.error || '')}</p>
         )}
@@ -678,6 +711,18 @@ export const WifiTransferModal: React.FC<WifiTransferModalProps> = ({ isOpen, on
                       {tf('wifi.mapping', { local: localDir, remote: remoteLabel(selected) })}
                     </p>
                   )}
+                  <label className="flex items-start gap-1.5 text-[11px] text-slate-600 dark:text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="accent-emerald-600 mt-px"
+                      checked={syncSaves}
+                      disabled={Boolean(running)}
+                      onChange={(e) => setSyncSaves(e.target.checked)}
+                    />
+                    <span>
+                      <span className="font-semibold">{t('wifi.saves.toggle')}</span> {t('wifi.saves.hint')}
+                    </span>
+                  </label>
                   <div className="flex flex-wrap items-center gap-2 pt-1">
                     <button
                       type="button"
@@ -690,6 +735,7 @@ export const WifiTransferModal: React.FC<WifiTransferModalProps> = ({ isOpen, on
                     </button>
                     {needsKeyConfirm && <span className="text-amber-700 dark:text-amber-400">{t('wifi.needTest')}</span>}
                     {startError && <span className="text-rose-700 dark:text-rose-300">{startError}</span>}
+                    {savesNote && <span className="text-amber-700 dark:text-amber-400">{savesNote}</span>}
                   </div>
                 </section>
               )}
