@@ -60,8 +60,9 @@ func (d DirRemote) OpenWrite(p string, offset int64) (io.WriteCloser, error) {
 	return f, nil
 }
 
-func (d DirRemote) Replace(from, to string) error { return os.Rename(d.abs(from), d.abs(to)) }
-func (d DirRemote) Remove(p string) error         { return os.Remove(d.abs(p)) }
+func (d DirRemote) OpenRead(p string) (io.ReadCloser, error) { return os.Open(d.abs(p)) }
+func (d DirRemote) Replace(from, to string) error            { return os.Rename(d.abs(from), d.abs(to)) }
+func (d DirRemote) Remove(p string) error                    { return os.Remove(d.abs(p)) }
 func (d DirRemote) Chtimes(p string, m time.Time) error {
 	return os.Chtimes(d.abs(p), m, m)
 }

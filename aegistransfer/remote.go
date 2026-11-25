@@ -36,6 +36,8 @@ type Remote interface {
 	// OpenWrite открывает файл для записи с offset (0 — с нуля, файл обрезается).
 	// OpenWrite opens a file for writing at offset (0 truncates).
 	OpenWrite(p string, offset int64) (io.WriteCloser, error)
+	// OpenRead открывает файл для чтения (сохранения с устройства) / opens a file for reading (saves from the device).
+	OpenRead(p string) (io.ReadCloser, error)
 	// Replace переименовывает from в to, заменяя to / renames from to to, replacing to.
 	Replace(from, to string) error
 	Remove(p string) error
@@ -71,6 +73,10 @@ func Fingerprint(k ssh.PublicKey) string {
 // Dial подключается к устройству. trustKey — отпечаток, который пользователь только что подтвердил.
 // Dial connects to the device. trustKey is a fingerprint the user has just confirmed.
 func Dial(ctx context.Context, p Profile, password, trustKey string) (Remote, error) {
+	if p.Protocol == ProtoWebDAV {
+		// WebDAV идёт поверх HTTP со своими подключениями. / WebDAV runs over HTTP with its own connections.
+		return dialWebDAV(ctx, p, password)
+	}
 	addr := net.JoinHostPort(p.Host, strconv.Itoa(p.EffectivePort()))
 	d := net.Dialer{Timeout: DialTimeout}
 	conn, err := d.DialContext(ctx, "tcp", addr)
@@ -210,6 +216,8 @@ func (r *sftpRemote) OpenWrite(p string, offset int64) (io.WriteCloser, error) {
 	return f, nil
 }
 
+func (r *sftpRemote) OpenRead(p string) (io.ReadCloser, error) { return r.c.Open(p) }
+
 func (r *sftpRemote) Replace(from, to string) error {
 	if err := r.c.PosixRename(from, to); err == nil {
 		return nil
@@ -323,6 +331,8 @@ func (r *smbRemote) OpenWrite(p string, offset int64) (io.WriteCloser, error) {
 	}
 	return f, nil
 }
+
+func (r *smbRemote) OpenRead(p string) (io.ReadCloser, error) { return r.share.Open(smbPath(p)) }
 
 func (r *smbRemote) Replace(from, to string) error {
 	// SMB не заменяет существующий файл при переименовании. / SMB rename does not replace.

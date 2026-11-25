@@ -88,6 +88,7 @@ import {
   type CopyOutcome,
 } from '../utils/buildCopy';
 import { romStem, syncRomSavesWithDevice } from '../utils/saveFiles';
+import { type SaveMapEntry, saveMapEntryFor, writeSaveMap } from '../utils/saveMap';
 import {
   BUILD_REPORT_FILE,
   BuildCancelledError,
@@ -1125,6 +1126,8 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
     let mediaMissingCount = 0;
     // Сохранения со сборкой (шаг 7 плана 0.6.0). / Saves with the build (0.6.0 plan, step 7).
     const savesSync = { toDevice: 0, fromDevice: 0, conflicts: 0 };
+    // Связи ромов сборки с библиотекой для сохранений по Wi-Fi. / Build ROM ↔ library links for Wi-Fi saves.
+    const saveMapEntries: SaveMapEntry[] = [];
     const totalItems = conversionPlanRows.length;
     const exportedManifestItems: any[] = new Array(totalItems);
 
@@ -1891,6 +1894,8 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
                 savesSync.fromDevice += sv.fromDevice;
                 savesSync.conflicts += sv.conflicts;
               } catch {}
+              const link = saveMapEntryFor(item.game.parentHandle, romStem(fileObj.name), currDir, res.entryFileName);
+              if (link) saveMapEntries.push(link);
             }
           } catch (itemErr: any) {
             actualResultStatus = noteTaskError(item.game.title, itemErr);
@@ -2056,6 +2061,9 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
       if (savesSync.toDevice + savesSync.fromDevice > 0) {
         onAddLog?.(`💾 ${tf('sv.bx.log', savesSync)}`);
       }
+      try {
+        await writeSaveMap(targetRootHandle, saveMapEntries);
+      } catch {}
 
       // ----------------------------------------------------------------------
       // PORTMASTER GAMES DEPLOYMENT (Unpack official .zip + copy game sources into exact required subfolder!)

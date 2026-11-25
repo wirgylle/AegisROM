@@ -28,3 +28,16 @@ test('profileFromPreset drops the protocol suffix', () => {
   assert.equal(p.remoteDir, '/roms');
   assert.equal(p.user, 'ark');
 });
+
+test('WebDAV: default port, label, preset name', async () => {
+  const { defaultPort, remoteLabel } = await import('./wifiTransfer.ts');
+  assert.equal(defaultPort({ protocol: 'webdav' }), 80);
+  assert.equal(defaultPort({ protocol: 'webdav', tls: true }), 443);
+  assert.equal(defaultPort({ protocol: 'smb' }), 445);
+  assert.equal(defaultPort({ protocol: 'sftp' }), 22);
+  const base = { id: '1', name: 'n', host: '192.168.1.9', remoteDir: '/dav/roms', hasPassword: false } as const;
+  assert.equal(remoteLabel({ ...base, protocol: 'webdav', auth: 'guest', user: 'x' }), 'http://192.168.1.9/dav/roms');
+  assert.equal(remoteLabel({ ...base, protocol: 'webdav', auth: 'password', user: 'me', tls: true, port: 8443 }), 'https://me@192.168.1.9:8443/dav/roms');
+  assert.equal(remoteLabel({ ...base, protocol: 'sftp', auth: 'password', user: 'ark', remoteDir: '/roms' }), 'sftp://ark@192.168.1.9/roms');
+  assert.equal(profileFromPreset({ id: 'x', label: 'NAS (WebDAV)', protocol: 'webdav', auth: 'guest', remoteDir: '/' }).name, 'NAS');
+});

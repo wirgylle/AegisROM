@@ -196,6 +196,46 @@ func sameFileBytes(a, b string) bool {
 	return ea == nil && eb == nil && bytes.Equal(da, db)
 }
 
+// DeviceSyncSuffixes: сохранения, которые ездят на приставку и обратно. Снимки состояний (.state*)
+// остаются дома: RetroArch на приставке открывает их только с той же версией ядра. Как
+// DEVICE_SYNC_SUFFIXES в src/utils/saveFiles.ts.
+// Saves that travel to the handheld and back. Save states stay home (same as the TS list).
+func DeviceSyncSuffixes() []string {
+	out := make([]string, 0, len(SaveSuffixes))
+	for _, s := range SaveSuffixes {
+		if !strings.HasPrefix(s, ".state") {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// BackupBytesToHistory кладёт data в историю base (в dir) с временем mtime.
+// BackupBytesToHistory stores data in the history of base (in dir) with time mtime.
+func BackupBytesToHistory(dir, base, suffix string, data []byte, mtime, now time.Time) (string, error) {
+	if !IsSaveSuffix(suffix) {
+		return "", fmt.Errorf("unknown save suffix %q", suffix)
+	}
+	hdir := SaveHistoryFolder(dir, base)
+	if err := os.MkdirAll(hdir, 0o755); err != nil {
+		return "", err
+	}
+	dst := freeHistoryPath(hdir, now.Format("20060102-150405"), suffix)
+	tmp := dst + ".aegis-tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		_ = os.Remove(tmp)
+		return "", err
+	}
+	if !mtime.IsZero() {
+		_ = os.Chtimes(dst, mtime, mtime)
+	}
+	PruneSaveHistory(hdir, suffix, SaveHistoryKeep)
+	return dst, nil
+}
+
 // WriteSaveBytes writes data as <dir>/<base><suffix>. A different existing file is copied to
 // history first; identical bytes are not rewritten. Returns the save path and the backup path.
 func WriteSaveBytes(dir, base, suffix string, data []byte, now time.Time) (string, string, error) {
