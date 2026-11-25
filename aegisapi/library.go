@@ -112,125 +112,21 @@ func RegisterLibraryRoutes(mux *http.ServeMux, appDir string, touch func()) {
 			return
 		}
 		defer resp.Body.Close()
-		var rawFeed struct {
-			Ports map[string]struct {
-				Name  string   `json:"name"`
-				Items []string `json:"items"`
-				Attr  struct {
-					Title   string                 `json:"title"`
-					Desc    string                 `json:"desc"`
-					Genres  []string               `json:"genres"`
-					Rtr     bool                   `json:"rtr"`
-					Porter  []string               `json:"porter"`
-					Runtime interface{}            `json:"runtime"`
-					Reqs    []string               `json:"reqs"`
-					Inst    string                 `json:"inst"`
-					InstMd  string                 `json:"inst_md"`
-					Avail   map[string]interface{} `json:"avail"`
-					Image   struct {
-						Covers     []string `json:"covers"`
-						Screenshot string   `json:"screenshot"`
-					} `json:"image"`
-				} `json:"attr"`
-				Source struct {
-					URL         string `json:"url"`
-					Size        int64  `json:"size"`
-					DateUpdated string `json:"date_updated"`
-					MD5         string `json:"md5"`
-				} `json:"source"`
-			} `json:"ports"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&rawFeed); err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
+		if resp.StatusCode != http.StatusOK {
+			http.Error(w, fmt.Sprintf("portmaster catalog: HTTP %d", resp.StatusCode), http.StatusBadGateway)
 			return
 		}
-		type pmItem struct {
-			ID                      string   `json:"id"`
-			Slug                    string   `json:"slug"`
-			Title                   string   `json:"title"`
-			Desc                    string   `json:"desc"`
-			Genres                  []string `json:"genres"`
-			ReadyToRun              bool     `json:"readyToRun"`
-			Porter                  []string `json:"porter"`
-			Runtime                 []string `json:"runtime"`
-			Requirements            []string `json:"requirements"`
-			InstructionsRaw         string   `json:"instructionsRaw"`
-			InstructionsMd          string   `json:"instructionsMd"`
-			RequiredDataTargetPath  string   `json:"requiredDataTargetPath"`
-			RequiredDataHint        string   `json:"requiredDataHint"`
-			Items                   []string `json:"items"`
-			AvailDevices            []string `json:"availDevices"`
-			SupportedConsolesPretty []string `json:"supportedConsolesPretty"`
-			CoverUrl                string   `json:"coverUrl"`
-			ScreenshotUrl           string   `json:"screenshotUrl"`
-			DownloadUrl             string   `json:"downloadUrl"`
-			SizeBytes               int64    `json:"sizeBytes"`
-			DateUpdated             string   `json:"dateUpdated"`
-			MD5                     string   `json:"md5"`
-		}
-		games := make([]pmItem, 0, len(rawFeed.Ports))
-		for key, entry := range rawFeed.Ports {
-			slug := strings.TrimSuffix(entry.Name, ".zip")
-			if slug == "" {
-				slug = strings.TrimSuffix(key, ".zip")
-			}
-			coverUrl := ""
-			shotUrl := ""
-			if entry.Attr.Image.Screenshot != "" {
-				shotUrl = "https://raw.githubusercontent.com/PortsMaster/PortMaster-New/main/ports/" + url.PathEscape(slug) + "/" + url.PathEscape(entry.Attr.Image.Screenshot)
-			}
-			if len(entry.Attr.Image.Covers) > 0 {
-				coverUrl = "https://raw.githubusercontent.com/PortsMaster/PortMaster-New/main/ports/" + url.PathEscape(slug) + "/" + url.PathEscape(entry.Attr.Image.Covers[0])
-			} else {
-				coverUrl = shotUrl
-			}
-			rtList := []string{}
-			switch v := entry.Attr.Runtime.(type) {
-			case string:
-				if v != "" {
-					rtList = append(rtList, v)
-				}
-			case []interface{}:
-				for _, x := range v {
-					if s, ok := x.(string); ok {
-						rtList = append(rtList, s)
-					}
-				}
-			}
-			availKeys := make([]string, 0, len(entry.Attr.Avail))
-			for ak := range entry.Attr.Avail {
-				availKeys = append(availKeys, ak)
-			}
-			games = append(games, pmItem{
-				ID:                      key,
-				Slug:                    slug,
-				Title:                   entry.Attr.Title,
-				Desc:                    entry.Attr.Desc,
-				Genres:                  entry.Attr.Genres,
-				ReadyToRun:              entry.Attr.Rtr,
-				Porter:                  entry.Attr.Porter,
-				Runtime:                 rtList,
-				Requirements:            entry.Attr.Reqs,
-				InstructionsRaw:         entry.Attr.Inst,
-				InstructionsMd:          entry.Attr.InstMd,
-				RequiredDataTargetPath:  "ports/" + slug,
-				RequiredDataHint:        "Поместите файлы игры в папку ports/" + slug + "/",
-				Items:                   entry.Items,
-				AvailDevices:            availKeys,
-				SupportedConsolesPretty: []string{"R36S (ArkOS)", "Anbernic (MuOS/Knulli)", "ROCKNIX"},
-				CoverUrl:                coverUrl,
-				ScreenshotUrl:           shotUrl,
-				DownloadUrl:             entry.Source.URL,
-				SizeBytes:               entry.Source.Size,
-				DateUpdated:             entry.Source.DateUpdated,
-				MD5:                     entry.Source.MD5,
-			})
+		games, skipped, err := parsePortMasterFeed(resp.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
 		}
 		outBytes, _ := json.Marshal(map[string]interface{}{
 			"ok":        true,
 			"syncedAt":  time.Now().UTC().Format(time.RFC3339),
 			"fromCache": false,
 			"total":     len(games),
+			"skipped":   skipped,
 			"games":     games,
 		})
 		_ = os.WriteFile(portMasterCachePath, outBytes, 0644)
