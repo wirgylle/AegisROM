@@ -294,6 +294,10 @@ func indexMedia(root string) (map[string]string, map[string]string) {
 			if strings.Count(filepath.Clean(p), string(filepath.Separator))-baseSep > 4 {
 				return filepath.SkipDir
 			}
+			// Фон, карты, картридж, мануалы (папки Skraper) — не обложки. / Fan art, maps, manuals: not covers.
+			if p != root && aegisapi.NonCoverMediaDirs[strings.ToLower(d.Name())] {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		ext := strings.ToLower(filepath.Ext(d.Name()))

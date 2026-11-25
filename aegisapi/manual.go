@@ -20,6 +20,17 @@ import (
 // tag of gamelist.xml next to the ROM, or the ROM name in manuals/ or media/manuals/ next to the ROM
 // and one level up. Only PDFs are served.
 
+// NonCoverMediaDirs: папки медиа, картинки из которых не обложки (фон, карты, картридж, мануалы;
+// раскладка Skraper). Тот же список, что NON_COVER_DIRS в src/utils/skraperMedia.ts.
+// Media folders whose images are not covers (fan art, maps, cartridge, manuals; Skraper layout).
+var NonCoverMediaDirs = map[string]bool{
+	"fanart": true, "fanarts": true, "maps": true, "map": true, "support": true, "supporttexture": true,
+	"support-texture": true, "cartridge": true, "cartridges": true, "carts": true, "boxback": true,
+	"box2dback": true, "box2dside": true, "boxside": true, "boxtexture": true, "box-texture": true,
+	"bezel": true, "bezels": true, "extra": true, "extra1": true, "manuals": true, "manual": true,
+	"docs": true, "magazines": true, "flyers": true,
+}
+
 // ManualMaxBytes: больше мануалы не отдаём. / Larger manuals are not served.
 const ManualMaxBytes = 512 << 20
 
