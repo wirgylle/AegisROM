@@ -46,9 +46,17 @@
 | 6 | Сборка `.dmg` | Job на `macos-latest` в release-workflow: `darwin/universal` (Intel + Apple Silicon), ad-hoc подпись `codesign -s -`, `.dmg` через `hdiutil`. Без аккаунта Apple. В README — как открыть неподписанное приложение. | Запуск `.dmg` на Mac |
 | 7 | PortMaster через WSL (отдельно) | Вместо `--classic-win32`: установка WSL-дистрибутива и нативного PortMaster внутри. **Риск:** большинство портов PortMaster собраны под ARM64 и KMS/DRM приставок; на x86-ПК в WSL их, скорее всего, придётся гонять через эмуляцию (box64/qemu-user). Сначала прототип на 2–3 портах, потом решение. | Прототип |
 
-### Как попробовать нативное окно (этап 2)
+### Своё окно (этап 2)
 
-Пока это опция, по умолчанию открывается Edge. Включить: запустить `AegisROM.exe --native-window` или создать пустой файл `use-native-window` в папке данных (`%APPDATA%\AegisROM`, путь виден в `/api/native/status` → `appDir`). Вернуть Edge: `--legacy-window` или удалить файл. Профиль окна хранится в `<appDir>\WebView2`. При первом запуске, если на диске ещё нет настроек, на несколько секунд за экраном открывается старое окно Edge и выгружает их.
+С 0.6.2 `AegisROM.exe` по умолчанию открывает своё окно (WebView2). Edge остаётся запасным вариантом и включается сам:
+
+- нет WebView2 Runtime (в Windows 11 он есть всегда);
+- окно не загрузило страницу за 30 секунд: в том же запуске открывается Edge;
+- прошлый запуск своего окна оборвался до загрузки страницы (в папке данных остался файл `native-window-pending`).
+
+В двух последних случаях Edge запоминается (файл `use-legacy-window` со словом `auto`). Переключить вручную: «Настройки» → «Общие» → «Окно приложения», действует со следующего запуска. Ключи: `--legacy-window` — Edge на этот запуск, `--native-window` — своё окно, даже если выбран Edge. Папка данных — `%APPDATA%\AegisROM` (путь виден в `/api/native/status` → `appDir`), профиль окна — `<appDir>\WebView2`. При первом запуске, если на диске ещё нет настроек, на несколько секунд за экраном открывается старое окно Edge и выгружает их. Доступ к папкам из Edge не переносится: в своём окне папки выбираются один раз заново, дальше они запоминаются как пути.
+
+Медиа в своём окне ищет Go (`/api/native/fs/resolve-media`, `aegisapi/localmedia.go`): картинки по видам (боксарт, скриншот, титул, баннер) по тем же правилам, что у Библиотеки, для всех строк базы за один обход папки.
 
 ### Файлы через Go (этап 3)
 
@@ -56,7 +64,7 @@
 
 `src/utils/nativeFs.ts` подменяет `showDirectoryPicker` и возвращает объекты с интерфейсом `FileSystemDirectoryHandle`/`FileSystemFileHandle`. Файлы до 32 МБ приходят как настоящий `File`, крупнее — как `LazyFile` (чтение кусками по Range). Для `LazyFile` `URL.createObjectURL` выдаёт адрес `read`, а `FormData` передаёт ссылку на путь, и Go кладёт сам файл (для chdman). Handle'ы сохраняются в IndexedDB как пути и восстанавливаются после перезапуска без запросов разрешений.
 
-Включается в нативном окне (`--native-window`) и там, где у WebView нет `showDirectoryPicker` (macOS). В окне Edge остаётся API браузера. Для тестов: `aegis-server -dev-pick-dir <папка>`.
+Включается в своём окне (по умолчанию на Windows) и там, где у WebView нет `showDirectoryPicker` (macOS). В окне Edge остаётся API браузера. Для тестов: `aegis-server -dev-pick-dir <папка>`.
 
 ### Gatekeeper без подписи
 
@@ -120,9 +128,17 @@ Each stage is a separate PR into `dev`; after testing it ships to `main` in a re
 | 6 | `.dmg` build | A `macos-latest` job in the release workflow: `darwin/universal` (Intel + Apple Silicon), ad-hoc signature `codesign -s -`, `.dmg` via `hdiutil`. No Apple account. README explains how to open an unsigned app. | Opening the `.dmg` on a Mac |
 | 7 | PortMaster via WSL (separate) | Instead of `--classic-win32`: install a WSL distro and native PortMaster inside it. **Risk:** most PortMaster ports are built for ARM64 and the handhelds' KMS/DRM; on an x86 PC in WSL they will most likely need emulation (box64/qemu-user). Prototype on 2–3 ports first, then decide. | Prototype |
 
-### Trying the native window (stage 2)
+### Native window (stage 2)
 
-Opt-in for now; Edge opens by default. To enable: run `AegisROM.exe --native-window` or create an empty `use-native-window` file in the data folder (`%APPDATA%\AegisROM`; `/api/native/status` → `appDir` shows the path). Back to Edge: `--legacy-window` or delete the file. The window profile lives in `<appDir>\WebView2`. On first launch, if no settings are on disk yet, the old Edge window opens off-screen for a few seconds and uploads them.
+Since 0.6.2 `AegisROM.exe` opens its own window (WebView2) by default. Edge stays as the fallback and switches on by itself when:
+
+- the WebView2 Runtime is missing (Windows 11 always has it);
+- the window did not load the page within 30 seconds: Edge opens in the same launch;
+- the previous native start died before the page loaded (a `native-window-pending` file was left in the data folder).
+
+In the last two cases Edge is remembered (a `use-legacy-window` file containing `auto`). To switch by hand: Settings → General → App window, applied from the next start. Switches: `--legacy-window` uses Edge for this launch, `--native-window` forces the native window even when Edge is selected. The data folder is `%APPDATA%\AegisROM` (`/api/native/status` → `appDir` shows the path); the window profile lives in `<appDir>\WebView2`. On first launch, if no settings are on disk yet, the old Edge window opens off-screen for a few seconds and uploads them. Folder access does not carry over from Edge: in the native window folders are picked once more, then remembered as paths.
+
+In the native window Go finds the media (`/api/native/fs/resolve-media`, `aegisapi/localmedia.go`): images by kind (box art, screenshot, title, banner) with the same rules as the Library, for every database row in one folder walk.
 
 ### Files via Go (stage 3)
 
@@ -130,7 +146,7 @@ Opt-in for now; Edge opens by default. To enable: run `AegisROM.exe --native-win
 
 `src/utils/nativeFs.ts` replaces `showDirectoryPicker` and returns objects implementing `FileSystemDirectoryHandle`/`FileSystemFileHandle`. Files up to 32 MB come back as a real `File`, larger ones as a `LazyFile` (read in Range chunks). For a `LazyFile`, `URL.createObjectURL` returns the `read` URL, and `FormData` sends a path reference that Go replaces with the file itself (for chdman). Handles are stored in IndexedDB as paths and come back after a restart without permission prompts.
 
-Enabled in the native window (`--native-window`) and wherever the WebView has no `showDirectoryPicker` (macOS). The Edge window keeps the browser API. For tests: `aegis-server -dev-pick-dir <folder>`.
+Enabled in the native window (the Windows default) and wherever the WebView has no `showDirectoryPicker` (macOS). The Edge window keeps the browser API. For tests: `aegis-server -dev-pick-dir <folder>`.
 
 ### Gatekeeper without signing
 

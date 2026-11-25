@@ -68,10 +68,11 @@ jobs:
           GOOS=darwin GOARCH=arm64 go build -o /dev/null ./aegiscore ./aegisapi ./aegisdesktop ./cmd/aegis-server
           GOOS=windows GOARCH=amd64 go vet ./aegiscore ./aegisapi ./cmd/aegis-server
 
-      - name: aegis-scanner module (vet, build linux/windows/macOS)
+      - name: aegis-scanner module (vet, test, build linux/windows/macOS)
         working-directory: cmd/aegis-scanner
         run: |
           go vet ./...
+          go test ./...
           go build -o /dev/null .
           GOOS=windows GOARCH=amd64 go build -o /dev/null .
           GOOS=darwin GOARCH=arm64 go build -o /dev/null .

@@ -255,6 +255,25 @@ export interface PatchFileRef {
   relativePath: string;
   sourceCrc32?: string;
   targetCrc32?: string;
+  // Размеры рома до и после патча (BPS/UPS). / ROM size before and after the patch (BPS/UPS).
+  sourceSize?: number;
+  targetSize?: number;
+}
+
+// Сканер считает CRC32 только по первым 16 МБ файла. Для рома крупнее полный CRC32 нужен лишь
+// тогда, когда в patch/ есть BPS/UPS-патч ровно под его размер (с копирным заголовком или без).
+// The scanner hashes only the first 16 MB of a file. A larger ROM needs its full CRC32 only when
+// patch/ holds a BPS/UPS patch for exactly its size (with or without a copier header).
+export const SCAN_CRC_LIMIT = 16 * 1024 * 1024;
+
+export function needsFullCrcForPatches(fileSize: number, patches: PatchFileRef[]): boolean {
+  if (fileSize <= SCAN_CRC_LIMIT || patches.length === 0) return false;
+  const headered = fileSize % 1024 === 512;
+  return patches.some((p) =>
+    [p.sourceSize, p.targetSize].some(
+      (s) => s !== undefined && (s === fileSize || (headered && s === fileSize - 512))
+    )
+  );
 }
 
 // Привязка патчей из patch/ к ромам по CRC32. / Links patches from patch/ to ROMs by CRC32.

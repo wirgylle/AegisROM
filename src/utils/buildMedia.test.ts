@@ -7,7 +7,11 @@ import {
   classifyMediaFileName,
   planMediaTargets,
   profileMediaLayout,
+  resolveGameMedia,
+  rowMediaUrls,
+  extOfMediaUrl,
   type FoundMedia,
+  type MediaUrlFetch,
 } from './buildMedia.ts';
 
 // Простая папка в памяти с интерфейсом FileSystemDirectoryHandle.
@@ -135,4 +139,124 @@ test('buildGamelistXml: writes our games and keeps other entries', () => {
   assert.match(xml, /<image>\.\/images\/1942 \(USA\)-image\.png<\/image>/);
   assert.match(xml, /<desc>Plane &amp; shooter<\/desc>/);
   assert.equal((xml.match(/<game>/g) || []).length, 2);
+});
+
+// ---------------------------------------------------------------------------
+// Источники как у Библиотеки (баг «Медиа найдены у 2 из 13363»).
+// Library-like sources (the "media found for 2 of 13363" bug).
+// ---------------------------------------------------------------------------
+
+// Файлы «на диске» для нативных ссылок и blob: сеанса. / "On disk" files for native links and session blobs.
+function fakeFetch(files: Record<string, { body: string; type: string }>): MediaUrlFetch {
+  return async (url, init) => {
+    const f = files[url];
+    if (!f) return new Response(null, { status: 404 });
+    return new Response(init?.method === 'HEAD' ? null : f.body, { status: 200, headers: { 'content-type': f.type } });
+  };
+}
+const nativeUrl = (p: string) => '/api/native/fs/media?path=' + encodeURIComponent(p);
+
+test('rowMediaUrls: local links by build kind, internet links skipped', () => {
+  const u = rowMediaUrls({
+    media: { boxart: 'blob:a', snap: nativeUrl('D:/x/snap.png'), marquee: 'https://thumbnails.libretro.com/x.png' },
+    videoUrl: nativeUrl('D:/x/v.mp4'),
+  });
+  assert.equal(u.thumbnail, 'blob:a');
+  assert.equal(u.image, nativeUrl('D:/x/snap.png'));
+  assert.equal(u.marquee, undefined, 'internet link is not downloaded');
+  assert.equal(u.video, nativeUrl('D:/x/v.mp4'));
+  assert.deepEqual(rowMediaUrls({ boxArtUrl: 'https://thumbnails.libretro.com/a/Named_Boxarts/b.png' }), {});
+  assert.equal(extOfMediaUrl(nativeUrl('D:\\Roms\\snes\\media\\images\\Mario (USA).JPG')), '.jpg');
+});
+
+test('resolveGameMedia: Skraper media/* next to the ROM, no gamelist.xml', async () => {
+  // <консоль>/media/{images,videos,marquees} как у Skraper 1.4.2. / <console>/media/... as Skraper 1.4.2 lays it out.
+  const snes = dirHandle('snes', {
+    'Super Metroid (USA).sfc': 'ROM',
+    media: {
+      images: { 'Super Metroid (USA).png': 'IMG' },
+      box2dfront: { 'Super Metroid (USA).png': 'BOX' },
+      marquees: { 'Super Metroid (USA).png': 'WHEEL' },
+      videos: { 'Super Metroid (USA).mp4': 'VID' },
+      manuals: { 'Super Metroid (USA).pdf': 'PDF' },
+    },
+  });
+  const m = await resolveGameMedia({ index: new MediaSourceIndex(), dir: snes, romFileName: 'Super Metroid (USA).sfc', fetchUrl: fakeFetch({}) });
+  assert.deepEqual(Object.keys(m).sort(), ['image', 'marquee', 'thumbnail', 'video']);
+  assert.equal(await (await m.thumbnail!.getFile()).text(), 'BOX');
+  assert.equal(await (await m.video!.getFile()).text(), 'VID');
+});
+
+test('resolveGameMedia: the library link wins, even from a separate libretro-thumbnails folder', async () => {
+  const snes = dirHandle('snes', {
+    'Chrono Trigger (USA).sfc': 'ROM',
+    images: { 'Chrono Trigger (USA)-thumb.png': 'OLD-THUMB' },
+  });
+  const boxPath = 'E:/libretro-thumbnails/Nintendo - Super Nintendo Entertainment System/Named_Boxarts/Chrono Trigger (USA).png';
+  const fetchUrl = fakeFetch({
+    [nativeUrl(boxPath)]: { body: 'LIB-BOX', type: 'image/png' },
+    'blob:snap-1': { body: 'SNAP', type: 'image/jpeg' },
+  });
+  const m = await resolveGameMedia({
+    index: new MediaSourceIndex(),
+    dir: snes,
+    romFileName: 'Chrono Trigger (USA).sfc',
+    row: { media: { boxart: nativeUrl(boxPath), snap: 'blob:snap-1' } },
+    fetchUrl,
+  });
+  assert.equal(await (await m.thumbnail!.getFile()).text(), 'LIB-BOX');
+  assert.equal(m.thumbnail!.ext, '.png');
+  assert.equal(await (await m.image!.getFile()).text(), 'SNAP');
+  assert.equal(m.image!.ext, '.jpg', 'blob: extension comes from Content-Type');
+});
+
+test('resolveGameMedia: media only in the database, no ROM folder handle', async () => {
+  const m = await resolveGameMedia({
+    index: new MediaSourceIndex(),
+    dir: undefined,
+    romFileName: 'Sonic (USA).md',
+    row: { boxArtUrl: nativeUrl('D:/Roms/megadrive/media/box2dfront/Sonic (USA).png') },
+    fetchUrl: fakeFetch({ [nativeUrl('D:/Roms/megadrive/media/box2dfront/Sonic (USA).png')]: { body: 'B', type: 'image/png' } }),
+  });
+  assert.deepEqual(Object.keys(m), ['thumbnail']);
+});
+
+test('resolveGameMedia: a dead database link or gamelist path falls back to files by name', async () => {
+  const gb = dirHandle('gb', {
+    'gamelist.xml': `<gameList><game><path>./Tetris (World).gb</path><image>./downloaded_images/gone.png</image></game></gameList>`,
+    'Tetris (World).gb': 'ROM',
+    media: { images: { 'Tetris (World).png': 'REAL' } },
+  });
+  const m = await resolveGameMedia({
+    index: new MediaSourceIndex(),
+    dir: gb,
+    romFileName: 'Tetris (World).gb',
+    row: { media: { image: nativeUrl('C:/deleted/Tetris.png') } },
+    fetchUrl: fakeFetch({}),
+  });
+  assert.equal(await (await m.image!.getFile()).text(), 'REAL');
+});
+
+test('resolveGameMedia: count over a library matches what is resolvable', async () => {
+  // 3 игры: у одной медиа в media/*, у другой только ссылка в базе, у третьей ничего.
+  // 3 games: one has media in media/*, one only a database link, one nothing.
+  const psx = dirHandle('psx', {
+    'A.chd': 'R',
+    'B.chd': 'R',
+    'C.chd': 'R',
+    media: { images: { 'A.png': 'A' } },
+  });
+  const fetchUrl = fakeFetch({ [nativeUrl('F:/covers/B.png')]: { body: 'B', type: 'image/png' } });
+  const rows = [
+    { file: 'A.chd', row: {} },
+    { file: 'B.chd', row: { boxArtUrl: nativeUrl('F:/covers/B.png') } },
+    { file: 'C.chd', row: { boxArtUrl: 'https://example.com/C.png' } },
+  ];
+  const index = new MediaSourceIndex();
+  let found = 0;
+  for (const r of rows) {
+    const m = await resolveGameMedia({ index, dir: psx, romFileName: r.file, row: r.row, fetchUrl });
+    if (Object.keys(m).length > 0) found++;
+  }
+  assert.equal(found, 2);
 });

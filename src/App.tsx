@@ -7,6 +7,7 @@ import {
   type AppSettings,
   type LibraryViewMode,
 } from './utils/appSettings';
+import { mergeSessionRowIntoDbRow } from './utils/sessionRowMerge';
 import {
   FolderOpen,
   Download,
@@ -210,11 +211,13 @@ import {
   isInPatchFolder,
   isModded,
   linkPatchesToRom,
+  needsFullCrcForPatches,
   modTag,
   refineModWithDat,
   type PatchFileRef,
   type RomModInfo,
 } from './utils/romHacks';
+import { computeRomCrc } from './utils/patchRunner';
 import { isPatchFileName, readPatchInfo } from './utils/romPatcher';
 import { runRomCheck, type ChdVerifyAnswer, type NamedBlob, type RomCheckReport, type RomCheckTarget } from './utils/romCheck';
 import { nativePathOf } from './utils/nativeFs';
@@ -1333,6 +1336,16 @@ function detectConsoleFromPathAndExt(relPath: string, ext: string): string {
   return EXT_TO_DEFAULT_CONSOLE[ext] || 'arcade';
 }
 
+// Файл с данными рома (для набора .cue/.gdi — первый трек), как в inspectFileObject.
+// The ROM payload file (first track for a .cue/.gdi set), as in inspectFileObject.
+function payloadFilesByRel(
+  entries: Array<{ file: File; relPath: string; companionFiles?: File[] }>
+): Map<string, File> {
+  const map = new Map<string, File>();
+  for (const e of entries) map.set(e.relPath, e.companionFiles?.[0] || e.file);
+  return map;
+}
+
 function analyzeSubfolderContext(relPath: string): {
   sourceSubfolder: string;
   isRusFolder: boolean;
@@ -2263,8 +2276,9 @@ export function App() {
       videoUrl: isDeadOrLocalBlobUrl(r.videoUrl) ? undefined : r.videoUrl,
     }));
 
-    // 1. Check Native Desktop Host local disk resolver (/api/native/fs/resolve-media)
-    // Priority: first 80 items immediately so visible screen paints instantly (<50ms)
+    // 1. Локальные медиа через Go (/api/native/fs/resolve-media): картинки по видам, как у Библиотеки.
+    // Один обход папки на запрос, поэтому отправляем все строки сразу.
+    // 1. Local media via Go: images by kind, like the Library. One folder walk per request, so all rows go at once.
     const afterNative = [...cleanedRows];
     if (isNativeDesktopHost) {
       try {
@@ -2273,31 +2287,31 @@ export function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             libraryPath: libraryPathHint || dbState.masterLibraryPath || selectedFolderName,
-            items: cleanedRows.slice(0, 80).map((r) => ({
+            items: cleanedRows.map((r) => ({
               id: r.id,
               title: r.title,
               oldFile: r.oldFile,
               cleanFile: r.cleanFile,
-              consoleShort: r.consoleShort,
-              relativePath: r.relativePath || '',
             })),
           }),
         });
         if (resp.ok) {
           const data = await resp.json();
-          const map = new Map<string, { boxArtUrl?: string; videoUrl?: string }>();
+          const map = new Map<string, { boxArtUrl?: string; videoUrl?: string; media?: MediaSet }>();
           for (const it of data?.results || []) {
             map.set(it.id, it);
           }
-          for (let i = 0; i < Math.min(80, afterNative.length); i++) {
+          for (let i = 0; i < afterNative.length; i++) {
             const m = map.get(afterNative[i].id);
-            if (m) {
-              afterNative[i] = {
-                ...afterNative[i],
-                boxArtUrl: m.boxArtUrl || afterNative[i].boxArtUrl,
-                videoUrl: m.videoUrl || afterNative[i].videoUrl,
-              };
-            }
+            if (!m) continue;
+            const row = afterNative[i];
+            const media = m.media ? { ...(stripBlobMedia(row.media) || {}), ...m.media } : row.media;
+            afterNative[i] = {
+              ...row,
+              media,
+              boxArtUrl: (m.media ? preferredCoverUrl(media || {}) : undefined) || m.boxArtUrl || row.boxArtUrl,
+              videoUrl: m.videoUrl || row.videoUrl,
+            };
           }
         }
       } catch {}
@@ -2878,7 +2892,10 @@ export function App() {
   // Patches from patch/: BPS and UPS store source and target CRC32, used to link ROMs and patches.
   const linkScannedPatches = async (
     inspected: ScannedRomFile[],
-    patchFiles: Array<{ file: File; relPath: string }>
+    patchFiles: Array<{ file: File; relPath: string }>,
+    // Файл с данными рома по relativePath: для ромов больше 16 МБ считаем полный CRC32.
+    // ROM payload file by relativePath: ROMs over 16 MB get a full CRC32.
+    payloadByRel?: Map<string, File>
   ) => {
     if (patchFiles.length === 0) return;
     const patchRefs: PatchFileRef[] = [];
@@ -2892,17 +2909,30 @@ export function App() {
           relativePath: p.relPath,
           sourceCrc32: info.sourceCrc32,
           targetCrc32: info.targetCrc32,
+          sourceSize: info.sourceSize,
+          targetSize: info.targetSize,
         });
       } catch {}
     }
+    let fullHashed = 0;
     for (let k = 0; k < inspected.length; k++) {
       const it = inspected[k];
       if (!it.mod) continue;
+      const crcs: Array<string | undefined> = [it.crc32, it.headerlessCrc32];
+      const payload = payloadByRel?.get(it.relativePath);
+      if (payload && needsFullCrcForPatches(payload.size, patchRefs)) {
+        try {
+          const full = await computeRomCrc(payload);
+          crcs.push(full.crc, full.headerless);
+          fullHashed++;
+        } catch {}
+      }
       inspected[k] = {
         ...it,
-        mod: linkPatchesToRom(it.mod, [it.crc32, it.headerlessCrc32], patchRefs),
+        mod: linkPatchesToRom(it.mod, crcs, patchRefs),
       };
     }
+    if (fullHashed > 0) addLog(tf('app.scan.patchFullCrc', { count: fullHashed }));
     addLog(tf('app.scan.patchesFound', { count: patchRefs.length }));
   };
 
@@ -4063,7 +4093,7 @@ export function App() {
         }
       }
 
-      await linkScannedPatches(inspected, discoveredPatches);
+      await linkScannedPatches(inspected, discoveredPatches, payloadFilesByRel(pairedDiscovered));
 
       // Сохранения рядом с ромами: число видов у каждой игры и итог в журнал.
       // Saves next to ROMs: how many kinds each game has, plus a log summary.
@@ -4296,7 +4326,7 @@ export function App() {
       }
     }
 
-    await linkScannedPatches(inspected, fallbackPatches);
+    await linkScannedPatches(inspected, fallbackPatches, payloadFilesByRel(pairedDiscovered));
 
     const deduplicatedIncoming = deduplicateAcrossSubfolders(
       inspected,
@@ -10051,41 +10081,7 @@ export function App() {
       saveCount: r.saveCount || undefined,
     };
     if (!r.dbRow) return row;
-    // Ром взят из базы без скана: поля, которых у рома нет (жанр, год, ручные правки, PortMaster),
-    // сохраняем из записи, а меняем только то, что операции могли поменять у файла.
-    // ROM taken from the database without a scan: fields the ROM lacks (genre, year, manual edits,
-    // PortMaster) are kept from the record; only what operations may change on the file is replaced.
-    return {
-      ...r.dbRow,
-      id: row.id,
-      title: row.title,
-      oldFile: row.oldFile,
-      cleanFile: row.cleanFile,
-      relativePath: row.relativePath,
-      size: row.size,
-      totalBytes: row.totalBytes,
-      crc32: row.crc32 || r.dbRow.crc32,
-      boxArtUrl: row.boxArtUrl,
-      videoUrl: row.videoUrl,
-      status: row.status || r.dbRow.status,
-      fileObj: row.fileObj,
-      companionFiles: row.companionFiles,
-      cueText: row.cueText,
-      trackCount: row.trackCount,
-      sourceExt: row.sourceExt,
-      isMultiDisc: row.isMultiDisc,
-      discCount: row.discCount,
-      discs: row.discs,
-      multiDiscFolderName: row.multiDiscFolderName,
-      m3uFileName: row.m3uFileName,
-      titleSource: row.titleSource || r.dbRow.titleSource,
-      titleNote: row.titleNote,
-      modKind: row.modKind,
-      modTag: row.modTag,
-      modLang: row.modLang,
-      modNote: row.modNote,
-      saveCount: row.saveCount,
-    };
+    return mergeSessionRowIntoDbRow(row, r.dbRow);
   };
 
   renderCountRef.current++;

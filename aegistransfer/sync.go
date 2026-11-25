@@ -44,7 +44,7 @@ func skipLocal(name string, dir bool) bool {
 		return strings.HasPrefix(low, ".aegis") || low == "$recycle.bin" || low == "system volume information"
 	}
 	return low == "thumbs.db" || low == "desktop.ini" || low == ".ds_store" || strings.HasSuffix(low, PartSuffix) ||
-		strings.HasPrefix(low, "._")
+		strings.HasPrefix(low, "._") || strings.HasPrefix(low, ".aegis")
 }
 
 // ScanLocal собирает файлы папки сборки / lists the files of a build folder.
@@ -111,7 +111,7 @@ type Snapshot struct {
 	ProfileName string      `json:"profileName"`
 	LocalDir    string      `json:"localDir"`
 	RemoteDir   string      `json:"remoteDir"`
-	State       string      `json:"state"` // connecting, planning, uploading, done, failed, cancelled
+	State       string      `json:"state"` // connecting, planning, uploading, saves, done, failed, cancelled
 	Phase       string      `json:"phase,omitempty"`
 	Scanned     int         `json:"scanned"`
 	TotalFiles  int         `json:"totalFiles"`  // файлов в сборке / files in the build
@@ -130,6 +130,10 @@ type Snapshot struct {
 	ErrorCode   string      `json:"errorCode,omitempty"`
 	Error       string      `json:"error,omitempty"`
 	Errors      []FileError `json:"errors,omitempty"`
+	// SyncSaves — сверка сохранений включена (есть связи с библиотекой).
+	// SyncSaves: save sync is on (there are links to the library).
+	SyncSaves bool      `json:"syncSaves"`
+	Saves     SaveStats `json:"saves"`
 }
 
 // Job — одна заливка / one upload run.
@@ -189,19 +193,21 @@ func (j *Job) fileError(rel string, err error) {
 // Dialer открывает новое подключение / opens a new connection.
 type Dialer func(ctx context.Context) (Remote, error)
 
-// Start запускает заливку localDir → remoteDir в фоне.
-// Start runs the localDir → remoteDir upload in the background.
-func Start(parent context.Context, id string, p Profile, localDir string, dial Dialer) *Job {
+// Start запускает заливку localDir → remoteDir в фоне. links — связи ромов с библиотекой для
+// сверки сохранений (пусто — без сверки).
+// Start runs the localDir → remoteDir upload in the background. links tie ROMs to the library
+// for the save sync (empty means no sync).
+func Start(parent context.Context, id string, p Profile, localDir string, dial Dialer, links ...SaveLink) *Job {
 	ctx, cancel := context.WithCancel(parent)
 	j := &Job{cancel: cancel, done: make(chan struct{})}
 	j.s = Snapshot{
 		ID: id, ProfileID: p.ID, ProfileName: p.Name, LocalDir: localDir, RemoteDir: p.RemoteDir,
-		State: "connecting", StartedAt: time.Now(), FreeBytes: -1,
+		State: "connecting", StartedAt: time.Now(), FreeBytes: -1, SyncSaves: len(links) > 0,
 	}
 	go func() {
 		defer close(j.done)
 		defer cancel()
-		err := run(ctx, j, localDir, p.RemoteDir, dial)
+		err := run(ctx, j, localDir, p.RemoteDir, dial, links)
 		now := time.Now()
 		j.set(func(s *Snapshot) {
 			s.FinishedAt = &now
@@ -292,7 +298,27 @@ type plannedFile struct {
 	resumeFrom int64
 }
 
-func run(ctx context.Context, j *Job, localDir, remoteDir string, dial Dialer) error {
+// canResume: можно ли дописывать файл с середины (у WebDAV нельзя).
+// canResume: can a file be appended from the middle (not with WebDAV).
+func canResume(r Remote) bool {
+	if cr, ok := r.(interface{ CanResume() bool }); ok {
+		return cr.CanResume()
+	}
+	return true
+}
+
+// openWriteSized открывает запись, сообщая размер, если устройству это нужно.
+// openWriteSized opens a write, passing the size when the device needs it.
+func openWriteSized(r Remote, p string, offset, size int64) (io.WriteCloser, error) {
+	if sw, ok := r.(interface {
+		OpenWriteSize(p string, size int64) (io.WriteCloser, error)
+	}); ok && offset <= 0 {
+		return sw.OpenWriteSize(p, size)
+	}
+	return r.OpenWrite(p, offset)
+}
+
+func run(ctx context.Context, j *Job, localDir, remoteDir string, dial Dialer, links []SaveLink) error {
 	files, err := ScanLocal(localDir)
 	if err != nil {
 		return err
@@ -301,9 +327,11 @@ func run(ctx context.Context, j *Job, localDir, remoteDir string, dial Dialer) e
 
 	c := &conn{ctx: ctx, dial: dial, job: j}
 	defer c.drop()
-	if _, err := c.get(); err != nil {
+	first, err := c.get()
+	if err != nil {
 		return err
 	}
+	resumable := canResume(first)
 
 	// Корень папки ромов должен быть: если его нет, скорее всего не та карта или прошивка.
 	// The ROM root must exist: if not, it is likely the wrong card or firmware.
@@ -347,11 +375,15 @@ func run(ctx context.Context, j *Job, localDir, remoteDir string, dial Dialer) e
 		}
 		name := path.Base(f.Rel)
 		re, exists := entries[name]
-		if NeedsUpload(f, re, exists) {
+		// Сохранение, которое уже есть на приставке, зеркало не перезаписывает: там может быть
+		// игра новее. Его сверяет шаг сохранений. / A save already on the handheld is never
+		// overwritten by the mirror: it may hold newer progress. The save step reconciles it.
+		saveOnDevice := exists && isSaveLike(name)
+		if !saveOnDevice && NeedsUpload(f, re, exists) {
 			pf := plannedFile{LocalFile: f, remote: path.Join(remoteDir, f.Rel)}
 			// Докачка, только если кусок новее локального файла (иначе он от старой версии).
 			// Resume only when the part is newer than the local file (else it is from an old version).
-			if part, ok := entries[name+PartSuffix]; ok && !part.IsDir && part.Size > 0 && part.Size < f.Size &&
+			if part, ok := entries[name+PartSuffix]; resumable && ok && !part.IsDir && part.Size > 0 && part.Size < f.Size &&
 				part.ModTime.After(f.ModTime) {
 				pf.resumeFrom = part.Size
 			}
@@ -366,10 +398,30 @@ func run(ctx context.Context, j *Job, localDir, remoteDir string, dial Dialer) e
 		})
 	}
 
-	if len(plan) == 0 {
-		return nil
+	if len(plan) > 0 {
+		if err := uploadPlan(ctx, c, j, plan, need, remoteDir); err != nil {
+			return err
+		}
 	}
+	if len(links) > 0 {
+		j.set(func(s *Snapshot) { s.State = "saves"; s.Current = "" })
+		if err := syncSaves(c, j, localDir, remoteDir, links, time.Now()); err != nil {
+			return err
+		}
+	}
+	j.mu.Lock()
+	failed, saveFailed := j.s.Failed, j.s.Saves.Failed
+	j.mu.Unlock()
+	if failed > 0 {
+		return coded(CodeOther, fmt.Errorf("%d files were not uploaded", failed))
+	}
+	if saveFailed > 0 {
+		return coded(CodeOther, fmt.Errorf("%d save files were not synced", saveFailed))
+	}
+	return nil
+}
 
+func uploadPlan(ctx context.Context, c *conn, j *Job, plan []plannedFile, need int64, remoteDir string) error {
 	// Место на устройстве / space on the device.
 	var free int64 = -1
 	_ = c.retry(func(r Remote) error { free = r.FreeBytes(remoteDir); return nil })
@@ -406,12 +458,6 @@ func run(ctx context.Context, j *Job, localDir, remoteDir string, dial Dialer) e
 		}
 		consecutive = 0
 		j.set(func(s *Snapshot) { s.Uploaded++ })
-	}
-	j.mu.Lock()
-	failed := j.s.Failed
-	j.mu.Unlock()
-	if failed > 0 {
-		return coded(CodeOther, fmt.Errorf("%d files were not uploaded", failed))
 	}
 	return nil
 }
@@ -453,8 +499,15 @@ func uploadOne(ctx context.Context, c *conn, j *Job, pf plannedFile, madeDirs ma
 			}
 			madeDirs[dir] = true
 		}
-		// После обрыва узнаём, сколько реально дошло. / After a drop, check what actually arrived.
-		if offset > 0 {
+		if !canResume(r) {
+			// Без докачки файл каждый раз идёт с начала. / Without resume the file restarts from zero.
+			delta := -counted
+			counted, offset = 0, 0
+			if delta != 0 {
+				j.set(func(s *Snapshot) { s.BytesDone += delta })
+			}
+		} else if offset > 0 {
+			// После обрыва узнаём, сколько реально дошло. / After a drop, check what actually arrived.
 			if st, err := r.Stat(part); err == nil && !st.IsDir && st.Size <= pf.Size {
 				offset = st.Size
 			} else {
@@ -475,7 +528,7 @@ func uploadOne(ctx context.Context, c *conn, j *Job, pf plannedFile, madeDirs ma
 				return err
 			}
 		}
-		dst, err := r.OpenWrite(part, offset)
+		dst, err := openWriteSized(r, part, offset, pf.Size-offset)
 		if err != nil {
 			return err
 		}
@@ -524,7 +577,7 @@ func Probe(r Remote, remoteDir string) (ProbeResult, error) {
 		return res, coded(CodeRemoteMissing, fmt.Errorf("%s is not a folder", remoteDir))
 	}
 	test := path.Join(remoteDir, ".aegis-write-test"+PartSuffix)
-	w, err := r.OpenWrite(test, 0)
+	w, err := openWriteSized(r, test, 0, int64(len("AegisROM")))
 	if err != nil {
 		return res, err
 	}

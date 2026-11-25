@@ -8,9 +8,10 @@ type Dict = Record<string, string>;
 const EN: Dict = {
   'wifi.btn': 'Upload over Wi-Fi',
   'wifi.title': 'Upload a build over Wi-Fi',
-  'wifi.subtitle': 'SFTP or SMB to the handheld, without taking the card out. Only new and changed files are sent.',
+  'wifi.subtitle':
+    'SFTP, SMB or WebDAV to the handheld, without taking the card out. Only new and changed files are sent; saves are reconciled with the library.',
   'wifi.noBackend':
-    'Uploading over Wi-Fi needs the desktop app (AegisROM.exe): the browser cannot open SFTP or SMB connections.',
+    'Uploading over Wi-Fi needs the desktop app (AegisROM.exe): the browser cannot open SFTP, SMB or WebDAV connections.',
   'wifi.devices': 'Devices',
   'wifi.noDevices': 'No devices yet. Add one from a firmware template below.',
   'wifi.add': 'Add device',
@@ -40,6 +41,8 @@ const EN: Dict = {
   'wifi.f.share': 'Share name',
   'wifi.f.remoteDir': 'ROM folder on the device',
   'wifi.f.remoteDirSmb': 'ROM folder inside the share',
+  'wifi.f.remoteDirDav': 'ROM folder path on the server (e.g. /roms or /dav/roms)',
+  'wifi.f.tls': 'HTTPS (the server needs a valid certificate)',
   'wifi.f.alt': 'Other usual folders:',
   'wifi.f.secure':
     'The password is kept in the system password store (Windows Credential Manager, macOS Keychain), not in AegisROM files.',
@@ -74,6 +77,14 @@ const EN: Dict = {
   'wifi.state.connecting': 'Connecting…',
   'wifi.state.planning': 'Comparing with the device: {done} of {total} files',
   'wifi.state.uploading': 'Uploading {done} of {total} files',
+  'wifi.state.saves': 'Checking saves: {roms} games',
+  'wifi.saves.toggle': 'Sync saves (.srm, .sav, memory cards).',
+  'wifi.saves.hint':
+    'A save on one side only is copied to the other. If both differ, the newer one wins and both versions stay in the library history. Save states are not sent. Needs a build exported from this app with “Saves travel with the build” on.',
+  'wifi.saves.noLinks':
+    'No saves checked: this folder has no links to the library. Export the build again with “Saves travel with the build” on, then upload.',
+  'wifi.saves.stats':
+    'Saves: {roms} games checked · to the handheld {toDevice} · to the library {fromDevice} · differed {conflicts} · errors {failed}',
   'wifi.state.done': 'Done: {uploaded} files uploaded, {skipped} already there.',
   'wifi.state.failed': 'Stopped with an error.',
   'wifi.state.cancelled': 'Stopped. Run it again: finished files are skipped and the unfinished one resumes.',
@@ -86,10 +97,11 @@ const EN: Dict = {
   'wifi.log.start': 'Wi-Fi: uploading {local} to {name} ({remote})',
   'wifi.log.done': 'Wi-Fi: {name} — uploaded {uploaded}, skipped {skipped}, errors {failed}.',
   'wifi.log.failed': 'Wi-Fi: {name} — {err}',
+  'wifi.log.saves': 'Wi-Fi saves, {name}: to the handheld {toDevice}, to the library {fromDevice}, differed {conflicts}, errors {failed}.',
   'wifi.afterExport': 'Build exported. Upload it to a handheld over Wi-Fi?',
   'wifi.err.unreachable':
     'The device does not answer. Check that it is on, connected to the same Wi-Fi, and that the address is right.',
-  'wifi.err.refused': 'The device answers but the port is closed: SSH or Samba is not running on it.',
+  'wifi.err.refused': 'The device answers but the port is closed: SSH, Samba or WebDAV is not running on it.',
   'wifi.err.bad_host': 'Address not found. Enter the IP address shown in the device network settings.',
   'wifi.err.auth_failed': 'Wrong login or password.',
   'wifi.err.need_password': 'No password saved for this device. Edit the device and enter it.',
@@ -116,9 +128,10 @@ const EN: Dict = {
 const RU: Dict = {
   'wifi.btn': 'Залить по Wi-Fi',
   'wifi.title': 'Заливка сборки по Wi-Fi',
-  'wifi.subtitle': 'SFTP или SMB на приставку без извлечения карты. Едут только новые и изменённые файлы.',
+  'wifi.subtitle':
+    'SFTP, SMB или WebDAV на приставку без извлечения карты. Едут только новые и изменённые файлы, сохранения сверяются с библиотекой.',
   'wifi.noBackend':
-    'Заливка по Wi-Fi работает в десктоп-версии (AegisROM.exe): браузер не умеет подключаться по SFTP и SMB.',
+    'Заливка по Wi-Fi работает в десктоп-версии (AegisROM.exe): браузер не умеет подключаться по SFTP, SMB и WebDAV.',
   'wifi.devices': 'Устройства',
   'wifi.noDevices': 'Устройств пока нет. Добавьте по заготовке прошивки ниже.',
   'wifi.add': 'Добавить устройство',
@@ -148,6 +161,8 @@ const RU: Dict = {
   'wifi.f.share': 'Общая папка (share)',
   'wifi.f.remoteDir': 'Папка ромов на устройстве',
   'wifi.f.remoteDirSmb': 'Папка ромов внутри общей папки',
+  'wifi.f.remoteDirDav': 'Путь к папке ромов на сервере (например, /roms или /dav/roms)',
+  'wifi.f.tls': 'HTTPS (нужен действительный сертификат сервера)',
   'wifi.f.alt': 'Другие типичные папки:',
   'wifi.f.secure':
     'Пароль хранится в системном хранилище паролей (Диспетчер учётных данных Windows, Связка ключей macOS), а не в файлах AegisROM.',
@@ -182,6 +197,14 @@ const RU: Dict = {
   'wifi.state.connecting': 'Подключение…',
   'wifi.state.planning': 'Сверка с устройством: {done} из {total} файлов',
   'wifi.state.uploading': 'Заливка {done} из {total} файлов',
+  'wifi.state.saves': 'Сверка сохранений: {roms} игр',
+  'wifi.saves.toggle': 'Сверять сохранения (.srm, .sav, карты памяти).',
+  'wifi.saves.hint':
+    'Сохранение только с одной стороны копируется на другую. Если с обеих сторон разные, побеждает более новое, а обе версии остаются в истории библиотеки. Снимки состояний не едут. Нужна сборка, выгруженная из программы с включённым «Сохранения едут со сборкой».',
+  'wifi.saves.noLinks':
+    'Сохранения не сверялись: у этой папки нет связей с библиотекой. Выгрузите сборку ещё раз с включённым «Сохранения едут со сборкой», потом залейте.',
+  'wifi.saves.stats':
+    'Сохранения: проверено игр {roms} · на приставку {toDevice} · в библиотеку {fromDevice} · отличались {conflicts} · ошибок {failed}',
   'wifi.state.done': 'Готово: залито {uploaded} файлов, {skipped} уже были на месте.',
   'wifi.state.failed': 'Остановлено с ошибкой.',
   'wifi.state.cancelled': 'Остановлено. Запустите ещё раз: готовые файлы пропустятся, недокачанный докачается.',
@@ -194,10 +217,11 @@ const RU: Dict = {
   'wifi.log.start': 'Wi-Fi: заливка {local} на {name} ({remote})',
   'wifi.log.done': 'Wi-Fi: {name} — залито {uploaded}, пропущено {skipped}, ошибок {failed}.',
   'wifi.log.failed': 'Wi-Fi: {name} — {err}',
+  'wifi.log.saves': 'Wi-Fi, сохранения, {name}: на приставку {toDevice}, в библиотеку {fromDevice}, отличались {conflicts}, ошибок {failed}.',
   'wifi.afterExport': 'Сборка выгружена. Залить её на приставку по Wi-Fi?',
   'wifi.err.unreachable':
     'Устройство не отвечает. Проверьте, что оно включено, подключено к той же сети Wi-Fi и адрес указан верно.',
-  'wifi.err.refused': 'Устройство отвечает, но порт закрыт: на нём не запущен SSH или Samba.',
+  'wifi.err.refused': 'Устройство отвечает, но порт закрыт: на нём не запущен SSH, Samba или WebDAV.',
   'wifi.err.bad_host': 'Адрес не найден. Введите IP-адрес из сетевых настроек приставки.',
   'wifi.err.auth_failed': 'Неверный логин или пароль.',
   'wifi.err.need_password': 'Для устройства не сохранён пароль. Откройте «Изменить» и введите его.',

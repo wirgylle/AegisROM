@@ -1,7 +1,7 @@
-// Заливка сборки на приставку по Wi-Fi (SFTP, SMB) через локальный Go API (/api/native/transfer/*).
+// Заливка сборки на приставку по Wi-Fi (SFTP, SMB, WebDAV) через локальный Go API (/api/native/transfer/*).
 // Uploading a build to a handheld over Wi-Fi (SFTP, SMB) through the local Go API.
 
-export type TransferProtocol = 'sftp' | 'smb';
+export type TransferProtocol = 'sftp' | 'smb' | 'webdav';
 export type TransferAuth = 'password' | 'key' | 'guest';
 
 export interface TransferProfile {
@@ -18,6 +18,8 @@ export interface TransferProfile {
   remoteDir: string;
   hostKey?: string;
   localDir?: string;
+  /** WebDAV по https / WebDAV over https. */
+  tls?: boolean;
   hasPassword: boolean;
 }
 
@@ -38,7 +40,16 @@ export interface TransferFileError {
   message: string;
 }
 
-export type TransferState = 'connecting' | 'planning' | 'uploading' | 'done' | 'failed' | 'cancelled';
+export type TransferState = 'connecting' | 'planning' | 'uploading' | 'saves' | 'done' | 'failed' | 'cancelled';
+
+/** Итог сверки сохранений / save sync result. */
+export interface TransferSaveStats {
+  roms: number;
+  toDevice: number;
+  fromDevice: number;
+  conflicts: number;
+  failed: number;
+}
 
 export interface TransferJob {
   id: string;
@@ -64,6 +75,8 @@ export interface TransferJob {
   errorCode?: string;
   error?: string;
   errors?: TransferFileError[];
+  syncSaves?: boolean;
+  saves?: TransferSaveStats;
 }
 
 /** Ответ API с ошибкой / API error answer. */
@@ -137,8 +150,12 @@ export interface TestResult {
 export const testProfile = (id: string, trustHostKey?: string) =>
   call<TestResult>('test', { json: { id, trustHostKey } });
 
-export const startTransfer = (id: string, localPath: string) =>
-  call<{ job: TransferJob }>('start', { json: { id, localPath } }).then((d) => d.job);
+/** syncSaves: сверить сохранения по .aegis-saves-map.json сборки. / Reconcile saves via the build's links file. */
+export const startTransfer = (id: string, localPath: string, syncSaves = false) =>
+  call<{ job: TransferJob; saveLinks?: number }>('start', { json: { id, localPath, syncSaves } }).then((d) => ({
+    ...d.job,
+    saveLinks: d.saveLinks || 0,
+  }));
 
 export const transferStatus = () => call<{ job: TransferJob | null }>('status').then((d) => d.job);
 export const cancelTransfer = () => call('cancel', { json: {} });
@@ -217,7 +234,7 @@ export function formatBytes(n: number): string {
 /** Профиль по заготовке / profile from a preset. */
 export function profileFromPreset(p: TransferPreset): Partial<TransferProfile> {
   return {
-    name: p.label.replace(/\s*\((SFTP|SMB)\)$/, ''),
+    name: p.label.replace(/\s*\((SFTP|SMB|WebDAV)\)$/, ''),
     preset: p.id,
     protocol: p.protocol,
     user: p.user || '',
@@ -226,4 +243,22 @@ export function profileFromPreset(p: TransferPreset): Partial<TransferProfile> {
     remoteDir: p.remoteDir,
     host: '',
   };
+}
+
+/** Порт по умолчанию / default port. */
+export function defaultPort(p: Pick<TransferProfile, 'protocol' | 'tls'>): number {
+  if (p.protocol === 'smb') return 445;
+  if (p.protocol === 'webdav') return p.tls ? 443 : 80;
+  return 22;
+}
+
+/** Адрес папки ромов для показа / ROM folder address for display. */
+export function remoteLabel(p: TransferProfile): string {
+  const port = p.port ? `:${p.port}` : '';
+  if (p.protocol === 'smb') return `smb://${p.host}${port}/${p.share}/${p.remoteDir}`;
+  if (p.protocol === 'webdav') {
+    const user = p.auth === 'guest' || !p.user ? '' : `${p.user}@`;
+    return `${p.tls ? 'https' : 'http'}://${user}${p.host}${port}${p.remoteDir}`;
+  }
+  return `sftp://${p.user}@${p.host}${port}${p.remoteDir}`;
 }

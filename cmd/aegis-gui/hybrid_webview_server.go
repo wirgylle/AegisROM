@@ -330,6 +330,8 @@ func runHybridModernDesktopApp() bool {
 	}
 
 	appDir := getAegisAppDataDir()
+	// Своё окно или Edge (native_window.go). / Native window or Edge (native_window.go).
+	wantNativeWindow := decideNativeWindow(appDir)
 	shutdownCh := make(chan struct{}, 1)
 	var lastHeartbeatUnix int64 = time.Now().Unix()
 	touch := func() { atomic.StoreInt64(&lastHeartbeatUnix, time.Now().Unix()) }
@@ -499,90 +501,21 @@ func runHybridModernDesktopApp() bool {
 		})
 	})
 
+	// Медиа по видам (боксарт, скриншот, титул, баннер) из папки библиотеки: нужно своему окну,
+	// где нет handle'ов браузера. Правила как у Библиотеки (aegisapi/localmedia.go).
+	// Media by kind from the library folder, for the native window without browser handles.
 	mux.HandleFunc("/api/native/fs/resolve-media", func(w http.ResponseWriter, r *http.Request) {
 		atomic.StoreInt64(&lastHeartbeatUnix, time.Now().Unix())
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		var req struct {
-			LibraryPath string `json:"libraryPath"`
-			Items       []struct {
-				ID           string `json:"id"`
-				Title        string `json:"title"`
-				CleanFile    string `json:"cleanFile"`
-				OldFile      string `json:"oldFile"`
-				RelativePath string `json:"relativePath"`
-			} `json:"items"`
+			LibraryPath string                      `json:"libraryPath"`
+			Items       []aegisapi.ResolveMediaItem `json:"items"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "results": []interface{}{}})
 			return
 		}
-		rootDir := strings.TrimSpace(req.LibraryPath)
-		imageIndex := map[string]string{}
-		videoIndex := map[string]string{}
-		if rootDir != "" {
-			if st, err := os.Stat(rootDir); err == nil && st.IsDir() {
-				depth := 0
-				baseSep := strings.Count(filepath.Clean(rootDir), string(filepath.Separator))
-				_ = filepath.WalkDir(rootDir, func(p string, d os.DirEntry, walkErr error) error {
-					if walkErr != nil {
-						return nil
-					}
-					depth = strings.Count(filepath.Clean(p), string(filepath.Separator)) - baseSep
-					if d.IsDir() && depth > 4 {
-						return filepath.SkipDir
-					}
-					if d.IsDir() {
-						// Фон, карты, мануалы (папки Skraper) — не обложки. / Fan art, maps, manuals: not covers.
-						if depth > 0 && aegisapi.NonCoverMediaDirs[strings.ToLower(d.Name())] {
-							return filepath.SkipDir
-						}
-						return nil
-					}
-					ext := strings.ToLower(filepath.Ext(d.Name()))
-					base := strings.TrimSuffix(strings.ToLower(d.Name()), ext)
-					for _, suf := range []string{"-image", "-thumb", "-boxart", "-snap", "-marquee", "-banner", "-video"} {
-						base = strings.TrimSuffix(base, suf)
-					}
-					if ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".webp" {
-						if _, ok := imageIndex[base]; !ok {
-							imageIndex[base] = p
-						}
-					} else if ext == ".mp4" || ext == ".webm" {
-						if _, ok := videoIndex[base]; !ok {
-							videoIndex[base] = p
-						}
-					}
-					return nil
-				})
-			}
-		}
-
-		results := make([]map[string]string, 0, len(req.Items))
-		for _, it := range req.Items {
-			keys := []string{}
-			for _, cand := range []string{it.CleanFile, it.OldFile, it.Title} {
-				if cand == "" {
-					continue
-				}
-				base := strings.TrimSuffix(strings.ToLower(filepath.Base(cand)), strings.ToLower(filepath.Ext(cand)))
-				keys = append(keys, base)
-			}
-			imgHit := ""
-			vidHit := ""
-			for _, k := range keys {
-				if p, ok := imageIndex[k]; ok && imgHit == "" {
-					imgHit = "/api/native/fs/media?path=" + url.QueryEscape(p)
-				}
-				if p, ok := videoIndex[k]; ok && vidHit == "" {
-					vidHit = "/api/native/fs/media?path=" + url.QueryEscape(p)
-				}
-			}
-			results = append(results, map[string]string{
-				"id":        it.ID,
-				"boxArtUrl": imgHit,
-				"videoUrl":  vidHit,
-			})
-		}
+		results := aegisapi.ResolveLocalMedia(req.LibraryPath, req.Items, "/api/native/fs/media?path=")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "results": results})
 	})
 
@@ -590,10 +523,11 @@ func runHybridModernDesktopApp() bool {
 		atomic.StoreInt64(&lastHeartbeatUnix, time.Now().Unix())
 		filePath := r.URL.Query().Get("path")
 		ext := strings.ToLower(filepath.Ext(filePath))
-		if filePath == "" || (ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".webp" && ext != ".mp4" && ext != ".webm") {
+		if filePath == "" || !filepath.IsAbs(filePath) || (ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".webp" && ext != ".bmp" && ext != ".mp4" && ext != ".webm") {
 			http.Error(w, "Invalid media path", http.StatusBadRequest)
 			return
 		}
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		http.ServeFile(w, r, filePath)
 	})
 
@@ -1025,9 +959,12 @@ func runHybridModernDesktopApp() bool {
 	aegisapi.RegisterLibraryRoutes(mux, appDir, touch)
 	aegisapi.RegisterStorageRoutes(mux, appDir, touch)
 	aegisapi.RegisterVFSRoutes(mux, appDir, touch, aegisapi.VFSOptions{
-		PickFolder:   func(title string) (string, error) { return promptSelectFolderDialog(title, "") },
-		PreferNative: useNativeWindow(appDir),
+		PickFolder: func(title string) (string, error) { return promptSelectFolderDialog(title, "") },
+		// Только пока страница в своём окне: в Edge остаётся API браузера.
+		// Only while the page is in the native window: Edge keeps the browser API.
+		PreferNativeFunc: nativeWindowActive.Load,
 	})
+	registerWindowModeRoutes(mux, appDir)
 	// Заливка сборки по Wi-Fi (SFTP, SMB), пароли в Windows Credential Manager.
 	// Wi-Fi build upload (SFTP, SMB), passwords in Windows Credential Manager.
 	aegisapi.RegisterTransferRoutes(mux, appDir, touch, aegisapi.TransferOptions{})
@@ -1074,13 +1011,13 @@ func runHybridModernDesktopApp() bool {
 		time.Sleep(25 * time.Millisecond)
 	}
 
-	// Нативное окно Wails, если включено; при ошибке ниже откроется Edge.
-	// Native Wails window when enabled; on error Edge opens below.
-	if useNativeWindow(appDir) {
+	// Своё окно Wails по умолчанию; если оно не загрузило страницу, ниже откроется Edge.
+	// The native Wails window by default; if it never loaded the page, Edge opens below.
+	if wantNativeWindow {
 		if needsLegacyStorageMigration(appDir) {
 			migrateLegacyBrowserStorage(appDir, appURL, storageMigratedCh)
 		}
-		if err := runNativeWindow(mux, appDir); err == nil {
+		if loaded, _ := runNativeWindow(mux, appDir, shutdownCh); loaded {
 			_ = srv.Close()
 			return true
 		}

@@ -88,6 +88,7 @@ import {
   type CopyOutcome,
 } from '../utils/buildCopy';
 import { romStem, syncRomSavesWithDevice } from '../utils/saveFiles';
+import { type SaveMapEntry, saveMapEntryFor, writeSaveMap } from '../utils/saveMap';
 import {
   BUILD_REPORT_FILE,
   BuildCancelledError,
@@ -109,6 +110,7 @@ import {
 } from '../utils/buildQueue';
 import {
   MediaSourceIndex,
+  resolveGameMedia,
   buildGamelistXml,
   escapeXml,
   loadBuildExportOptions,
@@ -1049,28 +1051,36 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
     onAddLog?.(doneMsg);
   };
 
-  // Предварительная проверка: у скольких игр рядом с ромом есть медиа (для окна параметров).
-  // Pre-check: how many games have media next to the ROM (for the settings dialog).
+  // Медиа игры: те же источники, что у Библиотеки (ссылка из базы, gamelist.xml, папки рядом с ромом).
+  // A game's media: the same sources as the Library (database link, gamelist.xml, folders next to the ROM).
+  const findGameMedia = (index: MediaSourceIndex, item: (typeof conversionPlanRows)[number]) => {
+    const g = item.game;
+    const srcDir = g.parentHandle || g.discs?.[0]?.parentHandle;
+    const names = [g.m3uFileName, g.multiDiscFolderName, g.discs?.[0]?.oldFile, g.isMultiDisc ? '' : g.oldFile].filter(
+      (x): x is string => Boolean(x)
+    );
+    const primary = item.isMultiDisc ? names[0] || g.title : g.oldFile;
+    return resolveGameMedia({ index, dir: srcDir, romFileName: primary, extraStems: [...names, g.title], row: g });
+  };
+
+  // Предварительная проверка для окна параметров: у скольких игр медиа найдутся при выгрузке.
+  // Pre-check for the settings dialog: how many games will have media in the export.
   const checkMediaForPlan = async (): Promise<{ found: number; total: number }> => {
     const index = new MediaSourceIndex();
+    const items = conversionPlanRows.filter((r) => r.game.fileObj || r.game.discs?.some((d) => d.fileObj));
     let found = 0;
-    let total = 0;
-    for (const r of conversionPlanRows) {
-      const g = r.game;
-      if (!g.fileObj && !g.discs?.some((d) => d.fileObj)) continue;
-      total++;
-      const srcDir = g.parentHandle || g.discs?.[0]?.parentHandle;
-      if (!srcDir) continue;
-      const names = [g.m3uFileName, g.multiDiscFolderName, g.discs?.[0]?.oldFile, g.isMultiDisc ? '' : g.oldFile].filter(
-        (x): x is string => Boolean(x)
-      );
-      const primary = r.isMultiDisc ? names[0] || g.title : g.oldFile;
-      try {
-        const m = await index.find(srcDir, primary, [...names, g.title]);
-        if (Object.keys(m).length > 0) found++;
-      } catch {}
-    }
-    return { found, total };
+    let next = 0;
+    const worker = async () => {
+      while (next < items.length) {
+        const item = items[next++];
+        try {
+          const m = await findGameMedia(index, item);
+          if (Object.keys(m).length > 0) found++;
+        } catch {}
+      }
+    };
+    await Promise.all(Array.from({ length: 8 }, worker));
+    return { found, total: items.length };
   };
 
   // ==========================================================================
@@ -1116,6 +1126,8 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
     let mediaMissingCount = 0;
     // Сохранения со сборкой (шаг 7 плана 0.6.0). / Saves with the build (0.6.0 plan, step 7).
     const savesSync = { toDevice: 0, fromDevice: 0, conflicts: 0 };
+    // Связи ромов сборки с библиотекой для сохранений по Wi-Fi. / Build ROM ↔ library links for Wi-Fi saves.
+    const saveMapEntries: SaveMapEntry[] = [];
     const totalItems = conversionPlanRows.length;
     const exportedManifestItems: any[] = new Array(totalItems);
 
@@ -1234,17 +1246,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
       destStem: string
     ): Promise<Partial<Record<BuildMediaKind, string>>> => {
       const rel: Partial<Record<BuildMediaKind, string>> = {};
-      const g = item.game;
-      const srcDir = g.parentHandle || g.discs?.[0]?.parentHandle;
-      if (!srcDir) {
-        mediaMissingCount++;
-        return rel;
-      }
-      const names = [g.m3uFileName, g.multiDiscFolderName, g.discs?.[0]?.oldFile, g.isMultiDisc ? '' : g.oldFile].filter(
-        (x): x is string => Boolean(x)
-      );
-      const primary = item.isMultiDisc ? names[0] || g.title : g.oldFile;
-      const found = await mediaIndex.find(srcDir, primary, [...names, g.title]);
+      const found = await findGameMedia(mediaIndex, item);
       const targets = planMediaTargets(mediaLayout, selectedProfile.mediaFolders, opts.mediaKinds, found, destStem);
       if (targets.length === 0) {
         mediaMissingCount++;
@@ -1892,6 +1894,8 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
                 savesSync.fromDevice += sv.fromDevice;
                 savesSync.conflicts += sv.conflicts;
               } catch {}
+              const link = saveMapEntryFor(item.game.parentHandle, romStem(fileObj.name), currDir, res.entryFileName);
+              if (link) saveMapEntries.push(link);
             }
           } catch (itemErr: any) {
             actualResultStatus = noteTaskError(item.game.title, itemErr);
@@ -2057,6 +2061,9 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
       if (savesSync.toDevice + savesSync.fromDevice > 0) {
         onAddLog?.(`💾 ${tf('sv.bx.log', savesSync)}`);
       }
+      try {
+        await writeSaveMap(targetRootHandle, saveMapEntries);
+      } catch {}
 
       // ----------------------------------------------------------------------
       // PORTMASTER GAMES DEPLOYMENT (Unpack official .zip + copy game sources into exact required subfolder!)
@@ -2106,7 +2113,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
 
         const pmReadmeLines: string[] = [
           '==================================================================',
-          `AegisROM v0.6.1-dev (Beta) — PortMaster (${selectedProfile.shortName})`,
+          `AegisROM v0.6.2 (Beta) — PortMaster (${selectedProfile.shortName})`,
           '==================================================================',
           consoleLaunchNote,
           '',
@@ -2342,7 +2349,7 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
       '@echo off',
       'chcp 65001 >nul',
       'echo ============================================================================',
-      'echo  AegisROM v0.6.1-dev (Beta) - Real Build Converter & Folder Hierarchy Export',
+      'echo  AegisROM v0.6.2 (Beta) - Real Build Converter & Folder Hierarchy Export',
       `echo  Build: ${customBuildName} (${conversionPlanRows.length})`,
       `echo  Target: ${selectedProfile.name}`,
       'echo  NOTE: Never performs fake extension renaming!',

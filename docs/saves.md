@@ -51,7 +51,7 @@ snes/
 - Галочка «Сохранения едут со сборкой» в окне выгрузки (включена по умолчанию).
 - Игровые сохранения (без `.state*`) копируются рядом с ромом на устройство. При следующей выгрузке сохранение, которое новее, забирается обратно в библиотеку. Конфликт решается по времени, обе версии остаются в истории библиотеки. На устройство история не пишется.
 - Многодисковые игры пока не синхронизируются: RetroArch называет их сохранения по `.m3u`.
-- Выгрузка по Wi-Fi (шаги 5–6) делается отдельно и может вызвать ту же функцию `syncRomSavesWithDevice`.
+- По Wi-Fi (SFTP, SMB, WebDAV) сохранения сверяет Go по тем же правилам: `aegistransfer/saves.go`. Связи «ром в сборке → ром в библиотеке» выгрузка пишет в `.aegis-saves-map.json` в корне сборки (только нативные папки). Подробнее: [wifi-transfer.md](wifi-transfer.md).
 
 ### Без десктоп-версии
 В браузере без Go API сохранения остаются в профиле браузера, как раньше (подпись внизу окна запуска об этом говорит).
@@ -96,7 +96,7 @@ Names match RetroArch when it keeps saves in the content folder. For `.cue` imag
 - "Saves travel with the build" checkbox in the export dialog (on by default).
 - Game saves (no `.state*`) are copied next to the ROM on the device. On the next export the newer save comes back to the library; conflicts are resolved by time and both versions stay in the library history. No history is written to the device.
 - Multi-disc games are not synced yet: RetroArch names their saves after the `.m3u`.
-- Wi-Fi upload (steps 5–6) is a separate task and can call the same `syncRomSavesWithDevice`.
+- Over Wi-Fi (SFTP, SMB, WebDAV) Go reconciles saves with the same rules: `aegistransfer/saves.go`. The export writes "ROM in build → ROM in library" links to `.aegis-saves-map.json` at the build root (native folders only). See [wifi-transfer.md](wifi-transfer.md).
 
 ### Without the desktop app
 In a browser without the Go API, saves stay in the browser profile as before (the note at the bottom of the Play window says so).

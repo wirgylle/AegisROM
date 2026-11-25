@@ -73,8 +73,8 @@ If a SNES ROM has a 512-byte copier header and the patch was made for a headerle
 | IPS (including RLE and truncation) | yes |
 | UPS | yes, with CRC32 check |
 | BPS | yes, with CRC32 check and metadata |
-| xdelta (VCDIFF) | only without secondary compression. Patches made by `xdelta3` with default settings are usually compressed: the app will not apply them and will say so. You can recreate the patch with `xdelta3 -e -S none -s original result patch.xdelta`. Support for compressed patches is planned. |
+| xdelta (VCDIFF) | yes, including LZMA secondary compression (the `xdelta3` default) and DJW. FGK compression is not supported: recreate such a patch with `xdelta3 -e -S lzma -s original result patch.xdelta`. |
 
-- ROMs up to 512 MB; the whole file is read into memory.
-- Linking ROMs to patches in `patch/` uses the CRC32 of the first 16 MB of the ROM, so it does not work for ROMs over 16 MB.
+- No ROM size limit: the ROM is read from disk in pieces and the result is written to a temporary browser file, then saved from there. You need free disk space the size of the result.
+- For ROMs over 16 MB the scanner computes the full CRC32 only when `patch/` holds a BPS/UPS patch for exactly that size, so linking works for large images too.
 - IPS and xdelta do not store the ROM checksum, so whether a ROM fits cannot be checked in advance.

@@ -129,3 +129,70 @@ func TestTransferRoutes(t *testing.T) {
 		t.Fatalf("not deleted: %v", list)
 	}
 }
+
+// Сохранения по Wi-Fi: связи берутся из .aegis-saves-map.json, папка библиотеки только выбранная.
+// Saves over Wi-Fi: links come from .aegis-saves-map.json, the library folder must be picked.
+func TestTransferStartSyncsSaves(t *testing.T) {
+	data, device, build, lib, foreign := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+	if err := os.MkdirAll(filepath.Join(device, "roms"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	up := filepath.Join(build, "EASYROMS")
+	writeFile(t, filepath.Join(up, "gba", "A.gba"), 100)
+	writeFile(t, filepath.Join(up, "gba", "B.gba"), 100)
+	if err := os.WriteFile(filepath.Join(lib, "A (USA).sav"), []byte("lib A"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(foreign, "B.sav"), []byte("foreign"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := json.Marshal(map[string]any{"version": 1, "entries": []map[string]string{
+		{"rom": filepath.Join(up, "gba", "A.gba"), "libDir": lib, "libBase": "A (USA)"},
+		{"rom": filepath.Join(up, "gba", "B.gba"), "libDir": foreign, "libBase": "B"},
+	}})
+	if err := os.WriteFile(filepath.Join(build, aegistransfer.SaveMapFile), m, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	picks := []string{build, lib}
+	mux := http.NewServeMux()
+	RegisterVFSRoutes(mux, data, nil, VFSOptions{PickFolder: func(string) (string, error) {
+		p := picks[0]
+		picks = picks[1:]
+		return p, nil
+	}})
+	RegisterTransferRoutes(mux, data, nil, TransferOptions{
+		Secrets: &aegistransfer.MemorySecrets{},
+		Dial: func(ctx context.Context, p aegistransfer.Profile, pw, trust string) (aegistransfer.Remote, error) {
+			return aegistransfer.DirRemote{Root: device}, nil
+		},
+	})
+	transferCall(t, mux, "POST", "/api/native/vfs/pick", map[string]any{})
+	transferCall(t, mux, "POST", "/api/native/vfs/pick", map[string]any{})
+	out := transferCall(t, mux, "POST", "/api/native/transfer/profiles", map[string]any{
+		"profile": map[string]any{"name": "NAS", "protocol": "webdav", "host": "192.168.1.60", "auth": "guest", "remoteDir": "/roms"},
+	})
+	id := out["profile"].(map[string]any)["id"].(string)
+	out = transferCall(t, mux, "POST", "/api/native/transfer/start", map[string]any{"id": id, "localPath": up, "syncSaves": true})
+	if out["ok"] != true || out["saveLinks"].(float64) != 1 {
+		t.Fatalf("start: %v", out)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	var job map[string]any
+	for time.Now().Before(deadline) {
+		job = transferCall(t, mux, "GET", "/api/native/transfer/status", nil)["job"].(map[string]any)
+		if job["state"] == "done" || job["state"] == "failed" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if job["state"] != "done" || job["syncSaves"] != true || job["saves"].(map[string]any)["toDevice"].(float64) != 1 {
+		t.Fatalf("job: %v", job)
+	}
+	if b, _ := os.ReadFile(filepath.Join(device, "roms", "gba", "A.sav")); string(b) != "lib A" {
+		t.Fatalf("A.sav on device: %q", b)
+	}
+	if _, err := os.Stat(filepath.Join(device, "roms", "gba", "B.sav")); err == nil {
+		t.Fatal("save from an unpicked folder went to the device")
+	}
+}

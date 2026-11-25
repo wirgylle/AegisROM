@@ -325,6 +325,7 @@ func buildRomItem(rootFolder, fullPath, fileName string, size int64, ext, consol
 	revision := parseRevision(fileName)
 	compKey := BuildComparisonKey(cleanTitle)
 	isJunk := junkRegex.MatchString(fileName)
+	modKind := DetectRomModKind(fileName, fullPath)
 
 	meta, ok := ConsoleCatalog[consoleCode]
 	if !ok {
@@ -371,6 +372,8 @@ func buildRomItem(rootFolder, fullPath, fileName string, size int64, ext, consol
 	if isJunk {
 		status = "junk_bad_dump"
 		reason = "Битый дамп [b]"
+	} else if modKind != ModOriginal {
+		reason = modKeptReason(fullPath)
 	} else if isNumbered && !IsPureNumberOrGenericTitle(cleanTitle) {
 		reason = "Порядковый № -> " + cleanTitle
 	} else if isNumbered {
@@ -398,6 +401,7 @@ func buildRomItem(rootFolder, fullPath, fileName string, size int64, ext, consol
 		IsNumberedFile:  isNumbered,
 		Revision:        revision,
 		Status:          status,
+		ModKind:         modKind,
 		Is1G1RWinner:    !isJunk,
 		Reason:          reason,
 		MediaStatus:     mediaStatus,
@@ -415,6 +419,13 @@ func areCompanionDiscFiles(a, b RomItem) bool {
 		return false
 	}
 	return !strings.EqualFold(a.Extension, b.Extension)
+}
+
+func modKeptReason(path string) string {
+	if IsInHackFolder(path) {
+		return "Хак/перевод в hackroms/: не дубль оригинала"
+	}
+	return "Хак/перевод: не дубль оригинала, можно перенести в " + HackRomsDir + "/"
 }
 
 func DeduplicateAcrossSubfolders(items []RomItem, priority []string) []RomItem {
@@ -443,9 +454,11 @@ func DeduplicateAcrossSubfolders(items []RomItem, priority []string) []RomItem {
 		}
 	}
 
+	// Хаки и переводы — не дубли оригинала: в сравнение по названию не идут (точные копии по CRC отсеяны выше).
+	// Hacks and translations are not duplicates of the original: they skip title matching (exact CRC copies are removed above).
 	groups := make(map[string][]int)
 	for i, it := range items {
-		if it.Status == "verified" {
+		if it.Status == "verified" && it.ModKind == ModOriginal {
 			// Do not group unparsed numbered files together by title if their title is still a pure number!
 			if IsPureNumberOrGenericTitle(it.CleanTitle) {
 				continue
@@ -486,7 +499,7 @@ func DeduplicateAcrossSubfolders(items []RomItem, priority []string) []RomItem {
 
 	byConsole := make(map[string][]int)
 	for i, it := range items {
-		if it.Status == "verified" && !IsPureNumberOrGenericTitle(it.CleanTitle) {
+		if it.Status == "verified" && it.ModKind == ModOriginal && !IsPureNumberOrGenericTitle(it.CleanTitle) {
 			byConsole[it.ConsoleCode] = append(byConsole[it.ConsoleCode], i)
 		}
 	}

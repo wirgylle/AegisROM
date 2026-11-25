@@ -35,6 +35,7 @@ type RomInfo struct {
 	Region           string `json:"region"`
 	Revision         string `json:"revision,omitempty"`
 	Status           string `json:"status"`
+	ModKind          string `json:"mod_kind,omitempty"`
 	CloneGroup       string `json:"clone_group,omitempty"`
 	Is1G1RWinner     bool   `json:"is_1g1r_winner"`
 	QuarantineReason string `json:"quarantine_reason,omitempty"`
@@ -69,7 +70,11 @@ var extensionToPlatform = map[string]string{
 
 var regionRegex = regexp.MustCompile(`\((USA|Europe|Japan|World|Germany|France|Spain|Italy|Australia|En,Fr,De|En,Ja|Asia|Korea|Brazil)\)`)
 var revisionRegex = regexp.MustCompile(`\((Rev [0-9A-Z]+|v[0-9\.]+)\)`)
-var junkRegex = regexp.MustCompile(`\[(b[0-9]?|h[0-9]?|t[0-9]?|p[0-9]?|o[0-9]?)\]|\(Unl\)|\(Pirate\)`)
+
+// Битые дампы и пиратки. [h] (хак) и [t] (трейнер) — не мусор, см. mods.go; (Unl) — нелицензионная,
+// но рабочая игра. Как JUNK_REGEX во фронтенде. / Bad dumps and pirate copies. [h] (hack) and [t]
+// (trainer) are not junk, see mods.go; (Unl) is an unlicensed but working game. Same as the frontend.
+var junkRegex = regexp.MustCompile(`(?i)\[(b[0-9]*|p[0-9]*|o[0-9]*)\]|\((Pirate|Bootleg|Corrupt|Bad)\)`)
 
 func main() {
 	rootDir := flag.String("dir", ".", "Root directory of ROMs to scan")
@@ -257,12 +262,13 @@ func inspectAndHashFile(path string, info os.FileInfo, computeSHA1 bool) RomInfo
 	region := detectRegion(fileName)
 	revision := detectRevision(fileName)
 	isJunk := junkRegex.MatchString(fileName)
+	modKind := detectModKind(fileName, path)
 
 	status := "verified"
 	quarantine := ""
 	if isJunk {
 		status = "junk_bad_dump"
-		quarantine = "Bad dump or unauthorized hack detected"
+		quarantine = "Bad dump or pirate copy"
 	}
 
 	return RomInfo{
@@ -279,6 +285,7 @@ func inspectAndHashFile(path string, info os.FileInfo, computeSHA1 bool) RomInfo
 		Region:           region,
 		Revision:         revision,
 		Status:           status,
+		ModKind:          modKind,
 		CloneGroup:       cleanTitle,
 		Is1G1RWinner:     !isJunk,
 		QuarantineReason: quarantine,
@@ -288,7 +295,8 @@ func inspectAndHashFile(path string, info os.FileInfo, computeSHA1 bool) RomInfo
 func apply1G1R(roms []RomInfo, regionPriority []string) []RomInfo {
 	groups := make(map[string][]int)
 	for i, r := range roms {
-		if r.Status != "junk_bad_dump" {
+		// Хаки и переводы — не региональные клоны оригинала. / Hacks and translations are not regional clones.
+		if r.Status != "junk_bad_dump" && r.ModKind == "" {
 			groups[r.CloneGroup] = append(groups[r.CloneGroup], i)
 		}
 	}
@@ -392,4 +400,3 @@ func executeReorganize(roms []RomInfo, outRoot string) {
 		}
 	}
 }
-
