@@ -44,6 +44,9 @@ type VFSOptions struct {
 	// PreferNative tells the frontend to use this API even where the browser has
 	// its own File System Access API (the native window does this).
 	PreferNative bool
+	// PreferNativeFunc, если задан, решает на каждый запрос (Windows: своё окно или Edge-запасной).
+	// PreferNativeFunc, when set, decides per request (Windows: native window or the Edge fallback).
+	PreferNativeFunc func() bool
 }
 
 type vfsRoots struct {
@@ -232,7 +235,7 @@ func RegisterVFSRoutes(mux *http.ServeMux, dataDir string, touch func(), opts VF
 		writeJSONOK(w, map[string]any{
 			"roots":        roots.list(),
 			"canPick":      opts.PickFolder != nil,
-			"preferNative": opts.PreferNative,
+			"preferNative": opts.PreferNative || (opts.PreferNativeFunc != nil && opts.PreferNativeFunc()),
 			"separator":    string(filepath.Separator),
 		})
 	})

@@ -2276,8 +2276,9 @@ export function App() {
       videoUrl: isDeadOrLocalBlobUrl(r.videoUrl) ? undefined : r.videoUrl,
     }));
 
-    // 1. Check Native Desktop Host local disk resolver (/api/native/fs/resolve-media)
-    // Priority: first 80 items immediately so visible screen paints instantly (<50ms)
+    // 1. Локальные медиа через Go (/api/native/fs/resolve-media): картинки по видам, как у Библиотеки.
+    // Один обход папки на запрос, поэтому отправляем все строки сразу.
+    // 1. Local media via Go: images by kind, like the Library. One folder walk per request, so all rows go at once.
     const afterNative = [...cleanedRows];
     if (isNativeDesktopHost) {
       try {
@@ -2286,31 +2287,31 @@ export function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             libraryPath: libraryPathHint || dbState.masterLibraryPath || selectedFolderName,
-            items: cleanedRows.slice(0, 80).map((r) => ({
+            items: cleanedRows.map((r) => ({
               id: r.id,
               title: r.title,
               oldFile: r.oldFile,
               cleanFile: r.cleanFile,
-              consoleShort: r.consoleShort,
-              relativePath: r.relativePath || '',
             })),
           }),
         });
         if (resp.ok) {
           const data = await resp.json();
-          const map = new Map<string, { boxArtUrl?: string; videoUrl?: string }>();
+          const map = new Map<string, { boxArtUrl?: string; videoUrl?: string; media?: MediaSet }>();
           for (const it of data?.results || []) {
             map.set(it.id, it);
           }
-          for (let i = 0; i < Math.min(80, afterNative.length); i++) {
+          for (let i = 0; i < afterNative.length; i++) {
             const m = map.get(afterNative[i].id);
-            if (m) {
-              afterNative[i] = {
-                ...afterNative[i],
-                boxArtUrl: m.boxArtUrl || afterNative[i].boxArtUrl,
-                videoUrl: m.videoUrl || afterNative[i].videoUrl,
-              };
-            }
+            if (!m) continue;
+            const row = afterNative[i];
+            const media = m.media ? { ...(stripBlobMedia(row.media) || {}), ...m.media } : row.media;
+            afterNative[i] = {
+              ...row,
+              media,
+              boxArtUrl: (m.media ? preferredCoverUrl(media || {}) : undefined) || m.boxArtUrl || row.boxArtUrl,
+              videoUrl: m.videoUrl || row.videoUrl,
+            };
           }
         }
       } catch {}
