@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -133,21 +134,36 @@ func RegisterLibraryRoutes(mux *http.ServeMux, appDir string, touch func()) {
 		_, _ = w.Write(outBytes)
 	})
 
+	RegisterPortMasterInstallRoutes(mux, touch, nil)
+
 	mux.HandleFunc("/api/portmaster/download", func(w http.ResponseWriter, r *http.Request) {
 		targetURL := r.URL.Query().Get("url")
-		if targetURL == "" || (!strings.HasPrefix(targetURL, "https://github.com/PortsMaster/") && !strings.HasPrefix(targetURL, "https://raw.githubusercontent.com/PortsMaster/")) {
+		if !isPortMasterURL(targetURL) {
 			http.Error(w, "Invalid PortMaster download URL", http.StatusBadRequest)
 			return
 		}
-		httpClient := &http.Client{Timeout: 45 * time.Second}
+		touch()
+		// Крупные порты весят сотни МБ: общий таймаут 45 с обрывал их. Ждём заголовки
+		// не дольше минуты, само тело качаем без общего лимита.
+		// Big ports weigh hundreds of MB: a 45 s total timeout cut them off. Wait at most a
+		// minute for headers, download the body without a total limit.
+		httpClient := portMasterHTTPClient()
 		resp, err := httpClient.Get(targetURL)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
 		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			http.Error(w, fmt.Sprintf("PortMaster: HTTP %d", resp.StatusCode), http.StatusBadGateway)
+			return
+		}
 		w.Header().Set("Content-Type", "application/zip")
-		w.WriteHeader(resp.StatusCode)
+		// Размер нужен для полосы прогресса. / The size drives the progress bar.
+		if resp.ContentLength > 0 {
+			w.Header().Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
+		}
+		w.WriteHeader(http.StatusOK)
 		_, _ = io.Copy(w, resp.Body)
 	})
 

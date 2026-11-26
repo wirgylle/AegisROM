@@ -154,6 +154,8 @@ import type {
   SavedBuildRecord,
   SyncDiffEntry,
 } from '../types/aegis';
+import type { InstalledPortInfo } from './PortMasterTab';
+import type { PortInstallResult } from '../utils/portMasterInstall';
 
 export type FigmaConceptId = 'concept_a_sidebar' | 'concept_b_split' | 'concept_c_workbench';
 
@@ -276,6 +278,10 @@ export interface UnifiedGameRow {
   relativePath?: string;
   portMasterSlug?: string;
   portMasterDataPath?: string;
+  // Порт установлен в <библиотека>/ports/ (время установки и имя папки библиотеки).
+  // The port is installed into <library>/ports/ (install time and library folder name).
+  portMasterInstalledAt?: string;
+  portMasterRootName?: string;
   discNumber?: number;
   discCount?: number;
   isMultiDisc?: boolean;
@@ -1167,29 +1173,83 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     return slugs;
   }, [savedDatabases, activeDbId]);
 
+  const installedPorts = React.useMemo(() => {
+    const out: Record<string, InstalledPortInfo> = {};
+    const db = savedDatabases.find((d) => d.id === activeDbId) || savedDatabases[0];
+    for (const r of db?.rows || []) {
+      if (r.portMasterSlug && r.portMasterInstalledAt) {
+        out[r.portMasterSlug] = {
+          at: r.portMasterInstalledAt,
+          relativePath: r.relativePath || '',
+          rootName: r.portMasterRootName,
+        };
+      }
+    }
+    return out;
+  }, [savedDatabases, activeDbId]);
+
+  const buildPortMasterRow = (port: PortMasterGame): UnifiedGameRow => ({
+    id: `pm_lib_${port.slug}`,
+    title: port.title,
+    oldFile: `${port.slug}.sh`,
+    cleanFile: `${port.title}.sh`,
+    console: t('cat.portmasterName'),
+    consoleShort: 'PORTS',
+    bitness: '64-bit',
+    region: 'PORT',
+    genre: port.genres?.[0] || t('app.port.genreFallback'),
+    year: 2022,
+    size: port.readyToRun ? t('app.port.rtrSize') : t('app.port.dataSize'),
+    crc32: port.md5 ? port.md5.slice(0, 8).toUpperCase() : 'PORTMAST',
+    serial: `PM-${port.slug.toUpperCase().slice(0, 12)}`,
+    emulator: port.readyToRun ? 'PortMaster (PC / Box64 / LÖVE) ★' : 'PortMaster (WSL2 / PC) ★',
+    status: port.readyToRun ? t('app.port.rtrStatus') : t('app.port.needsDataStatus'),
+    boxArtUrl: port.coverUrl,
+    sourceExt: '.sh',
+    relativePath: `ports/${port.slug}.sh`,
+    portMasterSlug: port.slug,
+    portMasterDataPath: port.requiredDataTargetPath,
+  });
+
+  // Порт установлен: запись в библиотеке с настоящим путём к скрипту запуска (добавить или обновить).
+  // Port installed: a library record with the real launch script path (add or update).
+  const handlePortMasterInstalled = (
+    port: PortMasterGame,
+    res: PortInstallResult,
+    rootName: string
+  ) => {
+    const base = buildPortMasterRow(port);
+    const launcherFile = res.launcher.split('/').pop() || base.oldFile;
+    setSavedDatabases((prev) => {
+      const updated = prev.map((db, idx) => {
+        if (db.id !== activeDbId && !(activeDbId === '' && idx === 0)) return db;
+        const existing = db.rows.find((r) => r.portMasterSlug === port.slug || r.id === base.id);
+        const row: UnifiedGameRow = {
+          ...(existing || base),
+          oldFile: launcherFile,
+          cleanFile: launcherFile,
+          relativePath: res.relativePath,
+          portMasterDataPath: port.requiredDataTargetPath,
+          portMasterInstalledAt: new Date().toISOString(),
+          portMasterRootName: rootName,
+          status: t('pm.install.installedStatus'),
+        };
+        const rows = existing
+          ? db.rows.map((r) => (r === existing ? row : r))
+          : [row, ...db.rows];
+        return {
+          ...db,
+          updatedAt: new Date().toLocaleTimeString(locale, { hour12: false }),
+          rows,
+        };
+      });
+      persistDatabasesSafely(updated);
+      return updated;
+    });
+  };
+
   const handleAddPortMasterToLibrary = (port: PortMasterGame) => {
-    const newRow: UnifiedGameRow = {
-      id: `pm_lib_${port.slug}`,
-      title: port.title,
-      oldFile: `${port.slug}.sh`,
-      cleanFile: `${port.title}.sh`,
-      console: t('cat.portmasterName'),
-      consoleShort: 'PORTS',
-      bitness: '64-bit',
-      region: 'PORT',
-      genre: port.genres?.[0] || t('app.port.genreFallback'),
-      year: 2022,
-      size: port.readyToRun ? t('app.port.rtrSize') : t('app.port.dataSize'),
-      crc32: port.md5 ? port.md5.slice(0, 8).toUpperCase() : 'PORTMAST',
-      serial: `PM-${port.slug.toUpperCase().slice(0, 12)}`,
-      emulator: port.readyToRun ? 'PortMaster (PC / Box64 / LÖVE) ★' : 'PortMaster (WSL2 / PC) ★',
-      status: port.readyToRun ? t('app.port.rtrStatus') : t('app.port.needsDataStatus'),
-      boxArtUrl: port.coverUrl,
-      sourceExt: '.sh',
-      relativePath: `ports/${port.slug}.sh`,
-      portMasterSlug: port.slug,
-      portMasterDataPath: port.requiredDataTargetPath,
-    };
+    const newRow: UnifiedGameRow = buildPortMasterRow(port);
     let nextActionMsg = '';
     setSavedDatabases((prev) => {
       const updated = prev.map((db, idx) => {
@@ -3837,6 +3897,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
               onPortMasterCatalogLoaded={setPortMasterCatalog}
               libraryPortSlugs={libraryPortSlugs}
               onAddPortToLibrary={handleAddPortMasterToLibrary}
+              installedPorts={installedPorts}
+              onPortInstalled={handlePortMasterInstalled}
               libraryPath={effectiveLibraryPath}
               initialSubTab={envInitialSubTab}
             />

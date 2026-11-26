@@ -23,12 +23,31 @@ import {
   inferPortMasterPcTestPlan,
 } from '../utils/portMasterEngine';
 import { useI18n } from '../i18n/translations';
+import {
+  installPortMasterPort,
+  PORTS_DIR_NAME,
+  type PortInstallProgress,
+  type PortInstallResult,
+} from '../utils/portMasterInstall';
+import {
+  checkOrRequestHandlePermission,
+  loadDirectoryHandleRecord,
+} from '../utils/persistentHandles';
+
+/** Установленный порт: запись в библиотеке с путём. / Installed port: library record with a path. */
+export interface InstalledPortInfo {
+  at: string;
+  relativePath: string;
+  rootName?: string;
+}
 
 interface PortMasterTabProps {
   portMasterBuildSlugs: string[];
   onToggleBuildPort: (port: PortMasterGame) => void;
   libraryPortSlugs?: string[];
   onAddPortToLibrary?: (port: PortMasterGame) => void;
+  installedPorts?: Record<string, InstalledPortInfo>;
+  onPortInstalled?: (port: PortMasterGame, res: PortInstallResult, rootName: string) => void;
   isNativeDesktopHost?: boolean;
   emulatorCustomPaths?: Record<string, string>;
   libraryPath?: string;
@@ -45,6 +64,8 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
   onToggleBuildPort,
   libraryPortSlugs = [],
   onAddPortToLibrary,
+  installedPorts = {},
+  onPortInstalled,
   isNativeDesktopHost = false,
   emulatorCustomPaths = {},
   libraryPath = '',
@@ -64,7 +85,7 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
   const [rtrFilter, setRtrFilter] = useState<'all' | 'rtr' | 'needs_data' | 'in_build'>('all');
   const [consoleFilter, setConsoleFilter] = useState<string>('ALL');
   const [page, setPage] = useState<number>(1);
-  const [downloadingSlug, setDownloadingSlug] = useState<string | null>(null);
+  const [installState, setInstallState] = useState<Record<string, PortInstallProgress>>({});
   const [editingPathSlug, setEditingPathSlug] = useState<string | null>(null);
   const [draftPathValue, setDraftPathValue] = useState<string>('');
 
@@ -158,45 +179,92 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
     setPage(1);
   }, [searchQuery, rtrFilter, consoleFilter]);
 
-  const handleDownloadPortZip = async (port: PortMasterGame) => {
-    setDownloadingSlug(port.slug);
-    onAddLog?.(`⬇ ${tf('pm.dlStartLog', { title: port.title, id: port.id })}`);
-    try {
-      const url = `/api/portmaster/download?url=${encodeURIComponent(port.downloadUrl)}`;
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const blob = await resp.blob();
-      const objUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = objUrl;
-      a.download = port.id.endsWith('.zip') ? port.id : `${port.slug}.zip`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(objUrl), 4000);
+  const setPortProgress = (slug: string, p: PortInstallProgress | null) =>
+    setInstallState((prev) => {
+      const next = { ...prev };
+      if (p) next[slug] = p;
+      else delete next[slug];
+      return next;
+    });
 
-      const prevCfg = sourceConfigs[port.slug] || {
+  // Папка библиотеки: сохранённая (library_root / scan_root) или выбранная сейчас.
+  // Library folder: the saved one (library_root / scan_root) or one picked now.
+  const resolveLibraryRoot = async (): Promise<any | null> => {
+    for (const key of ['library_root', 'scan_root']) {
+      const rec = await loadDirectoryHandleRecord(key);
+      if (!rec?.handle) continue;
+      const perm = await checkOrRequestHandlePermission(rec.handle, 'readwrite', true);
+      if (perm === 'granted') return rec.handle;
+    }
+    const win = window as any;
+    if (typeof win.showDirectoryPicker !== 'function') return null;
+    try {
+      return await win.showDirectoryPicker({ mode: 'readwrite' });
+    } catch {
+      return null;
+    }
+  };
+
+  const installErrorText = (err: any): string => {
+    const raw = String(err?.message || err);
+    if (raw === 'empty-archive') return t('pm.install.errEmpty');
+    if (raw.startsWith('zip-invalid')) return t('pm.engine.invalidZip');
+    if (raw.startsWith('zip-no-decompression')) return t('pm.engine.noDecompStream');
+    if (raw.startsWith('zip-unsupported-method')) return tf('pm.install.errMethod', { detail: raw });
+    if (/NotAllowed|SecurityError/i.test(raw)) return t('pm.install.errAccess');
+    return raw;
+  };
+
+  // Одно действие: скачать → распаковать в <библиотека>/ports/ → данные игры → запись в библиотеке.
+  // One action: download → unpack into <library>/ports/ → game data → library record.
+  const handleInstallPort = async (port: PortMasterGame) => {
+    if (installState[port.slug] && !['done', 'error'].includes(installState[port.slug].phase)) return;
+    setPortProgress(port.slug, { phase: 'folder', pct: -1 });
+    const root = await resolveLibraryRoot();
+    if (!root) {
+      setPortProgress(port.slug, { phase: 'error', pct: -1, error: t('pm.install.noFolder') });
+      return;
+    }
+    const rootName = root.name || '';
+    onAddLog?.(`⬇ ${tf('pm.install.startLog', { title: port.title, path: `${rootName}/${PORTS_DIR_NAME}` })}`);
+    try {
+      const src = sourceConfigs[port.slug];
+      const res = await installPortMasterPort({
+        libraryRoot: root,
+        portUrl: port.downloadUrl,
         slug: port.slug,
-        localPathLabel: '',
-      };
-      onUpdateSourceConfig(port.slug, {
-        ...prevCfg,
-        downloadedZipAt: new Date().toLocaleTimeString(locale, { hour12: false }),
+        requiredDataTargetPath: port.requiredDataTargetPath,
+        dataSource: src && (src.dirHandle || src.files?.length) ? src : undefined,
+        onProgress: (p) => setPortProgress(port.slug, p),
       });
+      onPortInstalled?.(port, res, rootName);
       onAddLog?.(
-        `✔ ${tf('pm.dlDoneLog', {
-          file: a.download,
-          mb: (blob.size / (1024 * 1024)).toFixed(2),
-          target: port.requiredDataTargetPath,
-        })}`
+        `✔ ${tf('pm.install.doneLog', {
+          title: port.title,
+          files: res.files,
+          path: `${rootName}/${res.relativePath}`,
+        })}` +
+          (res.dataFiles > 0
+            ? ` ${tf('pm.install.dataCopiedLog', { count: res.dataFiles, path: port.requiredDataTargetPath })}`
+            : '')
       );
     } catch (err: any) {
-      onAddLog?.(
-        `⛔ ${tf('pm.dlErrLog', { title: port.title, err: String(err?.message || err) })}`
-      );
-    } finally {
-      setDownloadingSlug(null);
+      const msg = installErrorText(err);
+      setPortProgress(port.slug, { phase: 'error', pct: -1, error: msg });
+      onAddLog?.(`⛔ ${tf('pm.install.errLog', { title: port.title, err: msg })}`);
     }
+  };
+
+  const installLabel = (p: PortInstallProgress): string => {
+    const pct = p.pct >= 0 ? ` ${p.pct}%` : '';
+    if (p.phase === 'folder') return t('pm.install.phaseFolder');
+    if (p.phase === 'download') {
+      const mb = p.done ? ` · ${(p.done / (1024 * 1024)).toFixed(1)} ${t('size.mb')}` : '';
+      return `${t('pm.install.phaseDownload')}${pct}${mb}`;
+    }
+    if (p.phase === 'unpack') return `${t('pm.install.phaseUnpack')}${pct}`;
+    if (p.phase === 'data') return `${t('pm.install.phaseData')} ${p.done || 0}`;
+    return '';
   };
 
   const handlePickSourceFolder = async (port: PortMasterGame) => {
@@ -513,6 +581,9 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
             const srcCfg = sourceConfigs[port.slug];
             const sizeMB = port.sizeBytes > 0 ? `${(port.sizeBytes / (1024 * 1024)).toFixed(1)} ${t('size.mb')}` : 'ZIP';
             const isEditingHere = editingPathSlug === port.slug;
+            const installed = installedPorts[port.slug];
+            const inst = installState[port.slug];
+            const busy = !!inst && !['done', 'error'].includes(inst.phase);
 
             return (
               <div
@@ -578,9 +649,11 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
                       <span className="px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-bold">
                         {t('pm.targetFolder')} {port.requiredDataTargetPath}/
                       </span>
-                      {srcCfg?.downloadedZipAt && (
+                      {installed && (
                         <span className="px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-bold">
-                          ✔ {t('pm.downloadedAt')} {srcCfg.downloadedZipAt}
+                          ✔ {tf('pm.install.installedChip', {
+                            path: `${installed.rootName ? `${installed.rootName}/` : ''}${installed.relativePath}`,
+                          })}
                         </span>
                       )}
                       {srcCfg?.localPathLabel && (
@@ -592,7 +665,44 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
                   </div>
                 </div>
 
-                {/* Per-Game Action Bar: Download | Source Path | Instructions | Add to Build */}
+                {busy && inst && (
+                  <div
+                    className="h-1.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden"
+                    role="progressbar"
+                    aria-valuenow={inst.pct >= 0 ? inst.pct : undefined}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-label={installLabel(inst)}
+                  >
+                    <div
+                      className={`h-full bg-accent transition-all ${inst.pct < 0 ? 'w-1/3 animate-pulse' : ''}`}
+                      style={inst.pct >= 0 ? { width: `${inst.pct}%` } : undefined}
+                    />
+                  </div>
+                )}
+                {inst?.phase === 'error' && (
+                  <div className="p-2 rounded-lg border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-200 text-[11px] flex items-start justify-between gap-2">
+                    <span className="flex items-start gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />
+                      <span>{inst.error}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPortProgress(port.slug, null)}
+                      className="shrink-0 cursor-pointer"
+                      aria-label={t('pm.close')}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+                {installed && !port.readyToRun && !srcCfg?.localPathLabel && !busy && (
+                  <div className="text-[11px] text-amber-800 dark:text-amber-300">
+                    📁 {tf('pm.install.needsDataHint', { path: port.requiredDataTargetPath })}
+                  </div>
+                )}
+
+                {/* Per-Game Action Bar: Install | Source Path | Instructions | Add to Build */}
                 <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
                   {isEditingHere ? (
                     <div className="flex flex-1 flex-wrap items-center gap-1.5">
@@ -622,17 +732,29 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
                     <div className="flex flex-wrap items-center gap-1.5">
                       <button
                         type="button"
-                        onClick={() => handleDownloadPortZip(port)}
-                        disabled={downloadingSlug === port.slug}
-                        title={t('pm.downloadSiteTip')}
-                        className="bg-accent hover:bg-accent-hover text-white px-2.5 py-1.5 rounded-lg font-bold text-[11px] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        onClick={() => handleInstallPort(port)}
+                        disabled={busy}
+                        title={t('pm.install.tip')}
+                        className={`px-2.5 py-1.5 rounded-lg font-bold text-[11px] flex items-center gap-1.5 cursor-pointer disabled:opacity-70 ${
+                          installed && !busy
+                            ? 'bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-emerald-400 dark:border-emerald-700 text-emerald-800 dark:text-emerald-300'
+                            : 'bg-accent hover:bg-accent-hover text-white'
+                        }`}
                       >
-                        {downloadingSlug === port.slug ? (
+                        {busy ? (
                           <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        ) : installed ? (
+                          <PackageCheck className="w-3.5 h-3.5" />
                         ) : (
                           <Download className="w-3.5 h-3.5" />
                         )}
-                        <span>{downloadingSlug === port.slug ? t('pm.downloadingZip') : t('pm.downloadZipBtn')}</span>
+                        <span>
+                          {busy && inst
+                            ? installLabel(inst)
+                            : installed
+                            ? t('pm.install.reinstallBtn')
+                            : t('pm.install.btn')}
+                        </span>
                       </button>
 
                       <button
@@ -687,23 +809,20 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
                   )}
 
                   <div className="flex flex-wrap items-center gap-1.5">
-                    {onAddPortToLibrary && (() => {
-                      const inLib = libraryPortSlugs.includes(port.slug);
-                      return (
-                        <button
-                          type="button"
-                          onClick={() => onAddPortToLibrary(port)}
-                          className={`px-3 py-1.5 rounded-lg font-semibold text-[11px] flex items-center gap-1.5 cursor-pointer transition ${
-                            inLib
-                              ? 'bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-200 border border-blue-400 dark:border-blue-700'
-                              : 'bg-blue-600 text-white'
-                          }`}
-                        >
-                          <Library className="w-3.5 h-3.5" />
-                          <span>{inLib ? t('pm.inLibraryBtn') : t('pm.addLibraryBtn')}</span>
-                        </button>
-                      );
-                    })()}
+                    {/* В библиотеку порт попадает при установке; здесь его можно только убрать.
+                        A port enters the library on install; here it can only be removed. */}
+                    {onAddPortToLibrary && libraryPortSlugs.includes(port.slug) && (
+                      <button
+                        type="button"
+                        onClick={() => onAddPortToLibrary(port)}
+                        title={t('pm.install.removeFromLibraryTip')}
+                        className="group px-3 py-1.5 rounded-lg font-semibold text-[11px] flex items-center gap-1.5 cursor-pointer transition bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-200 border border-blue-400 dark:border-blue-700"
+                      >
+                        <Library className="w-3.5 h-3.5" />
+                        <span>{t('pm.inLibraryBtn')}</span>
+                        <X className="w-3 h-3 opacity-60 group-hover:opacity-100" />
+                      </button>
+                    )}
 
                     <button
                       type="button"
@@ -824,11 +943,18 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
             <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 flex items-center justify-between gap-2">
               <button
                 type="button"
-                onClick={() => handleDownloadPortZip(guidePort)}
-                className="bg-accent hover:bg-accent-hover text-white px-3.5 py-2 rounded-xl font-bold flex items-center gap-1.5 cursor-pointer"
+                onClick={() => handleInstallPort(guidePort)}
+                disabled={!!installState[guidePort.slug] && !['done', 'error'].includes(installState[guidePort.slug].phase)}
+                className="bg-accent hover:bg-accent-hover text-white px-3.5 py-2 rounded-xl font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-70"
               >
                 <Download className="w-4 h-4" />
-                <span>{t('pm.guideModal.downloadFilesBtn')} ({guidePort.id})</span>
+                <span>
+                  {installState[guidePort.slug] && !['done', 'error'].includes(installState[guidePort.slug].phase)
+                    ? installLabel(installState[guidePort.slug])
+                    : installedPorts[guidePort.slug]
+                    ? t('pm.install.reinstallBtn')
+                    : t('pm.install.btn')}
+                </span>
               </button>
               <button
                 type="button"
