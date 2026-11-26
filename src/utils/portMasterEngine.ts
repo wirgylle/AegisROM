@@ -1,5 +1,6 @@
 import type { PortMasterGame } from '../types/aegis';
 import { tfStatic } from '../i18n/translations';
+import { forEachZipEntry, ZipError, ZIP_ERR_INVALID, ZIP_ERR_NO_DECOMPRESS } from './zipReader';
 
 /**
  * Infers the exact subfolder inside ports/ where user's game data/assets must be placed
@@ -212,69 +213,25 @@ export function getConsolePortMasterGuides(
 /**
  * Extracts entries from ANY standard ZIP buffer in modern browsers / Edge WebView2.
  * Supports Compression Method 0 (Store) AND Compression Method 8 (Deflate via native DecompressionStream('deflate-raw')).
+ * Чтение — в zipReader.ts. / Reading lives in zipReader.ts.
  */
 export async function extractZipEntriesAsync(
   zipBytes: Uint8Array
 ): Promise<Array<{ name: string; data: Uint8Array; isDirectory: boolean }>> {
-  const dv = new DataView(zipBytes.buffer, zipBytes.byteOffset, zipBytes.byteLength);
-  let eocdOffset = -1;
-  const searchStart = Math.max(0, zipBytes.byteLength - 65558);
-  for (let i = zipBytes.byteLength - 22; i >= searchStart; i--) {
-    if (dv.getUint32(i, true) === 0x06054b50) {
-      eocdOffset = i;
-      break;
-    }
-  }
-  if (eocdOffset === -1) {
-    throw new Error(tfStatic('pm.engine.invalidZip'));
-  }
-
-  const totalEntries = dv.getUint16(eocdOffset + 10, true);
-  let cdOffset = dv.getUint32(eocdOffset + 16, true);
-  const dec = new TextDecoder('utf-8');
   const results: Array<{ name: string; data: Uint8Array; isDirectory: boolean }> = [];
-
-  for (let idx = 0; idx < totalEntries && cdOffset + 46 <= zipBytes.byteLength; idx++) {
-    if (dv.getUint32(cdOffset, true) !== 0x02014b50) break;
-    const method = dv.getUint16(cdOffset + 10, true);
-    const compSize = dv.getUint32(cdOffset + 20, true);
-    const fnameLen = dv.getUint16(cdOffset + 28, true);
-    const extraLen = dv.getUint16(cdOffset + 30, true);
-    const commentLen = dv.getUint16(cdOffset + 32, true);
-    const localHdrOff = dv.getUint32(cdOffset + 42, true);
-
-    const fname = dec.decode(zipBytes.subarray(cdOffset + 46, cdOffset + 46 + fnameLen));
-    cdOffset += 46 + fnameLen + extraLen + commentLen;
-
-    const isDirectory = fname.endsWith('/');
-    if (isDirectory) {
-      results.push({ name: fname, data: new Uint8Array(0), isDirectory: true });
-      continue;
+  try {
+    await forEachZipEntry(zipBytes, (e) => {
+      results.push(e);
+    });
+  } catch (err) {
+    if (err instanceof ZipError && err.code === ZIP_ERR_INVALID) {
+      throw new Error(tfStatic('pm.engine.invalidZip'));
     }
-
-    if (localHdrOff + 30 <= zipBytes.byteLength && dv.getUint32(localHdrOff, true) === 0x04034b50) {
-      const lFnameLen = dv.getUint16(localHdrOff + 26, true);
-      const lExtraLen = dv.getUint16(localHdrOff + 28, true);
-      const dataStart = localHdrOff + 30 + lFnameLen + lExtraLen;
-      const dataEnd = Math.min(zipBytes.byteLength, dataStart + compSize);
-      const compressedSlice = zipBytes.subarray(dataStart, dataEnd);
-
-      if (method === 0) {
-        results.push({ name: fname, data: compressedSlice, isDirectory: false });
-      } else if (method === 8) {
-        if (typeof (globalThis as any).DecompressionStream !== 'function') {
-          throw new Error(tfStatic('pm.engine.noDecompStream'));
-        }
-        const ds = new (globalThis as any).DecompressionStream('deflate-raw');
-        const copyBuf = new Uint8Array(compressedSlice.byteLength);
-        copyBuf.set(compressedSlice);
-        const stream = new Blob([copyBuf]).stream().pipeThrough(ds);
-        const decompressedBuf = await new Response(stream).arrayBuffer();
-        results.push({ name: fname, data: new Uint8Array(decompressedBuf), isDirectory: false });
-      }
+    if (err instanceof ZipError && err.code === ZIP_ERR_NO_DECOMPRESS) {
+      throw new Error(tfStatic('pm.engine.noDecompStream'));
     }
+    throw err;
   }
-
   return results;
 }
 

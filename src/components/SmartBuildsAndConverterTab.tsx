@@ -64,9 +64,9 @@ import type {
   SyncDiffEntry,
 } from '../types/aegis';
 import {
-  extractZipEntriesAsync,
   resolvePortMasterRootDirForProfile,
 } from '../utils/portMasterEngine';
+import { downloadAndUnpackPort } from '../utils/portMasterInstall';
 import {
   generateM3uPlaylistText,
 } from '../utils/multiDiscEngine';
@@ -2133,30 +2133,25 @@ export const SmartBuildsAndConverterTab: React.FC<SmartBuildsAndConverterTabProp
           );
 
           try {
-            const dlResp = await fetch(
-              `/api/portmaster/download?url=${encodeURIComponent(port.downloadUrl)}`
-            );
-            if (!dlResp.ok) throw new Error(`HTTP ${dlResp.status}`);
-            const zipBuf = new Uint8Array(await dlResp.arrayBuffer());
-            const zipEntries = await extractZipEntriesAsync(zipBuf);
-
-            let extractedFiles = 0;
-            for (const ze of zipEntries) {
-              if (ze.isDirectory) {
-                const segs = ze.name.replace(/\\/g, '/').split('/').filter(Boolean);
-                let dH = portsRootHandle;
-                for (const s of segs) {
-                  dH = await dH.getDirectoryHandle(s, { create: true });
-                }
-              } else {
-                await writeRelPathUnderHandle(
-                  portsRootHandle,
-                  ze.name,
-                  ze.data as unknown as BufferSource
-                );
-                extractedFiles++;
-              }
-            }
+            // Скачать и распаковать: в нативном окне это делает Go на диске, без памяти окна.
+            // Download and unpack: in the native window Go does it on disk, not in window memory.
+            const { files: extractedFiles } = await downloadAndUnpackPort({
+              portsDir: portsRootHandle,
+              portUrl: port.downloadUrl,
+              slug: port.slug,
+              onProgress: (p) =>
+                onUpdateLiveProgress?.(
+                  true,
+                  92,
+                  tf('builds.conv.pmDeploying', {
+                    i: pi + 1,
+                    total: queuedPortMasterGames.length,
+                    title: `${port.title}${p.pct >= 0 ? ` · ${p.pct}%` : ''}`,
+                    root: portsRoot,
+                  })
+                ),
+            });
+            if (extractedFiles === 0) throw new Error('empty-archive');
 
             // Create exact required data subfolder (e.g. ports/stardewvalley/gamedata) & copy attached user sources!
             const subRel = port.requiredDataTargetPath.replace(/^ports\/?/i, '');
