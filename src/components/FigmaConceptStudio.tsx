@@ -171,6 +171,8 @@ import { MediaTidyModal } from './MediaTidyModal';
 import { SettingsModal } from './SettingsModal';
 import { loadAppSettings, subscribeAppSettings } from '../utils/appSettings';
 import { resolveQuickTestCore, pickCueDataTrack, pickBiosForRegion, fileExt } from '../utils/quickTest';
+import type { LocatedRom } from '../utils/romLocate';
+import { nativePathOf } from '../utils/nativeFs';
 import { getVerifiedBiosFiles } from '../utils/biosScan';
 
 export interface MultiDiscEntry {
@@ -425,6 +427,16 @@ interface FigmaConceptStudioProps {
   onRunBufferAutoProcess?: () => void;
   onDownloadBufferCmdScript?: () => void;
   isNativeDesktopHost?: boolean;
+  /** Файл рома по записи базы (без скана): папка рома или папка библиотеки. */
+  /** The ROM file for a database record (no scan): the ROM's folder or the library folder. */
+  onResolveRomForLaunch?: (req: {
+    relativePath?: string;
+    altNames?: string[];
+    parentHandle?: any;
+  }) => Promise<LocatedRom | null>;
+  /** Абсолютный путь папки библиотеки в своём окне (нативная прослойка), иначе ''. */
+  /** Absolute library folder path in the native window (native layer), else ''. */
+  libraryDiskPath?: string;
   onDownloadExe?: () => void;
   onDownloadZip?: () => void;
   onAddLog?: (msg: string) => void;
@@ -805,6 +817,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   onRunBufferAutoProcess,
   onDownloadBufferCmdScript,
   isNativeDesktopHost = false,
+  onResolveRomForLaunch,
+  libraryDiskPath = '',
   onDownloadExe,
   onDownloadZip,
   onAddLog,
@@ -3992,12 +4006,41 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   romFileName: qtFileName,
                   relativePath: (qtDisc ? qtDisc.relativePath : selectedGame.relativePath) || '',
                   consoleCode: selectedGame.consoleShort,
-                  libraryPath: effectiveLibraryPath || '',
+                  // Имя папки из браузера не путь на диске: в своём окне берём абсолютный.
+                  // A browser folder name is not a disk path: the native window gives the absolute one.
+                  libraryPath: libraryDiskPath || effectiveLibraryPath || '',
                   sdCardPath: selectedFolderName || '',
                 }
               : null;
             const handleQuickTest = async () => {
               if (!qtCore) return;
+              const src = qtDisc || selectedGame;
+              let romRef = romDiskRef;
+              let file: File | undefined | null = src.fileObj;
+              let cueText = src.cueText;
+              let companions = src.companionFiles;
+              // Игра из базы без скана: файла в сеансе нет, берём его по пути из базы.
+              // A database game without a scan: no session file, take it by the database path.
+              if (!file && onResolveRomForLaunch) {
+                const relPath = src.relativePath || '';
+                const found = await onResolveRomForLaunch({
+                  relativePath: relPath || qtFileName,
+                  altNames: [src.cleanFile, src.oldFile].filter((n): n is string => Boolean(n)),
+                  parentHandle: src.parentHandle,
+                });
+                if (found) {
+                  // В своём окне знаем точный путь на диске: по нему же и сохранения.
+                  // In the native window the exact disk path is known: saves use it too.
+                  const diskPath = nativePathOf(found.file);
+                  if (diskPath && romRef) romRef = { ...romRef, relativePath: diskPath };
+                  file = found.file;
+                  cueText = found.cueText;
+                  companions = found.companionFiles;
+                }
+              }
+              if (file && fileExt(file.name) === 'cue') {
+                file = pickCueDataTrack(cueText, companions);
+              }
               // BIOS из раздела «BIOS»: только проверенные по MD5. Запрос доступа к папке
               // допустим только по клику, поэтому берём их здесь, а не в окне теста.
               let biosFile: File | null = null;
@@ -4009,12 +4052,6 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   biosFile = null;
                 }
               }
-              const src = qtDisc || selectedGame;
-              let file: File | undefined | null = src.fileObj;
-              if (file && fileExt(file.name) === 'cue') {
-                file = pickCueDataTrack(src.cueText, src.companionFiles);
-              }
-              const romRef = romDiskRef;
               setQuickTestReq({
                 title: selectedGame.title,
                 consoleShort: selectedGame.consoleShort,

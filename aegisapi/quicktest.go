@@ -38,7 +38,14 @@ func RomPathCandidates(consoleCode, romFileName, relativePath, libraryPath, sdCa
 			candidates = append(candidates, relOS)
 		}
 		if libraryPath != "" {
-			candidates = append(candidates, filepath.Join(filepath.FromSlash(libraryPath), relOS))
+			libOS := filepath.FromSlash(libraryPath)
+			candidates = append(candidates, filepath.Join(libOS, relOS))
+			// Путь из базы может начинаться с имени самой папки (скан папки одной консоли).
+			// A database path may start with the folder's own name (scan of a single console folder).
+			if first, rest, ok := strings.Cut(filepath.ToSlash(relativePath), "/"); ok && rest != "" &&
+				strings.EqualFold(first, filepath.Base(libOS)) {
+				candidates = append(candidates, filepath.Join(libOS, filepath.FromSlash(rest)))
+			}
 		}
 		if sdCardPath != "" {
 			candidates = append(candidates, filepath.Join(filepath.FromSlash(sdCardPath), relOS))

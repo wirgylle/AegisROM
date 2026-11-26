@@ -221,6 +221,7 @@ import { computeRomCrc } from './utils/patchRunner';
 import { isPatchFileName, readPatchInfo } from './utils/romPatcher';
 import { runRomCheck, type ChdVerifyAnswer, type NamedBlob, type RomCheckReport, type RomCheckTarget } from './utils/romCheck';
 import { nativePathOf } from './utils/nativeFs';
+import { locateRomFile, nativeDirPath, type LocatedRom } from './utils/romLocate';
 import { loadBiosScanCache } from './utils/biosScan';
 import { buildBiosReport } from './utils/biosCheck';
 import { BIOS_GUIDE } from './data/bios/biosGuide';
@@ -7661,6 +7662,37 @@ export function App() {
     return null;
   };
 
+  /**
+   * Файл рома для запуска игры из библиотеки: из папки рома или от папки библиотеки по пути
+   * из базы. Доступ к папке запрашивается один раз (по клику), а не путь к файлу.
+   * The ROM file for launching a library game: from the ROM's folder or from the library folder
+   * by the database path. Folder access is asked once (on the click), not a file path.
+   */
+  const resolveRomForLaunch = async (req: {
+    relativePath?: string;
+    altNames?: string[];
+    parentHandle?: any;
+  }): Promise<LocatedRom | null> => {
+    try {
+      const fromParent = req.parentHandle
+        ? await locateRomFile({ parentHandle: req.parentHandle, relativePath: req.relativePath, altNames: req.altNames })
+        : null;
+      if (fromParent) return fromParent;
+      // Папка скана и папка библиотеки могут различаться: пробуем обе. / Scan and library folders may differ: try both.
+      const live = [rootDirHandle, libraryDirHandle].filter((h, i, a) => h && a.indexOf(h) === i);
+      for (const root of live) {
+        const hit = await locateRomFile({ root, relativePath: req.relativePath, altNames: req.altNames });
+        if (hit) return hit;
+      }
+      if (live.length) return null;
+      const root = await resolveLibraryRootWithPermission();
+      if (!root) return null;
+      return await locateRomFile({ root, relativePath: req.relativePath, altNames: req.altNames });
+    } catch {
+      return null;
+    }
+  };
+
   const hydrateRomsFromDbRows = async (root: any, rows: UnifiedGameRow[]) => {
     // Папки, где по базе лежат ромы. / Folders that hold ROMs according to the database.
     const dirOf = (p: string) => {
@@ -10240,6 +10272,8 @@ export function App() {
         onRunBufferAutoProcess={handleRunBufferAutoProcess}
         onDownloadBufferCmdScript={handleDownloadBufferCmdScript}
         isNativeDesktopHost={isNativeDesktopHost}
+        onResolveRomForLaunch={resolveRomForLaunch}
+        libraryDiskPath={nativeDirPath(rootDirHandle || libraryDirHandle)}
         onDownloadExe={handleDownloadExe}
         onDownloadZip={handleDownloadZip}
         onAddLog={addLog}
