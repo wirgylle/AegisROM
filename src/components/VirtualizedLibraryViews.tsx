@@ -19,9 +19,10 @@ interface VirtualizedLibraryViewsProps {
   onSelectGame: (id: string) => void;
   onToggleCheck: (id: string) => void;
   onAddToBuild?: (game: EnrichedBuildGame) => void;
-  /** Коллекции: id карточки-лица → число версий и консоли. / Collections: lead card id → version count and consoles. */
-  collections?: Map<string, LibraryCollectionBadge>;
-  onOpenCollection?: (leadId: string) => void;
+  /** Значки коллекции и серии для карточки. / Collection and series badges for a card. */
+  groupBadgesOf?: (id: string) => LibraryGroupBadges | undefined;
+  /** Открыть коллекцию или серию карточки. / Open the card's collection or series. */
+  onOpenGroup?: (id: string, kind: GroupBadgeKind) => void;
   /** Редактор: открыть правку одного рома. / Editor: open the single-ROM edit dialog. */
   onEditGame?: (id: string) => void;
   /** Какое медиа показывать. / Which media to show. */
@@ -30,12 +31,73 @@ interface VirtualizedLibraryViewsProps {
   onAddToGroup?: (id: string) => void;
 }
 
-export interface LibraryCollectionBadge {
+export type GroupBadgeKind = 'collection' | 'series';
+
+export interface LibraryGroupBadge {
+  /** Коллекция: число версий; серия: число игр. / Collection: version count; series: game count. */
   count: number;
   consoles: string[];
-  /** 'series': count — число игр линейки, label — название серии. / count is the number of games in the line. */
-  kind?: 'collection' | 'series';
   label?: string;
+}
+
+export interface LibraryGroupBadges {
+  collection?: LibraryGroupBadge;
+  series?: LibraryGroupBadge;
+  /** Карточка стоит за всю группу: в подписи консоли группы. / The card stands for the group: show its consoles. */
+  groupConsoles?: string[];
+}
+
+interface CardBadgeProps {
+  consoleLabel: string;
+  consoleTitle: string;
+  collCount: number;
+  collTitle: string;
+  serCount: number;
+  serTitle: string;
+  onOpenGroup?: (id: string, kind: GroupBadgeKind) => void;
+}
+
+function sameBadges(a: CardBadgeProps, b: CardBadgeProps): boolean {
+  return (
+    a.consoleLabel === b.consoleLabel &&
+    a.consoleTitle === b.consoleTitle &&
+    a.collCount === b.collCount &&
+    a.collTitle === b.collTitle &&
+    a.serCount === b.serCount &&
+    a.serTitle === b.serTitle &&
+    a.onOpenGroup === b.onOpenGroup
+  );
+}
+
+/** Кнопки «коллекция» и «серия» на карточке. / Collection and series buttons on a card. */
+function GroupBadgeButtons({ id, collCount, collTitle, serCount, serTitle, onOpenGroup, small }: CardBadgeProps & { id: string; small?: boolean }) {
+  if (!onOpenGroup || (collCount < 1 && serCount < 1)) return null;
+  const cls = small
+    ? 'h-5 px-1.5 rounded bg-slate-200 dark:bg-slate-700 hover:bg-accent hover:text-white text-slate-700 dark:text-slate-200 text-[10px] font-semibold inline-flex items-center gap-0.5 align-middle cursor-pointer'
+    : 'h-7 px-2 rounded-md bg-slate-900/85 hover:bg-accent text-white text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition';
+  const icon = small ? 'w-3 h-3' : 'w-3.5 h-3.5';
+  const btn = (kind: GroupBadgeKind, count: number, title: string) => (
+    <button
+      key={kind}
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpenGroup(id, kind);
+      }}
+      title={title}
+      aria-label={title}
+      className={cls}
+    >
+      {kind === 'series' ? <LibraryBig className={icon} /> : <Layers className={icon} />}
+      <span className="tabular-nums">{count}</span>
+    </button>
+  );
+  return (
+    <>
+      {collCount > 0 && btn('collection', collCount, collTitle)}
+      {serCount > 0 && btn('series', serCount, serTitle)}
+    </>
+  );
 }
 
 // Tile grid: as many columns as fit; every card has the same frame for the picked media kind
@@ -83,7 +145,7 @@ const TABLE_OVERSCAN_ROWS = 14;
 // Pre-warm cache for upcoming box-art thumbnails in the scroll buffer zone
 const warmedImageUrls = new Set<string>();
 
-interface MemoGridCardProps {
+interface MemoGridCardProps extends CardBadgeProps {
   onAddToGroup?: (id: string) => void;
   groupBtnTitle: string;
   game: EnrichedBuildGame;
@@ -91,11 +153,6 @@ interface MemoGridCardProps {
   mediaKind: MediaKind;
   mediaFill: boolean;
   mediaFallback: boolean;
-  collectionCount: number;
-  collectionConsoles: string;
-  collectionTitle: string;
-  collectionIsSeries: boolean;
-  onOpenCollection?: (id: string) => void;
   isSelected: boolean;
   onSelect: (id: string) => void;
   onAddToBuild?: (game: EnrichedBuildGame) => void;
@@ -105,7 +162,7 @@ interface MemoGridCardProps {
 }
 
 const MemoGridCard = React.memo<MemoGridCardProps>(
-  ({ game, coverHeight, mediaKind, mediaFill, mediaFallback, isSelected, onSelect, onAddToBuild, onAddToGroup, groupBtnTitle, addBtnTitle, discLabel, collectionCount, collectionConsoles, collectionTitle, collectionIsSeries, onOpenCollection }) => {
+  ({ game, coverHeight, mediaKind, mediaFill, mediaFallback, isSelected, onSelect, onAddToBuild, onAddToGroup, groupBtnTitle, addBtnTitle, discLabel, ...badges }) => {
     const candidates = useMemo(
       () => mediaCandidates(mediaSetOf(game), mediaKind, mediaFallback),
       [game, mediaKind, mediaFallback]
@@ -148,9 +205,9 @@ const MemoGridCard = React.memo<MemoGridCardProps>(
           <div className="relative z-10 flex items-center justify-between text-[10px] font-mono">
             <span
               className="px-1.5 py-0.5 rounded bg-slate-900/80 text-white font-semibold truncate min-w-0"
-              title={collectionCount > 1 ? collectionConsoles : undefined}
+              title={badges.consoleTitle || undefined}
             >
-              {collectionCount > 1 ? collectionConsoles : game.consoleShort}
+              {badges.consoleLabel || game.consoleShort}
             </span>
             <div className="flex items-center gap-1 shrink-0">
               <span className="px-1.5 py-0.5 rounded bg-slate-900/80 text-white font-semibold">
@@ -186,20 +243,10 @@ const MemoGridCard = React.memo<MemoGridCardProps>(
               )}
             </div>
           </div>
-          {collectionCount > 1 && onOpenCollection && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenCollection(game.id);
-              }}
-              title={collectionTitle}
-              aria-label={collectionTitle}
-              className="relative z-10 self-start h-7 px-2 rounded-md bg-slate-900/85 hover:bg-accent text-white text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition"
-            >
-              {collectionIsSeries ? <LibraryBig className="w-3.5 h-3.5" /> : <Layers className="w-3.5 h-3.5" />}
-              <span className="tabular-nums">{collectionCount}</span>
-            </button>
+          {badges.onOpenGroup && (badges.collCount > 0 || badges.serCount > 0) && (
+            <div className="relative z-10 self-start flex items-center gap-1">
+              <GroupBadgeButtons id={game.id} {...badges} />
+            </div>
           )}
         </div>
         <div className="min-w-0">
@@ -236,19 +283,15 @@ const MemoGridCard = React.memo<MemoGridCardProps>(
     prev.game.region === next.game.region &&
     prev.game.size === next.game.size &&
     prev.game.discCount === next.game.discCount &&
-    prev.collectionCount === next.collectionCount &&
-    prev.collectionConsoles === next.collectionConsoles &&
+    sameBadges(prev, next) &&
     prev.game === next.game &&
-    prev.collectionTitle === next.collectionTitle &&
-    prev.collectionIsSeries === next.collectionIsSeries &&
-    prev.onOpenCollection === next.onOpenCollection &&
     prev.onSelect === next.onSelect &&
     prev.onAddToBuild === next.onAddToBuild &&
     prev.onAddToGroup === next.onAddToGroup &&
     prev.groupBtnTitle === next.groupBtnTitle
 );
 
-interface MemoCompactRowProps {
+interface MemoCompactRowProps extends CardBadgeProps {
   onAddToGroup?: (id: string) => void;
   groupBtnTitle: string;
   game: EnrichedBuildGame;
@@ -262,11 +305,6 @@ interface MemoCompactRowProps {
   discLabel: string;
   genreLabel: string;
   lang: string;
-  collectionCount: number;
-  collectionConsoles: string;
-  collectionTitle: string;
-  collectionIsSeries: boolean;
-  onOpenCollection?: (id: string) => void;
 }
 
 function CompactThumb({ game, kind, fallback }: { game: EnrichedBuildGame; kind: MediaKind; fallback: boolean }) {
@@ -296,7 +334,7 @@ function CompactThumb({ game, kind, fallback }: { game: EnrichedBuildGame; kind:
 }
 
 const MemoCompactRow = React.memo<MemoCompactRowProps>(
-  ({ game, mediaKind, mediaFallback, isSelected, onSelect, onAddToBuild, onAddToGroup, groupBtnTitle, addBtnTitle, discLabel, genreLabel, collectionCount, collectionConsoles, collectionTitle, collectionIsSeries, onOpenCollection }) => (
+  ({ game, mediaKind, mediaFallback, isSelected, onSelect, onAddToBuild, onAddToGroup, groupBtnTitle, addBtnTitle, discLabel, genreLabel, ...badges }) => (
     <tr
       onClick={() => onSelect(game.id)}
       style={{ height: `${COMPACT_ROW_HEIGHT}px` }}
@@ -312,20 +350,10 @@ const MemoCompactRow = React.memo<MemoCompactRowProps>(
         </td>
       )}
       <td className="px-3 truncate align-middle" title={game.title}>
-        {collectionCount > 1 && onOpenCollection && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenCollection(game.id);
-            }}
-            title={collectionTitle}
-            aria-label={collectionTitle}
-            className="mr-1.5 h-5 px-1.5 rounded bg-slate-200 dark:bg-slate-700 hover:bg-accent hover:text-white text-slate-700 dark:text-slate-200 text-[10px] font-semibold inline-flex items-center gap-0.5 align-middle cursor-pointer"
-          >
-            {collectionIsSeries ? <LibraryBig className="w-3 h-3" /> : <Layers className="w-3 h-3" />}
-            <span className="tabular-nums">{collectionCount}</span>
-          </button>
+        {badges.onOpenGroup && (badges.collCount > 0 || badges.serCount > 0) && (
+          <span className="mr-1.5 inline-flex items-center gap-1 align-middle">
+            <GroupBadgeButtons id={game.id} {...badges} small />
+          </span>
         )}
         <span>{game.title}</span>
         {game.discCount && game.discCount > 1 && (
@@ -335,8 +363,8 @@ const MemoCompactRow = React.memo<MemoCompactRowProps>(
         )}
       </td>
       <td className="px-3 font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap align-middle">
-        <span className="block truncate" title={collectionCount > 1 ? collectionConsoles : undefined}>
-          {collectionCount > 1 ? collectionConsoles : game.consoleShort} · {game.discCount && game.discCount > 1 ? discLabel : game.bitnessGroup}
+        <span className="block truncate" title={badges.consoleTitle || undefined}>
+          {badges.consoleLabel || game.consoleShort} · {game.discCount && game.discCount > 1 ? discLabel : game.bitnessGroup}
         </span>
       </td>
       <td
@@ -391,12 +419,8 @@ const MemoCompactRow = React.memo<MemoCompactRowProps>(
     prev.lang === next.lang &&
     prev.discLabel === next.discLabel &&
     prev.genreLabel === next.genreLabel &&
-    prev.collectionCount === next.collectionCount &&
-    prev.collectionConsoles === next.collectionConsoles &&
+    sameBadges(prev, next) &&
     prev.game === next.game &&
-    prev.collectionTitle === next.collectionTitle &&
-    prev.collectionIsSeries === next.collectionIsSeries &&
-    prev.onOpenCollection === next.onOpenCollection &&
     prev.addBtnTitle === next.addBtnTitle &&
     prev.game.id === next.game.id &&
     prev.game.title === next.game.title &&
@@ -557,8 +581,8 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
   onSelectGame,
   onToggleCheck,
   onAddToBuild,
-  collections,
-  onOpenCollection,
+  groupBadgesOf,
+  onOpenGroup,
   onEditGame,
   mediaPrefs = DEFAULT_MEDIA_PREFS,
   onAddToGroup,
@@ -567,17 +591,23 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
   const gridKind = mediaPrefs.grid;
   const compactKind: MediaKind | null = mediaPrefs.compact === 'none' ? null : mediaPrefs.compact;
   const compactCols = compactKind ? 7 : 6;
-  const badgeOf = (id: string) => {
-    const b = collections?.get(id);
-    if (!b || b.count < 2) return { collectionCount: 1, collectionConsoles: '', collectionTitle: '', collectionIsSeries: false };
-    const isSeries = b.kind === 'series';
+  const badgeOf = (id: string): CardBadgeProps => {
+    const b = groupBadgesOf?.(id);
+    const c = b?.collection;
+    const sr = b?.series;
+    const gc = b?.groupConsoles && b.groupConsoles.length > 1 ? b.groupConsoles : null;
     return {
-      collectionCount: b.count,
-      collectionConsoles: b.consoles.join(' · '),
-      collectionTitle: isSeries
-        ? tf('series.openHint', { name: b.label || '', count: b.count, consoles: b.consoles.join(', ') })
-        : tf('coll.openHint', { count: b.count, consoles: b.consoles.join(', ') }),
-      collectionIsSeries: isSeries,
+      consoleLabel: gc ? gc.join(' · ') : '',
+      consoleTitle: gc ? gc.join(', ') : '',
+      collCount: c ? c.count : 0,
+      collTitle: c
+        ? c.label
+          ? tf('coll.openHintNamed', { name: c.label, count: c.count, consoles: c.consoles.join(', ') })
+          : tf('coll.openHint', { count: c.count, consoles: c.consoles.join(', ') })
+        : '',
+      serCount: sr ? sr.count : 0,
+      serTitle: sr ? tf('series.openHint', { name: sr.label || '', count: sr.count, consoles: sr.consoles.join(', ') }) : '',
+      onOpenGroup,
     };
   };
   const listRootRef = useRef<HTMLDivElement | null>(null);
@@ -874,7 +904,6 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
                 discLabel={g.discCount && g.discCount > 1 ? tf('lib.discShort', { count: g.discCount }) : ''}
                 lang={lang}
                 {...badgeOf(g.id)}
-                onOpenCollection={onOpenCollection}
               />
             ))}
           </div>
@@ -932,7 +961,6 @@ export const VirtualizedLibraryViews: React.FC<VirtualizedLibraryViewsProps> = (
                   genreLabel={localizeGenre(g.genre, t)}
                   lang={lang}
                   {...badgeOf(g.id)}
-                  onOpenCollection={onOpenCollection}
                 />
               ))}
               {windowInfo.bottomSpacerPx > 0 && (

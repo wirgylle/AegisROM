@@ -327,3 +327,48 @@ export function passesGroupFilter(id: string, m: GroupMembership, f: LibraryGrou
   const ser = m.inSeries.has(id);
   return (f.collections && col) || (f.series && ser) || (f.singles && !col && !ser);
 }
+
+// ---------------------------------------------------------------------------
+// Значки коллекции и серии на карточках. Считаются по всей Библиотеке, а не по видимому
+// списку: иначе при выбранной консоли или без группировки значок пропадал, хотя игра
+// в коллекции (в том числе ручной) есть.
+// Collection and series badges on cards. Built over the whole Library, not the visible
+// list: otherwise the badge vanished inside one console or without grouping, although
+// the game is in a collection (manual ones included).
+
+export interface LibraryGroupIndex<T extends CollectionInput = CollectionInput> {
+  collectionOf: Map<string, GameCollection<T>>;
+  seriesOf: Map<string, GameSeries<T>>;
+  seriesByKey: Map<string, GameSeries<T>>;
+}
+
+export function indexLibraryGroups<T extends CollectionInput>(games: readonly T[]): LibraryGroupIndex<T> {
+  const collectionOf = new Map<string, GameCollection<T>>();
+  const seriesOf = new Map<string, GameSeries<T>>();
+  const seriesByKey = new Map<string, GameSeries<T>>();
+  for (const s of buildSeries(games)) {
+    seriesByKey.set(s.key, s);
+    for (const c of s.games) {
+      for (const m of c.members) {
+        collectionOf.set(m.id, c);
+        seriesOf.set(m.id, s);
+      }
+    }
+  }
+  return { collectionOf, seriesOf, seriesByKey };
+}
+
+/** Коллекция ручная. / The collection was made by hand. */
+export function isManualCollection(c: GameCollection): boolean {
+  return c.key.startsWith('m:');
+}
+
+/** Есть что показать значком коллекции: 2+ версии или ручная коллекция. / Worth a collection badge. */
+export function hasCollectionBadge(c: GameCollection | undefined): boolean {
+  return Boolean(c && (c.members.length > 1 || isManualCollection(c)));
+}
+
+/** Есть что показать значком серии: 2+ игры или ручная серия. / Worth a series badge. */
+export function hasSeriesBadge(s: GameSeries | undefined): boolean {
+  return Boolean(s && (s.games.length > 1 || s.manual || s.key.startsWith('m:')));
+}

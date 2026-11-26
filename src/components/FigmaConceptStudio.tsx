@@ -37,6 +37,7 @@ import {
   Settings as SettingsIcon,
   Coffee,
   FolderPlus,
+  LibraryBig,
   Image as ImageIcon,
   Loader2,
 } from 'lucide-react';
@@ -82,7 +83,7 @@ import {
   saveMultiDbsToIndexedDB,
   loadMultiDbsFromIndexedDB,
 } from '../utils/persistentHandles';
-import { VirtualizedLibraryViews, type LibraryCollectionBadge } from './VirtualizedLibraryViews';
+import { VirtualizedLibraryViews, type GroupBadgeKind, type LibraryGroupBadges } from './VirtualizedLibraryViews';
 import { EditorToolbar, GameEditModal, useManualEditsVersion } from './LibraryEditor';
 import { applyManualEditToRow, exportManualEdits, importManualEdits } from '../utils/manualEdits';
 import { CollectionModal } from './CollectionModal';
@@ -108,7 +109,9 @@ import {
   indexCollections,
   isGroupFilterAll,
   passesGroupFilter,
-  seriesSiblings,
+  indexLibraryGroups,
+  hasCollectionBadge,
+  hasSeriesBadge,
   type LibraryGroupFilter,
 } from '../utils/gameCollections';
 import { stripBlobMedia, type MediaSet } from '../utils/mediaKinds';
@@ -1082,7 +1085,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     setLibraryMediaPrefs(p);
     saveMediaPrefs(p);
   };
-  const [collectionModalLeadId, setCollectionModalLeadId] = useState<string | null>(null);
+  const [groupModal, setGroupModal] = useState<{ id: string; kind: GroupBadgeKind } | null>(null);
+  const openGroupModal = useCallback((id: string, kind: GroupBadgeKind) => setGroupModal({ id, kind }), []);
   // «В коллекцию или серию…»: id ромов, которые добавляем. / ROM ids being added to a group.
   const [addToGroupIds, setAddToGroupIds] = useState<string[] | null>(null);
   const [manualGroupsTab, setManualGroupsTab] = useState<null | 'groups' | 'suggest' | 'detached'>(null);
@@ -1956,40 +1960,61 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
 
   const groupedLibraryView = React.useMemo(() => {
     if (!collectionsActive) return null;
-    const badges = new Map<string, LibraryCollectionBadge>();
     const leadOf = new Map<string, string>();
-    const membersByLead = new Map<string, typeof filteredGames>();
     const labelByLead = new Map<string, string>();
     if (libraryGrouping === 'series') {
       const series = buildSeries(filteredGames);
       const games: typeof filteredGames = [];
       for (const s of series) {
         const multi = s.games.length > 1;
-        if (multi) {
-          badges.set(s.lead.id, { count: s.games.length, consoles: s.consoles, kind: 'series', label: s.label });
-          labelByLead.set(s.lead.id, s.label);
-        } else if (s.members.length > 1) {
-          badges.set(s.lead.id, { count: s.members.length, consoles: s.consoles });
-        }
-        membersByLead.set(s.lead.id, s.members);
+        if (multi) labelByLead.set(s.lead.id, s.label);
         for (const m of s.members) leadOf.set(m.id, s.lead.id);
         // На карточке серии — название серии. / A series card shows the series name.
         games.push(multi ? { ...s.lead, title: s.label } : s.lead);
       }
-      return { mode: 'series' as const, games, badges, leadOf, membersByLead, labelByLead, nameByLead: new Map<string, string>() };
+      return { mode: 'series' as const, games, leadOf, labelByLead };
     }
     const cols = buildCollections(filteredGames);
-    const nameByLead = new Map<string, string>();
-    for (const c of cols) {
-      badges.set(c.lead.id, { count: c.members.length, consoles: c.consoles });
-      membersByLead.set(c.lead.id, c.members);
-      for (const m of c.members) leadOf.set(m.id, c.lead.id);
-      if (c.label) nameByLead.set(c.lead.id, c.label);
-    }
+    for (const c of cols) for (const m of c.members) leadOf.set(m.id, c.lead.id);
     // Ручная коллекция показывает своё название. / A manual collection shows its own name.
     const games = cols.map((c) => (c.label && c.members.length > 1 ? { ...c.lead, title: c.label } : c.lead));
-    return { mode: 'collections' as const, games, badges, leadOf, membersByLead, labelByLead, nameByLead };
+    return { mode: 'collections' as const, games, leadOf, labelByLead };
   }, [collectionsActive, libraryGrouping, filteredGames]);
+
+  // Коллекции и серии по всей Библиотеке: значки на карточках, окно выбора рома и инспектор.
+  // Значок есть в любом режиме (без группировки, внутри одной консоли) и у ручных групп.
+  // Library-wide collections and series: card badges, the ROM picker and the inspector.
+  // The badge shows in every mode (ungrouped, inside one console) and for manual groups.
+  const libraryGroups = React.useMemo(() => indexLibraryGroups(enrichedGamesSource), [enrichedGamesSource]);
+  const groupBadgesOf = useCallback(
+    (id: string): LibraryGroupBadges | undefined => {
+      const c = libraryGroups.collectionOf.get(id);
+      const sr = libraryGroups.seriesOf.get(id);
+      const out: LibraryGroupBadges = {};
+      const seriesCard = groupedLibraryView?.mode === 'series' && groupedLibraryView.labelByLead.has(id);
+      if (!seriesCard && c && hasCollectionBadge(c)) {
+        out.collection = { count: c.members.length, consoles: c.consoles, label: c.label };
+      }
+      if (sr && hasSeriesBadge(sr)) {
+        out.series = { count: sr.games.length, consoles: sr.consoles, label: sr.label };
+      }
+      // Свёрнутая карточка стоит за всю группу: показываем все её консоли.
+      // A collapsed card stands for the whole group: show all of its consoles.
+      if (seriesCard && sr) out.groupConsoles = sr.consoles;
+      else if (groupedLibraryView && c) out.groupConsoles = c.consoles;
+      return out.collection || out.series || out.groupConsoles ? out : undefined;
+    },
+    [libraryGroups, groupedLibraryView]
+  );
+  const groupModalData = React.useMemo(() => {
+    if (!groupModal) return null;
+    if (groupModal.kind === 'series') {
+      const sr = libraryGroups.seriesOf.get(groupModal.id);
+      return sr ? { kind: 'series' as const, title: sr.label, members: sr.members } : null;
+    }
+    const c = libraryGroups.collectionOf.get(groupModal.id);
+    return c ? { kind: 'collection' as const, title: c.label || c.lead.title, members: c.members } : null;
+  }, [groupModal, libraryGroups]);
 
   // Индекс по всей библиотеке для правой панели (не зависит от фильтров).
   // Whole-library index for the right panel (does not depend on filters).
@@ -2904,8 +2929,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                 selectedGameId={
                   (selectedGame && groupedLibraryView?.leadOf.get(selectedGame.id)) || selectedGame?.id || ''
                 }
-                collections={groupedLibraryView?.badges}
-                onOpenCollection={setCollectionModalLeadId}
+                groupBadgesOf={groupBadgesOf}
+                onOpenGroup={openGroupModal}
                 onAddToGroup={onCardAddToGroup}
                 mediaPrefs={libraryMediaPrefs}
                 checkedGameIds={checkedGameIds}
@@ -4360,21 +4385,52 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   </div>
 
                   {/* Versions, series and description */}
-                  <button
-                    type="button"
-                    onClick={() => openAddToGroup(selectedGame.id, true)}
-                    className="w-full h-8 px-3 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center justify-center gap-1.5 cursor-pointer transition"
-                  >
-                    <FolderPlus className="w-3.5 h-3.5" />
-                    {t('atg.button')}
-                  </button>
+                  {(() => {
+                    const ib = groupBadgesOf(selectedGame.id);
+                    const pill =
+                      'h-8 px-2.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 cursor-pointer transition min-w-0';
+                    return (
+                      <div className="flex items-stretch gap-1.5">
+                        {ib?.collection && (
+                          <button
+                            type="button"
+                            onClick={() => openGroupModal(selectedGame.id, 'collection')}
+                            title={ib.collection.label || undefined}
+                            className={pill}
+                          >
+                            <Layers className="w-3.5 h-3.5 shrink-0" />
+                            <span className="tabular-nums">{ib.collection.count}</span>
+                          </button>
+                        )}
+                        {ib?.series && (
+                          <button
+                            type="button"
+                            onClick={() => openGroupModal(selectedGame.id, 'series')}
+                            title={ib.series.label || undefined}
+                            className={pill}
+                          >
+                            <LibraryBig className="w-3.5 h-3.5 shrink-0" />
+                            <span className="tabular-nums">{ib.series.count}</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => openAddToGroup(selectedGame.id, true)}
+                          className="flex-1 min-w-0 h-8 px-3 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center justify-center gap-1.5 cursor-pointer transition"
+                        >
+                          <FolderPlus className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate">{t('atg.button')}</span>
+                        </button>
+                      </div>
+                    );
+                  })()}
 
                   <GameRelationsPanel
                     game={selectedGame}
-                    versions={
-                      libraryCollectionIndex.byKey.get(libraryCollectionIndex.keyOfId.get(selectedGame.id) || '')?.members || [selectedGame]
-                    }
-                    series={seriesSiblings(libraryCollectionIndex, selectedGame.id)}
+                    versions={libraryGroups.collectionOf.get(selectedGame.id)?.members || [selectedGame]}
+                    series={(libraryGroups.seriesOf.get(selectedGame.id)?.games || []).filter(
+                      (c) => !c.members.some((m) => m.id === selectedGame.id)
+                    )}
                     libraryLeadByKey={libraryLeadByKey}
                     onSelect={handleSelectGame}
                   />
@@ -4661,36 +4717,31 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         />
       )}
 
-      {collectionModalLeadId && groupedLibraryView?.membersByLead.get(collectionModalLeadId) && (
+      {groupModal && groupModalData && (
         <CollectionModal
-          mode={groupedLibraryView.labelByLead.has(collectionModalLeadId) ? 'series' : 'collection'}
-          title={
-            groupedLibraryView.labelByLead.get(collectionModalLeadId) ||
-            groupedLibraryView.nameByLead.get(collectionModalLeadId) ||
-            groupedLibraryView.membersByLead.get(collectionModalLeadId)!.find((m) => m.id === collectionModalLeadId)?.title ||
-            ''
-          }
-          members={groupedLibraryView.membersByLead.get(collectionModalLeadId)!}
+          mode={groupModalData.kind}
+          title={groupModalData.title}
+          members={groupModalData.members}
           selectedId={selectedGame?.id || ''}
           onPick={(id) => {
             handleSelectGame(id);
-            setCollectionModalLeadId(null);
+            setGroupModal(null);
           }}
-          onClose={() => setCollectionModalLeadId(null)}
+          onClose={() => setGroupModal(null)}
           onRemove={(id) => {
             // Ручная группа — убрать из неё; автоматическая — вынуть игру из группы.
             // Manual group: remove from it; automatic group: take the game out.
             const row = enrichedGamesSource.find((g) => g.id === id);
             if (!row) return;
             const key = gameKeyOf(row);
-            const isSeries = groupedLibraryView.labelByLead.has(collectionModalLeadId);
+            const isSeries = groupModalData.kind === 'series';
             const manual = isSeries ? row.manualSeries : row.manualCollection;
             const prefix = isSeries ? 'm:s:' : 'm:c:';
             if (manual && manual.startsWith(prefix)) removeFromManualGroup(manual.slice(prefix.length), [key]);
             else setDetached(isSeries ? 'series' : 'collection', [key], true);
           }}
           onOpenManager={() => {
-            setCollectionModalLeadId(null);
+            setGroupModal(null);
             setManualGroupsTab('groups');
           }}
         />
