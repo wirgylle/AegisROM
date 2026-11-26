@@ -219,8 +219,9 @@ import {
 } from './utils/romHacks';
 import { computeRomCrc } from './utils/patchRunner';
 import { isPatchFileName, readPatchInfo } from './utils/romPatcher';
-import { runRomCheck, type ChdVerifyAnswer, type NamedBlob, type RomCheckReport, type RomCheckTarget } from './utils/romCheck';
-import { nativePathOf } from './utils/nativeFs';
+import { runRomCheck, type ChdVerifyAnswer, type NamedBlob, type RomCheckAction, type RomCheckReport, type RomCheckTarget } from './utils/romCheck';
+import { nativePathOf, isNativeFsEnabled } from './utils/nativeFs';
+import { filesToDelete, planFixes, runFix, type FixOutcome } from './utils/romCheckActions';
 import { loadBiosScanCache } from './utils/biosScan';
 import { buildBiosReport } from './utils/biosCheck';
 import { BIOS_GUIDE } from './data/bios/biosGuide';
@@ -1802,6 +1803,10 @@ export function App() {
   const [isCheckingRoms, setIsCheckingRoms] = useState(false);
   const [romCheckReport, setRomCheckReport] = useState<RomCheckReport | null>(null);
   const [romCheckProgress, setRomCheckProgress] = useState('');
+  const [romCheckActionBusy, setRomCheckActionBusy] = useState(false);
+  // Цели последней проверки (файлы, папки, пути) для действий «исправить / удалить / в папке».
+  // Targets of the last check (files, folders, paths) for the fix / delete / show-in-folder actions.
+  const romCheckTargetsRef = useRef(new Map<string, { target: RomCheckTarget; absPath: string | null }>());
   const [isProcessingBuffer, setIsProcessingBuffer] = useState(false);
   const [xmlModalOpen, setXmlModalOpen] = useState(false);
   const [progressPct, setProgressPct] = useState(0);
@@ -7936,6 +7941,7 @@ export function App() {
     const ids = onlyIds ? new Set(onlyIds) : null;
     let roms: ScannedRomFile[] = romsRef.current.filter((r) => r.status === 'verified');
     const missingTargets: RomCheckTarget[] = [];
+    let checkRoot: any = rootDirHandle || libraryDirHandle || null;
     stopRequestedRef.current = false;
     setIsCheckingRoms(true);
     setRomCheckProgress('');
@@ -7955,6 +7961,7 @@ export function App() {
           addLog(msg);
           return;
         }
+        checkRoot = root;
         const rows = ids ? active.rows.filter((r) => ids.has(r.id)) : active.rows;
         const { roms: hydrated } = await hydrateRomsFromDbRows(root, rows);
         roms = hydrated;
@@ -7993,9 +8000,12 @@ export function App() {
       }
       const verifyChd = async (file: NamedBlob, consoleCode: string, deep: boolean): Promise<ChdVerifyAnswer | null> => {
         const path = nativePathOf(file);
-        if (!path) return null;
         const form = new FormData();
-        form.append('path', path);
+        if (path) form.append('path', path);
+        // Окно Edge: пути нет. Для полной проверки отдаём сам файл, заголовок проверен на странице.
+        // Edge window: no path. For the full check the file itself is sent; the header was checked on the page.
+        else if (deep) form.append('file', file, file.name);
+        else return null;
         form.append('console', consoleCode);
         if (deep) form.append('deep', '1');
         const resp = await fetch('/api/native/converter/verify', { method: 'POST', body: form });
@@ -8031,6 +8041,24 @@ export function App() {
             .map((s) => s.system.name);
         }
       }
+      // Что можно сделать с каждой игрой. / What can be done with each game.
+      const byId = new Map(targets.map((tg) => [tg.id, tg] as const));
+      const rootPath: string | null = checkRoot?.__aegisNativeFs && typeof checkRoot.path === 'string' ? checkRoot.path : null;
+      const joinRoot = (rel: string) =>
+        rootPath && rel ? `${rootPath.replace(/[\\/]+$/, '')}${rootPath.includes('\\') ? '\\' : '/'}${rel.replace(/^[\\/]+/, '')}` : null;
+      const hasPath = (f: NamedBlob) => Boolean(nativePathOf(f));
+      romCheckTargetsRef.current = new Map();
+      for (const r of report.results) {
+        const tg = byId.get(r.id);
+        if (!tg) continue;
+        const absPath = (tg.file && nativePathOf(tg.file)) || joinRoot(tg.relativePath);
+        romCheckTargetsRef.current.set(r.id, { target: tg, absPath });
+        if (r.level === 'ok') continue;
+        const fixes = planFixes(tg, r, hasPath).map((op) => op.kind);
+        if (fixes.length) r.fixes = [...new Set(fixes)];
+        r.canReveal = Boolean(absPath);
+        r.canDelete = Boolean(tg.file && !tg.missing && tg.parentHandle);
+      }
       setRomCheckReport(report);
       const doneMsg = tf('rc.done', report.counts);
       setCurrentActionText(doneMsg);
@@ -8038,6 +8066,132 @@ export function App() {
     } finally {
       setIsCheckingRoms(false);
       setRomCheckProgress('');
+      setProgressPct(100);
+    }
+  };
+
+  // Действия по результатам проверки ромов. / Actions on ROM check results.
+  const handleRomCheckAction = async (action: RomCheckAction, ids: string[]) => {
+    if (romCheckActionBusy || isCheckingRoms) return;
+    const items = ids
+      .map((id) => ({ id, entry: romCheckTargetsRef.current.get(id) }))
+      .filter((x): x is { id: string; entry: { target: RomCheckTarget; absPath: string | null } } => Boolean(x.entry));
+    if (items.length === 0) return;
+
+    if (action === 'reveal') {
+      const p = items[0].entry.absPath;
+      if (!p) return;
+      try {
+        const resp = await fetch('/api/native/romcheck/reveal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: p }),
+        });
+        if (!resp.ok) addLog(tf('rc.act.revealFailed', { path: p }));
+      } catch {
+        addLog(tf('rc.act.revealFailed', { path: p }));
+      }
+      return;
+    }
+
+    const outcomes = new Map<string, { state: 'fixed' | 'deleted' | 'error'; text: string }>();
+    const fixText = (o: FixOutcome) => tf(`rc.fix.${o.code}`, { msg: '', n: 0, mode: '', ...(o.params || {}) }).trim();
+    setRomCheckActionBusy(true);
+    try {
+      let i = 0;
+      for (const { id, entry } of items) {
+        i++;
+        const tg = entry.target;
+        setCurrentActionText(tf(action === 'fix' ? 'rc.act.fixing' : 'rc.act.deleting', { i, total: items.length, title: tg.title }));
+        setProgressPct(Math.round((i / items.length) * 100));
+        if (action === 'fix') {
+          const res = romCheckReport?.results.find((r) => r.id === id);
+          if (!res) continue;
+          const ops = planFixes(tg, res, (f) => Boolean(nativePathOf(f)));
+          if (ops.length === 0) continue;
+          const texts: string[] = [];
+          let ok = true;
+          for (const op of ops) {
+            const o = await runFix(op, (f) => nativePathOf(f));
+            ok = ok && o.ok;
+            texts.push(fixText(o));
+          }
+          const text = texts.join(' ');
+          outcomes.set(id, { state: ok ? 'fixed' : 'error', text });
+          addLog(`${tg.title}: ${text}`);
+        } else {
+          const files = await filesToDelete(tg);
+          if (files.length === 0) continue;
+          let done = false;
+          let err = '';
+          const paths = files.map((f) => (f.file ? nativePathOf(f.file) : null));
+          // Свое окно: в корзину Windows через Go. / Own window: to the Windows Recycle Bin via Go.
+          if (paths.every(Boolean)) {
+            try {
+              const resp = await fetch('/api/native/romcheck/trash', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ paths }),
+              });
+              if (resp.ok) done = true;
+              else if (resp.status !== 501) err = String((await resp.json().catch(() => null))?.error || resp.status);
+            } catch (e: any) {
+              err = String(e?.message || e);
+            }
+          }
+          // Иначе удаляем через папку (без корзины). / Otherwise delete through the folder (no Recycle Bin).
+          if (!done && !err) {
+            try {
+              for (const f of files) {
+                if (!f.dir) continue;
+                try {
+                  await f.dir.removeEntry(f.name);
+                } catch (e: any) {
+                  if (e?.name !== 'NotFoundError') throw e;
+                }
+              }
+              done = true;
+            } catch (e: any) {
+              err = String(e?.message || e);
+            }
+          }
+          if (done) {
+            const text = tf(isNativeFsEnabled() && paths.every(Boolean) ? 'rc.act.deletedTrash' : 'rc.act.deleted', { n: files.length });
+            outcomes.set(id, { state: 'deleted', text });
+            addLog(`${tg.title}: ${text}`);
+          } else {
+            const text = tf('rc.fix.failed', { msg: err });
+            outcomes.set(id, { state: 'error', text });
+            addLog(`${tg.title}: ${text}`);
+          }
+        }
+      }
+      if (action === 'delete') {
+        // Удалённые ромы уходят из сеанса. / Deleted ROMs leave the session.
+        const gone = new Set([...outcomes].filter(([, o]) => o.state === 'deleted').map(([id]) => id));
+        if (gone.size) {
+          romsRef.current = romsRef.current.filter((r) => !gone.has(r.id));
+          setRoms(romsRef.current);
+        }
+      }
+      setRomCheckReport((prev) =>
+        prev
+          ? {
+              ...prev,
+              results: prev.results.map((r) => {
+                const o = outcomes.get(r.id);
+                if (!o) return r;
+                return { ...r, outcome: o, fixes: o.state === 'error' ? r.fixes : undefined, canDelete: o.state === 'deleted' ? false : r.canDelete };
+              }),
+            }
+          : prev
+      );
+      const okCount = [...outcomes.values()].filter((o) => o.state !== 'error').length;
+      const msg = tf('rc.act.summary', { ok: okCount, failed: outcomes.size - okCount });
+      setCurrentActionText(msg);
+      addLog(msg);
+    } finally {
+      setRomCheckActionBusy(false);
       setProgressPct(100);
     }
   };
@@ -10193,6 +10347,8 @@ export function App() {
         romCheckReport={romCheckReport}
         romCheckRunning={isCheckingRoms}
         romCheckProgress={romCheckProgress}
+        onRomCheckAction={handleRomCheckAction}
+        romCheckActionBusy={romCheckActionBusy}
         onScanPhantomFolders={() => void runWithSessionRoms('handleScanPhantomFolders')}
         onRepairSdCard={(fw) => handleRepairR36SSDCard(fw as any)}
         sdTargetFolderName={sdTargetFolderName}

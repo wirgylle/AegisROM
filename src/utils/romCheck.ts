@@ -46,7 +46,17 @@ export interface RomCheckResult {
   path: string;
   level: RomCheckLevel;
   issues: RomCheckIssue[];
+  /** Что можно исправить (см. romCheckActions.ts). / What can be fixed (see romCheckActions.ts). */
+  fixes?: ('cue' | 'm3u' | 'makeCue' | 'rebuildChd')[];
+  /** Есть путь на диске: можно показать в папке. / Has a disk path: can be shown in its folder. */
+  canReveal?: boolean;
+  /** Файлы на месте: можно удалить. / Files are there: can be deleted. */
+  canDelete?: boolean;
+  /** Итог последнего действия. / The outcome of the last action. */
+  outcome?: { state: 'fixed' | 'deleted' | 'error'; text: string };
 }
+
+export type RomCheckAction = 'fix' | 'delete' | 'reveal';
 
 export interface ChdVerifyAnswer {
   error?: string;

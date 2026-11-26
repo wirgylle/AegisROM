@@ -14,6 +14,7 @@ package aegisapi
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -83,10 +84,23 @@ func HandleChdVerify(w http.ResponseWriter, r *http.Request, chdman string, prep
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	p, err := ResolveVFSPath(strings.TrimSpace(r.FormValue("path")))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusForbidden)
-		return
+	var p string
+	if raw := strings.TrimSpace(r.FormValue("path")); raw != "" {
+		var err error
+		if p, err = ResolveVFSPath(raw); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+	} else {
+		// Окно браузера (Edge): пути к файлу нет, страница присылает сам CHD.
+		// Browser window (Edge): there is no file path, the page sends the CHD itself.
+		up, err := saveUploadedCHD(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		defer os.RemoveAll(filepath.Dir(up))
+		p = up
 	}
 	if st, err := os.Stat(p); err != nil || st.IsDir() {
 		http.Error(w, "file not found", http.StatusNotFound)
@@ -120,4 +134,39 @@ func HandleChdVerify(w http.ResponseWriter, r *http.Request, chdman string, prep
 		}
 	}
 	writeJSONOK(w, res)
+}
+
+// saveUploadedCHD copies the multipart "file" part into a temp folder and returns its path.
+func saveUploadedCHD(r *http.Request) (string, error) {
+	if r.MultipartForm == nil {
+		return "", errors.New("no path and no file")
+	}
+	fhs := r.MultipartForm.File["file"]
+	if len(fhs) == 0 {
+		return "", errors.New("no path and no file")
+	}
+	in, err := fhs[0].Open()
+	if err != nil {
+		return "", err
+	}
+	defer in.Close()
+	dir, err := os.MkdirTemp("", "aegis-chd-verify-")
+	if err != nil {
+		return "", err
+	}
+	out := filepath.Join(dir, "upload.chd")
+	f, err := os.Create(out)
+	if err != nil {
+		os.RemoveAll(dir)
+		return "", err
+	}
+	_, cErr := io.Copy(f, in)
+	if err := f.Close(); cErr == nil {
+		cErr = err
+	}
+	if cErr != nil {
+		os.RemoveAll(dir)
+		return "", cErr
+	}
+	return out, nil
 }

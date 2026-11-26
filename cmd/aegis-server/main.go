@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -70,6 +71,10 @@ func run(addr, distDir, dataDir, devPickDir string, devSecrets bool) error {
 	// Запуск в окне и сохранения рядом с ромом (как в aegis-gui).
 	aegisapi.RegisterQuickTestRoutes(mux, nil)
 	aegisapi.RegisterSaveRoutes(mux, nil)
+	// Действия «Проверки ромов». / ROM check actions.
+	aegisapi.RegisterRomCheckRoutes(mux, nil, aegisapi.RomCheckOptions{
+		Chdman: func() string { p, _ := exec.LookPath("chdman"); return p },
+	})
 	// Заливка по Wi-Fi (SFTP, SMB). / Wi-Fi upload (SFTP, SMB).
 	transferOpts := aegisapi.TransferOptions{}
 	if devSecrets {
