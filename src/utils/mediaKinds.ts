@@ -54,6 +54,7 @@ const DIR_KIND: Record<string, MediaKind> = {
   box2dfront: 'boxart',
   box2d: 'boxart',
   box: 'boxart',
+  boxes: 'boxart',
   boxfront: 'boxart',
   'box-2d': 'boxart',
   box_2d: 'boxart',

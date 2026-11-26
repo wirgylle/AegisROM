@@ -29,6 +29,9 @@ var NonCoverMediaDirs = map[string]bool{
 	"box2dback": true, "box2dside": true, "boxside": true, "boxtexture": true, "box-texture": true,
 	"bezel": true, "bezels": true, "extra": true, "extra1": true, "manuals": true, "manual": true,
 	"docs": true, "magazines": true, "flyers": true,
+	// Skraper: маркиза, Steam grid, советы. / Skraper: marquee, Steam grid, tips.
+	"screenmarquee": true, "screenmarquees": true, "steamgrid": true, "steamgrids": true,
+	"tipsandtricks": true, "tips": true,
 }
 
 // ManualMaxBytes: больше мануалы не отдаём. / Larger manuals are not served.
@@ -146,6 +149,8 @@ func RegisterManualRoutes(mux *http.ServeMux, touch func()) {
 	if touch == nil {
 		touch = func() {}
 	}
+	// Галерея медиа игры (gamemedia.go). / The game media gallery (gamemedia.go).
+	RegisterGameMediaRoutes(mux, touch)
 	mux.HandleFunc("/api/native/fs/manual", func(w http.ResponseWriter, r *http.Request) {
 		touch()
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {

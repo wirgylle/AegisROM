@@ -42,6 +42,9 @@ import {
 } from 'lucide-react';
 import { GameInspectorCoverVideo } from './GameInspectorCoverVideo';
 import { MediaVersionsPanel, type MediaVersionsView } from './MediaVersionsPanel';
+import { GameMediaGallery, type GameMediaItem } from './GameMediaGallery';
+import { GAME_MEDIA_KINDS, GAME_MEDIA_LABELS, type GameMediaKind } from '../utils/gameMediaKinds';
+import { nativeRomQuery } from '../utils/romSaves';
 import type { VersionSlot } from '../utils/mediaVersions';
 import { DatFilesPanel } from './DatFilesPanel';
 import { RomCheckPanel } from './RomCheckPanel';
@@ -167,7 +170,7 @@ import { QuickTestModal, type QuickTestRequest } from './QuickTestModal';
 import { DonateModal } from './DonateModal';
 import { RomSavesPanel } from './RomSavesPanel';
 import { ManualButton } from './ManualViewer';
-import { MediaTidyModal } from './MediaTidyModal';
+import { MediaTidyModal, MediaTidyRunPanel } from './MediaTidyModal';
 import { SettingsModal } from './SettingsModal';
 import { loadAppSettings, subscribeAppSettings } from '../utils/appSettings';
 import { resolveQuickTestCore, pickCueDataTrack, pickBiosForRegion, fileExt } from '../utils/quickTest';
@@ -301,6 +304,10 @@ export interface UnifiedGameRow {
   // Manual (PDF): the session file (not stored) and its path from the scan folder.
   manualFile?: File;
   manualRel?: string;
+  // Какие виды медиа нашлись у игры (utils/gameMediaKinds.ts): обложка, фон, карты, носитель…
+  // Заполняет «Найти медиа в папках»; нужно фильтру «Медиа».
+  // Which media kinds the game has (utils/gameMediaKinds.ts); filled by "Find media in folders".
+  mediaKinds?: string[];
 }
 
 interface FigmaConceptStudioProps {
@@ -345,6 +352,11 @@ interface FigmaConceptStudioProps {
     libraryPathHint?: string,
     interactive?: boolean
   ) => Promise<UnifiedGameRow[]>;
+  /**
+   * Все медиа рома через handle'ы папки (галерея «Медиа игры»); null — папка недоступна.
+   * Every media file of the ROM via folder handles (the "Game media" gallery); null: no folder access.
+   */
+  onLoadGameMedia?: (row: UnifiedGameRow) => Promise<GameMediaItem[] | null>;
   /** Версии медиа рома (V1, V2…) для карточки. / A ROM's media versions for the game card. */
   onLoadMediaVersions?: (row: UnifiedGameRow) => Promise<MediaVersionsView | null>;
   /** Выбор версии по умолчанию; вернёт новую ссылку на картинку. / Picks the default version; returns the new image URL. */
@@ -738,6 +750,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   hasMediaFolderAccess = false,
   onResolveMediaForDbRows,
   onLoadMediaVersions,
+  onLoadGameMedia,
   onSelectMediaVersion,
   logs = [],
   onClearLogs,
@@ -1012,6 +1025,9 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   );
   // Фильтр по статусу: оригиналы, переводы, хаки, прочие патчи. / Status filter: originals, translations, hacks, other patches.
   const [libraryModFilter, setLibraryModFilter] = useState<'all' | 'modded' | RomModGroup>('all');
+  // Фильтр «Медиа»: игры с видом медиа (фон, карты, картридж…) или без обложки.
+  // "Media" filter: games with a media kind (fan art, maps, cartridge…) or without a cover.
+  const [libraryMediaFilter, setLibraryMediaFilter] = useState<'all' | 'noCover' | GameMediaKind>('all');
   // Коллекции: в «Все» одна карточка на игру, версии с других консолей под кнопкой.
   // Collections: in "All" one card per game, versions from other consoles behind a button.
   // Серии: одна карточка на всю линейку (Final Fantasy I–XII, Tactics). Режимы взаимоисключающие.
@@ -1230,6 +1246,28 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       })
     );
     setMediaVersionsRev((n) => n + 1);
+  };
+
+  // Галерея нашла виды медиа: запоминаем у строки для фильтра «Медиа». / Gallery found media kinds: keep them for the filter.
+  const [gameMediaRev, setGameMediaRev] = useState(0);
+  const patchRowMediaKinds = (rowId: string, kinds: GameMediaKind[]) => {
+    setSavedDatabases((prev) => {
+      let changed = false;
+      const next = prev.map((db) => {
+        if (!db.rows.some((r) => r.id === rowId)) return db;
+        return {
+          ...db,
+          rows: db.rows.map((r) => {
+            if (r.id !== rowId) return r;
+            const merged = GAME_MEDIA_KINDS.filter((k) => kinds.includes(k) || (r.mediaKinds || []).includes(k));
+            if (merged.length === (r.mediaKinds || []).length) return r;
+            changed = true;
+            return { ...r, mediaKinds: merged };
+          }),
+        };
+      });
+      return changed ? next : prev;
+    });
   };
 
   const hydrateDbRowsMedia = async (
@@ -1708,6 +1746,30 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     [enrichedGamesSource, groupFilterOn]
   );
 
+  // Виды медиа строки: найденные в папках (mediaKinds) плюс то, что уже есть у строки.
+  // A row's media kinds: those found in folders (mediaKinds) plus what the row already has.
+  const rowMediaKinds = useCallback((g: UnifiedGameRow): Set<string> => {
+    const set = new Set<string>(g.mediaKinds || []);
+    if (g.boxArtUrl || g.media?.boxart) set.add('boxart');
+    if (g.media?.snap) set.add('snap');
+    if (g.media?.title) set.add('title');
+    if (g.media?.marquee) set.add('marquee');
+    if (g.media?.image) set.add('image');
+    if (g.videoUrl) set.add('video');
+    if (g.manualRel || g.manualFile) set.add('manual');
+    return set;
+  }, []);
+  const libraryMediaCounts = React.useMemo(() => {
+    const counts = new Map<string, number>();
+    let noCover = 0;
+    for (const g of enrichedGamesSource) {
+      const k = rowMediaKinds(g);
+      if (!k.has('boxart')) noCover++;
+      k.forEach((x) => counts.set(x, (counts.get(x) || 0) + 1));
+    }
+    return { counts, noCover };
+  }, [enrichedGamesSource, rowMediaKinds]);
+
   const filteredGames = React.useMemo(() => {
     const q = deferredSearchQuery.trim().toLowerCase();
     const hasQuery = q.length > 0;
@@ -1736,6 +1798,10 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
       if (libraryModFilter !== 'all') {
         const grp = modGroup((g.modKind as RomModKind) || 'original');
         if (libraryModFilter === 'modded' ? grp === 'original' : grp !== libraryModFilter) continue;
+      }
+      if (libraryMediaFilter !== 'all') {
+        const k = rowMediaKinds(g);
+        if (libraryMediaFilter === 'noCover' ? k.has('boxart') : !k.has(libraryMediaFilter)) continue;
       }
       if (libraryGroupMembership && !passesGroupFilter(g.id, libraryGroupMembership, deferredGroupFilter)) {
         continue;
@@ -1806,7 +1872,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     });
 
     return filtered;
-  }, [enrichedGamesSource, activeSidebarFilterKey, sidebarGroupBy, deferredSearchQuery, librarySortBy, libraryModFilter, libraryGroupMembership, deferredGroupFilter, t, activeCollator]);
+  }, [enrichedGamesSource, activeSidebarFilterKey, sidebarGroupBy, deferredSearchQuery, librarySortBy, libraryModFilter, libraryMediaFilter, rowMediaKinds, libraryGroupMembership, deferredGroupFilter, t, activeCollator]);
 
   // В редакторе (таблица файлов) нужны все файлы, поэтому там коллекции не сворачиваются.
   // Внутри одной консоли сворачивание тоже работает (регионы, ревизии, хаки, части серии).
@@ -2084,10 +2150,15 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         return updated;
       });
       onAddLog?.(mediaRefreshText('done', { covers, videos, manuals, count: hydrated.length }));
+      setGameMediaRev((n) => n + 1);
     } finally {
       setMediaRefreshBusy(false);
     }
   };
+  // Свежая версия для фоновой операции «Упорядочить медиа» (она завершается позже рендера, который её запустил).
+  // The latest version for the background "Tidy media" run, which ends after the render that started it.
+  const mediaRefreshRef = useRef(handleRefreshFolderMedia);
+  mediaRefreshRef.current = handleRefreshFolderMedia;
   const activePct = isAnyProcessRunning ? Math.max(progressPct, 5) : simRunning ? simProgress : 0;
 
   const latestLogLine =
@@ -2580,6 +2651,32 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     </select>
                   </div>
 
+                  {/* Фильтр по медиа (виды Skraper). / Media filter (Skraper kinds). */}
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <span className="text-slate-500 dark:text-slate-400 font-semibold">{lang === 'ru' ? 'Медиа:' : 'Media:'}</span>
+                    <select
+                      value={libraryMediaFilter}
+                      onChange={(e) => setLibraryMediaFilter(e.target.value as any)}
+                      data-testid="library-media-filter"
+                      title={
+                        lang === 'ru'
+                          ? 'Фон, карты, картридж и другие виды появляются после «Найти медиа в папках» (Инструменты → Библиотека) или при открытии игры'
+                          : 'Fan art, maps, cartridge and other kinds appear after "Find media in folders" (Tools → Library) or when a game is opened'
+                      }
+                      className="h-8 max-w-[11rem] bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 text-xs font-semibold text-slate-800 dark:text-slate-100"
+                    >
+                      <option value="all">{lang === 'ru' ? 'Все' : 'All'}</option>
+                      <option value="noCover">
+                        {lang === 'ru' ? 'Без обложки' : 'No cover'} ({libraryMediaCounts.noCover})
+                      </option>
+                      {GAME_MEDIA_KINDS.filter((k) => (libraryMediaCounts.counts.get(k) || 0) > 0 || libraryMediaFilter === k).map((k) => (
+                        <option key={k} value={k}>
+                          {(lang === 'ru' ? 'Есть: ' : 'Has: ') + GAME_MEDIA_LABELS[lang === 'ru' ? 'ru' : 'en'][k]} ({libraryMediaCounts.counts.get(k) || 0})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
                   <div className="relative w-full sm:w-52">
                     <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
@@ -2882,7 +2979,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       type="button"
                       onClick={() => setMediaTidyOpen(true)}
                       disabled={activeRunning || mediaRefreshBusy}
-                      title={lang === 'ru' ? 'Перенести media/* Skraper в images, marquees, videos, manuals под имена ромов' : 'Move Skraper media/* into images, marquees, videos, manuals named after the ROMs'}
+                      title={lang === 'ru' ? 'Перенести все папки media/* Skraper (обложки, фон, карты, картриджи, Steam grid, видео, мануалы…) в images, marquees, videos, manuals под имена ромов. Идёт в фоне.' : 'Move every Skraper media/* folder (covers, fan art, maps, cartridges, Steam grid, videos, manuals…) into images, marquees, videos, manuals named after the ROMs. Runs in the background.'}
                       className="w-full bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 px-3 py-2 rounded-lg font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
                     >
                       <Wand2 className="w-3.5 h-3.5 shrink-0" />
@@ -2890,13 +2987,6 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     </button>
                     </div>
                     <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">{mediaRefreshText('hint')}</p>
-                    {mediaTidyOpen && (
-                      <MediaTidyModal
-                        onClose={() => setMediaTidyOpen(false)}
-                        onAddLog={onAddLog}
-                        onApplied={() => void handleRefreshFolderMedia()}
-                      />
-                    )}
                   </div>
 
                   {/* Проверка ромов: сразу под папкой библиотеки, чтобы её было видно. / ROM check: right below the library folder so it is easy to find. */}
@@ -4077,6 +4167,26 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     />
                   )}
 
+                  {/* Все медиа игры (Skraper: фон, карты, картридж, Steam grid, советы…). */}
+                  {/* Every media file of the game (Skraper: fan art, maps, cartridge, Steam grid, tips…). */}
+                  <GameMediaGallery
+                    gameKey={`${selectedGame.id}|${mediaVersionsRev}|${gameMediaRev}`}
+                    title={selectedGame.title}
+                    load={async () => {
+                      const viaHandles = onLoadGameMedia ? await onLoadGameMedia(selectedGame).catch(() => null) : null;
+                      if (viaHandles && viaHandles.length) return viaHandles;
+                      if (romDiskRef) {
+                        try {
+                          const r = await fetch(`/api/native/fs/game-media?${nativeRomQuery(romDiskRef)}`, { cache: 'no-store' });
+                          const data = await r.json();
+                          if (data?.ok && Array.isArray(data.items)) return data.items as GameMediaItem[];
+                        } catch {}
+                      }
+                      return viaHandles || [];
+                    }}
+                    onKinds={(kinds) => patchRowMediaKinds(selectedGame.id, kinds)}
+                  />
+
                   <div>
                     <h3 className="text-lg font-bold leading-snug text-slate-900 dark:text-slate-100">
                       {selectedGame.title}
@@ -4793,6 +4903,17 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
         onApplyLibrarySync={handleApplyLibrarySyncEntries}
         onAddLog={onAddLog}
       />
+
+      {/* «Упорядочить медиа» в фоне: окно и плашка прогресса живут вне вкладки «Инструменты».
+          "Tidy media" in the background: the window and progress panel live outside the Tools tab. */}
+      {mediaTidyOpen && (
+        <MediaTidyModal
+          onClose={() => setMediaTidyOpen(false)}
+          onAddLog={onAddLog}
+          onApplied={() => void mediaRefreshRef.current()}
+        />
+      )}
+      <MediaTidyRunPanel windowOpen={mediaTidyOpen} onOpen={() => setMediaTidyOpen(true)} />
     </div>
   );
 };

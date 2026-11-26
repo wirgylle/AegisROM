@@ -8,6 +8,7 @@ import { MULTI_DBS_DISK_KEY, writeDiskValue } from './nativeStorage';
 import { reviveNativeHandle } from './nativeFs';
 import { MediaKindIndex, stripBlobMedia, stripMediaSuffix } from './mediaKinds';
 import { isManualFile, isNonCoverDir, manualStem } from './skraperMedia';
+import { classifyGameMediaFile, gameMediaNameKey, NON_COVER_KINDS, type GameMediaKind } from './gameMediaKinds';
 
 const IDB_NAME = 'AegisROM_FS_Handles_v5';
 const IDB_STORE = 'directory_handles';
@@ -178,6 +179,25 @@ export interface HydratedMediaIndex {
   kinds: MediaKindIndex<File>;
   /** Мануалы (PDF) по имени рома; path — путь от корня. / Manuals (PDF) by ROM name; path from the root. */
   manualsByStem: Map<string, { file: File; path: string }>;
+  /**
+   * Какие виды медиа есть у имени (обложка, фон, карты, носитель, мануал…), для фильтра «Медиа».
+   * Ключи: имя без суффикса в нижнем регистре и gameMediaNameKey.
+   * Which media kinds a name has (cover, fan art, maps, cartridge, manual…), for the "Media" filter.
+   */
+  kindsByStem: Map<string, Set<GameMediaKind>>;
+}
+
+/** Виды медиа строки по индексу. / A row's media kinds from the index. */
+export function lookupMediaKinds(idx: HydratedMediaIndex, keys: Iterable<string>): GameMediaKind[] {
+  const out = new Set<GameMediaKind>();
+  for (const k of keys) {
+    if (!k) continue;
+    for (const key of [k.toLowerCase(), gameMediaNameKey(k)]) {
+      const hit = key ? idx.kindsByStem.get(key) : undefined;
+      if (hit) hit.forEach((x) => out.add(x));
+    }
+  }
+  return Array.from(out);
 }
 
 /**
@@ -194,9 +214,23 @@ export async function collectLocalMediaFromHandle(
   const videosByStem = new Map<string, File>();
   const kinds = new MediaKindIndex<File>();
   const manualsByStem = new Map<string, { file: File; path: string }>();
+  const kindsByStem = new Map<string, Set<GameMediaKind>>();
 
   const registerFile = (file: File, dirName: string, path: string) => {
     const low = file.name.toLowerCase();
+    // Вид по папке и суффиксу: для фильтра «Медиа», и чтобы фон или карта не стали обложкой.
+    // Kind by folder and suffix: for the "Media" filter, and so fan art or a map never becomes a cover.
+    const dirPath = path.split('/').slice(0, -1).join('/');
+    const gm = classifyGameMediaFile(file.name, dirPath);
+    if (gm) {
+      for (const key of [gm.stem.toLowerCase(), gameMediaNameKey(gm.stem)]) {
+        if (!key) continue;
+        let set = kindsByStem.get(key);
+        if (!set) kindsByStem.set(key, (set = new Set()));
+        set.add(gm.kind);
+      }
+      if (NON_COVER_KINDS.has(gm.kind) && gm.kind !== 'manual') return;
+    }
     if (isManualFile(file.name, dirName)) {
       const k = manualStem(file.name).toLowerCase();
       const nk = normalizeStemKey(manualStem(file.name));
@@ -236,7 +270,7 @@ export async function collectLocalMediaFromHandle(
           if (lowDir === '_duplicates_1g1r' || lowDir === '_baddumps_junk') continue;
           await walk(entry, depth + 1, prefix ? `${prefix}/${entry.name}` : entry.name);
         } else if (entry.kind === 'file') {
-          if (/\.(png|jpe?g|webp|bmp|mp4|webm|pdf)$/i.test(entry.name)) {
+          if (/\.(png|jpe?g|webp|bmp|gif|mp4|webm|mkv|pdf|txt)$/i.test(entry.name)) {
             try {
               const f = await entry.getFile();
               const path = prefix ? `${prefix}/${entry.name}` : entry.name;
@@ -249,7 +283,7 @@ export async function collectLocalMediaFromHandle(
   }
 
   await walk(rootHandle, 0, '');
-  return { imagesByStem, videosByStem, kinds, manualsByStem };
+  return { imagesByStem, videosByStem, kinds, manualsByStem, kindsByStem };
 }
 
 /**

@@ -55,6 +55,13 @@ export const NON_COVER_DIRS = new Set([
   'docs',
   'magazines',
   'flyers',
+  // Skraper: маркиза, Steam grid, советы. / Skraper: marquee, Steam grid, tips.
+  'screenmarquee',
+  'screenmarquees',
+  'steamgrid',
+  'steamgrids',
+  'tipsandtricks',
+  'tips',
 ]);
 
 const extOf = (name: string): string => {

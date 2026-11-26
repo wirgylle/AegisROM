@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -45,7 +46,7 @@ var mediaThumbRe = regexp.MustCompile(`[-_](thumb|thumbnail)$`)
 
 var mediaDirKind = map[string]string{
 	"boxart": MediaBoxart, "boxarts": MediaBoxart, "named_boxarts": MediaBoxart, "covers": MediaBoxart,
-	"cover": MediaBoxart, "box2dfront": MediaBoxart, "box2d": MediaBoxart, "box": MediaBoxart,
+	"cover": MediaBoxart, "box2dfront": MediaBoxart, "box2d": MediaBoxart, "box": MediaBoxart, "boxes": MediaBoxart,
 	"boxfront": MediaBoxart, "box-2d": MediaBoxart, "box_2d": MediaBoxart, "box2d-front": MediaBoxart,
 	"thumbnails": MediaBoxart,
 	"snap":       MediaSnap, "snaps": MediaSnap, "named_snaps": MediaSnap, "screenshots": MediaSnap,
@@ -116,6 +117,9 @@ type mediaSlot struct {
 type LocalMediaIndex struct {
 	slots  map[string]*mediaSlot
 	videos map[string]string
+	// kinds: все виды медиа (gamemedia.go) по имени рома, для фильтра «Медиа».
+	// kinds: every media kind (gamemedia.go) by ROM name, for the "Media" filter.
+	kinds map[string]map[string]bool
 	// readSize читает размер картинки; подменяется в тестах. / Reads an image size; replaced in tests.
 	readSize func(path string) (int, int, bool)
 }
@@ -123,7 +127,7 @@ type LocalMediaIndex struct {
 // IndexLocalMedia обходит root на глубину maxDepth (папки фона, карт и мануалов пропускаются).
 // IndexLocalMedia walks root down to maxDepth (fan art, map and manual folders are skipped).
 func IndexLocalMedia(root string, maxDepth int) *LocalMediaIndex {
-	idx := &LocalMediaIndex{slots: map[string]*mediaSlot{}, videos: map[string]string{}, readSize: readImageFileSize}
+	idx := &LocalMediaIndex{slots: map[string]*mediaSlot{}, videos: map[string]string{}, kinds: map[string]map[string]bool{}, readSize: readImageFileSize}
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return idx
@@ -143,8 +147,10 @@ func IndexLocalMedia(root string, maxDepth int) *LocalMediaIndex {
 				return nil
 			}
 			low := strings.ToLower(name)
+			// Папки фона, карт и т. п. обходим ради фильтра «Медиа», в обложки они не идут (см. add).
+			// Fan art, map etc. folders are walked for the "Media" filter; they never become covers (see add).
 			if strings.HasPrefix(name, ".") || low == "_duplicates_1g1r" || low == "_baddumps_junk" ||
-				NonCoverMediaDirs[low] || strings.Count(p, string(filepath.Separator))-baseDepth > maxDepth {
+				strings.Count(p, string(filepath.Separator))-baseDepth > maxDepth {
 				return filepath.SkipDir
 			}
 			return nil
@@ -158,6 +164,28 @@ func IndexLocalMedia(root string, maxDepth int) *LocalMediaIndex {
 func (idx *LocalMediaIndex) add(p string) {
 	name := filepath.Base(p)
 	ext := strings.ToLower(filepath.Ext(name))
+	parent := filepath.Dir(p)
+	dirPath := filepath.Base(filepath.Dir(parent)) + "/" + filepath.Base(parent)
+	if kind, stem := ClassifyGameMedia(name, dirPath); kind != "" {
+		if idx.kinds == nil {
+			idx.kinds = map[string]map[string]bool{}
+		}
+		for _, k := range []string{strings.ToLower(stem), GameMediaNameKey(stem)} {
+			if k == "" {
+				continue
+			}
+			if idx.kinds[k] == nil {
+				idx.kinds[k] = map[string]bool{}
+			}
+			idx.kinds[k][kind] = true
+		}
+		if GameMediaNonCoverKinds[kind] {
+			return
+		}
+	}
+	if NonCoverMediaDirs[strings.ToLower(filepath.Base(parent))] {
+		return
+	}
 	rawNoExt := strings.ToLower(strings.TrimSuffix(name, filepath.Ext(name)))
 	stripped := stemSuffixRe.ReplaceAllString(rawNoExt, "")
 	norm := NormalizeMediaKey(name)
@@ -399,6 +427,26 @@ type ResolvedMedia struct {
 	BoxArtURL string            `json:"boxArtUrl"`
 	VideoURL  string            `json:"videoUrl"`
 	Media     map[string]string `json:"media,omitempty"`
+	// Kinds: виды медиа игры для фильтра «Медиа». / The game's media kinds for the "Media" filter.
+	Kinds []string `json:"kinds,omitempty"`
+}
+
+// MediaKindsOf: виды медиа по ключам имени рома. / Media kinds for the ROM name keys.
+func (idx *LocalMediaIndex) MediaKindsOf(names []string) []string {
+	set := map[string]bool{}
+	for _, n := range names {
+		for _, k := range []string{strings.ToLower(n), GameMediaNameKey(n)} {
+			for kind := range idx.kinds[k] {
+				set[kind] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ResolveLocalMedia ищет медиа строк в папке библиотеки; ссылки ведут на urlPrefix + путь.
@@ -415,6 +463,11 @@ func ResolveLocalMedia(libraryPath string, items []ResolveMediaItem, urlPrefix s
 	for _, it := range items {
 		paths, video := idx.Lookup(RomMediaKeys(it.OldFile, it.CleanFile, it.Title))
 		res := ResolvedMedia{ID: it.ID, VideoURL: link(video), BoxArtURL: link(PreferredCover(paths))}
+		stemOf := func(s string) string {
+			b := filepath.Base(s)
+			return strings.TrimSuffix(b, filepath.Ext(b))
+		}
+		res.Kinds = idx.MediaKindsOf([]string{stemOf(it.OldFile), stemOf(it.CleanFile), it.Title})
 		if len(paths) > 0 {
 			res.Media = map[string]string{}
 			for k, p := range paths {
