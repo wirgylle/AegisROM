@@ -80,3 +80,20 @@ func TestQuickTestRomRoute(t *testing.T) {
 		t.Fatalf("POST: code %d", rec.Code)
 	}
 }
+
+// Путь из базы начинается с имени папки библиотеки (скан папки одной консоли).
+// The database path starts with the library folder's name (scan of a single console folder).
+func TestQuickTestRomRootNamePrefix(t *testing.T) {
+	lib := filepath.Join(t.TempDir(), "NES")
+	writeFile(t, filepath.Join(lib, "Battletoads (USA).nes"), 40)
+	q := url.Values{
+		"consoleCode":  {"nes"},
+		"romFileName":  {""},
+		"relativePath": {"NES/Battletoads (USA).nes"},
+		"libraryPath":  {filepath.ToSlash(lib)},
+	}
+	path, status := ResolveQuickTestRom(q)
+	if status != http.StatusOK || filepath.Base(path) != "Battletoads (USA).nes" {
+		t.Fatalf("got %q %d", path, status)
+	}
+}
