@@ -154,6 +154,8 @@ import type {
   SavedBuildRecord,
   SyncDiffEntry,
 } from '../types/aegis';
+import type { InstalledPortInfo } from './PortMasterTab';
+import type { PortInstallResult } from '../utils/portMasterInstall';
 
 export type FigmaConceptId = 'concept_a_sidebar' | 'concept_b_split' | 'concept_c_workbench';
 
@@ -171,6 +173,8 @@ import { MediaTidyModal } from './MediaTidyModal';
 import { SettingsModal } from './SettingsModal';
 import { loadAppSettings, subscribeAppSettings } from '../utils/appSettings';
 import { resolveQuickTestCore, pickCueDataTrack, pickBiosForRegion, fileExt } from '../utils/quickTest';
+import type { LocatedRom } from '../utils/romLocate';
+import { nativePathOf } from '../utils/nativeFs';
 import { getVerifiedBiosFiles } from '../utils/biosScan';
 
 export interface MultiDiscEntry {
@@ -274,6 +278,10 @@ export interface UnifiedGameRow {
   relativePath?: string;
   portMasterSlug?: string;
   portMasterDataPath?: string;
+  // Порт установлен в <библиотека>/ports/ (время установки и имя папки библиотеки).
+  // The port is installed into <library>/ports/ (install time and library folder name).
+  portMasterInstalledAt?: string;
+  portMasterRootName?: string;
   discNumber?: number;
   discCount?: number;
   isMultiDisc?: boolean;
@@ -427,6 +435,16 @@ interface FigmaConceptStudioProps {
   onRunBufferAutoProcess?: () => void;
   onDownloadBufferCmdScript?: () => void;
   isNativeDesktopHost?: boolean;
+  /** Файл рома по записи базы (без скана): папка рома или папка библиотеки. */
+  /** The ROM file for a database record (no scan): the ROM's folder or the library folder. */
+  onResolveRomForLaunch?: (req: {
+    relativePath?: string;
+    altNames?: string[];
+    parentHandle?: any;
+  }) => Promise<LocatedRom | null>;
+  /** Абсолютный путь папки библиотеки в своём окне (нативная прослойка), иначе ''. */
+  /** Absolute library folder path in the native window (native layer), else ''. */
+  libraryDiskPath?: string;
   onDownloadExe?: () => void;
   onDownloadZip?: () => void;
   onAddLog?: (msg: string) => void;
@@ -809,6 +827,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   onRunBufferAutoProcess,
   onDownloadBufferCmdScript,
   isNativeDesktopHost = false,
+  onResolveRomForLaunch,
+  libraryDiskPath = '',
   onDownloadExe,
   onDownloadZip,
   onAddLog,
@@ -1157,29 +1177,83 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
     return slugs;
   }, [savedDatabases, activeDbId]);
 
+  const installedPorts = React.useMemo(() => {
+    const out: Record<string, InstalledPortInfo> = {};
+    const db = savedDatabases.find((d) => d.id === activeDbId) || savedDatabases[0];
+    for (const r of db?.rows || []) {
+      if (r.portMasterSlug && r.portMasterInstalledAt) {
+        out[r.portMasterSlug] = {
+          at: r.portMasterInstalledAt,
+          relativePath: r.relativePath || '',
+          rootName: r.portMasterRootName,
+        };
+      }
+    }
+    return out;
+  }, [savedDatabases, activeDbId]);
+
+  const buildPortMasterRow = (port: PortMasterGame): UnifiedGameRow => ({
+    id: `pm_lib_${port.slug}`,
+    title: port.title,
+    oldFile: `${port.slug}.sh`,
+    cleanFile: `${port.title}.sh`,
+    console: t('cat.portmasterName'),
+    consoleShort: 'PORTS',
+    bitness: '64-bit',
+    region: 'PORT',
+    genre: port.genres?.[0] || t('app.port.genreFallback'),
+    year: 2022,
+    size: port.readyToRun ? t('app.port.rtrSize') : t('app.port.dataSize'),
+    crc32: port.md5 ? port.md5.slice(0, 8).toUpperCase() : 'PORTMAST',
+    serial: `PM-${port.slug.toUpperCase().slice(0, 12)}`,
+    emulator: port.readyToRun ? 'PortMaster (PC / Box64 / LÖVE) ★' : 'PortMaster (WSL2 / PC) ★',
+    status: port.readyToRun ? t('app.port.rtrStatus') : t('app.port.needsDataStatus'),
+    boxArtUrl: port.coverUrl,
+    sourceExt: '.sh',
+    relativePath: `ports/${port.slug}.sh`,
+    portMasterSlug: port.slug,
+    portMasterDataPath: port.requiredDataTargetPath,
+  });
+
+  // Порт установлен: запись в библиотеке с настоящим путём к скрипту запуска (добавить или обновить).
+  // Port installed: a library record with the real launch script path (add or update).
+  const handlePortMasterInstalled = (
+    port: PortMasterGame,
+    res: PortInstallResult,
+    rootName: string
+  ) => {
+    const base = buildPortMasterRow(port);
+    const launcherFile = res.launcher.split('/').pop() || base.oldFile;
+    setSavedDatabases((prev) => {
+      const updated = prev.map((db, idx) => {
+        if (db.id !== activeDbId && !(activeDbId === '' && idx === 0)) return db;
+        const existing = db.rows.find((r) => r.portMasterSlug === port.slug || r.id === base.id);
+        const row: UnifiedGameRow = {
+          ...(existing || base),
+          oldFile: launcherFile,
+          cleanFile: launcherFile,
+          relativePath: res.relativePath,
+          portMasterDataPath: port.requiredDataTargetPath,
+          portMasterInstalledAt: new Date().toISOString(),
+          portMasterRootName: rootName,
+          status: t('pm.install.installedStatus'),
+        };
+        const rows = existing
+          ? db.rows.map((r) => (r === existing ? row : r))
+          : [row, ...db.rows];
+        return {
+          ...db,
+          updatedAt: new Date().toLocaleTimeString(locale, { hour12: false }),
+          rows,
+        };
+      });
+      persistDatabasesSafely(updated);
+      return updated;
+    });
+  };
+
   const handleAddPortMasterToLibrary = (port: PortMasterGame) => {
-    const newRow: UnifiedGameRow = {
-      id: `pm_lib_${port.slug}`,
-      title: port.title,
-      oldFile: `${port.slug}.sh`,
-      cleanFile: `${port.title}.sh`,
-      console: t('cat.portmasterName'),
-      consoleShort: 'PORTS',
-      bitness: '64-bit',
-      region: 'PORT',
-      genre: port.genres?.[0] || t('app.port.genreFallback'),
-      year: 2022,
-      size: port.readyToRun ? t('app.port.rtrSize') : t('app.port.dataSize'),
-      crc32: port.md5 ? port.md5.slice(0, 8).toUpperCase() : 'PORTMAST',
-      serial: `PM-${port.slug.toUpperCase().slice(0, 12)}`,
-      emulator: port.readyToRun ? 'PortMaster (PC / Box64 / LÖVE) ★' : 'PortMaster (WSL2 / PC) ★',
-      status: port.readyToRun ? t('app.port.rtrStatus') : t('app.port.needsDataStatus'),
-      boxArtUrl: port.coverUrl,
-      sourceExt: '.sh',
-      relativePath: `ports/${port.slug}.sh`,
-      portMasterSlug: port.slug,
-      portMasterDataPath: port.requiredDataTargetPath,
-    };
+    const newRow: UnifiedGameRow = buildPortMasterRow(port);
     let nextActionMsg = '';
     setSavedDatabases((prev) => {
       const updated = prev.map((db, idx) => {
@@ -3829,6 +3903,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
               onPortMasterCatalogLoaded={setPortMasterCatalog}
               libraryPortSlugs={libraryPortSlugs}
               onAddPortToLibrary={handleAddPortMasterToLibrary}
+              installedPorts={installedPorts}
+              onPortInstalled={handlePortMasterInstalled}
               libraryPath={effectiveLibraryPath}
               initialSubTab={envInitialSubTab}
             />
@@ -3998,12 +4074,41 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   romFileName: qtFileName,
                   relativePath: (qtDisc ? qtDisc.relativePath : selectedGame.relativePath) || '',
                   consoleCode: selectedGame.consoleShort,
-                  libraryPath: effectiveLibraryPath || '',
+                  // Имя папки из браузера не путь на диске: в своём окне берём абсолютный.
+                  // A browser folder name is not a disk path: the native window gives the absolute one.
+                  libraryPath: libraryDiskPath || effectiveLibraryPath || '',
                   sdCardPath: selectedFolderName || '',
                 }
               : null;
             const handleQuickTest = async () => {
               if (!qtCore) return;
+              const src = qtDisc || selectedGame;
+              let romRef = romDiskRef;
+              let file: File | undefined | null = src.fileObj;
+              let cueText = src.cueText;
+              let companions = src.companionFiles;
+              // Игра из базы без скана: файла в сеансе нет, берём его по пути из базы.
+              // A database game without a scan: no session file, take it by the database path.
+              if (!file && onResolveRomForLaunch) {
+                const relPath = src.relativePath || '';
+                const found = await onResolveRomForLaunch({
+                  relativePath: relPath || qtFileName,
+                  altNames: [src.cleanFile, src.oldFile].filter((n): n is string => Boolean(n)),
+                  parentHandle: src.parentHandle,
+                });
+                if (found) {
+                  // В своём окне знаем точный путь на диске: по нему же и сохранения.
+                  // In the native window the exact disk path is known: saves use it too.
+                  const diskPath = nativePathOf(found.file);
+                  if (diskPath && romRef) romRef = { ...romRef, relativePath: diskPath };
+                  file = found.file;
+                  cueText = found.cueText;
+                  companions = found.companionFiles;
+                }
+              }
+              if (file && fileExt(file.name) === 'cue') {
+                file = pickCueDataTrack(cueText, companions);
+              }
               // BIOS из раздела «BIOS»: только проверенные по MD5. Запрос доступа к папке
               // допустим только по клику, поэтому берём их здесь, а не в окне теста.
               let biosFile: File | null = null;
@@ -4015,12 +4120,6 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                   biosFile = null;
                 }
               }
-              const src = qtDisc || selectedGame;
-              let file: File | undefined | null = src.fileObj;
-              if (file && fileExt(file.name) === 'cue') {
-                file = pickCueDataTrack(src.cueText, src.companionFiles);
-              }
-              const romRef = romDiskRef;
               setQuickTestReq({
                 title: selectedGame.title,
                 consoleShort: selectedGame.consoleShort,

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { X, FileUp, Loader2, AlertTriangle, Maximize2, Gamepad2, Save } from 'lucide-react';
 import { useI18n } from '../i18n/translations';
+import { isLazyBlob, type LazyFile } from '../utils/nativeFs';
 import { nativeRomQuery, saveBaseName, sameBytes, type NativeRomRef, type SaveKind } from '../utils/romSaves';
 import {
   QUICK_TEST_MAX_BYTES,
@@ -83,6 +84,21 @@ export const QuickTestModal: React.FC<QuickTestModalProps> = ({ request, onClose
       const ext = fileExt(file.name);
       if (ext && !request.core.exts.includes(ext)) {
         fail(tf('qt.errExt', { ext: `.${ext}`, core: request.core.label }));
+        return;
+      }
+      // Большие файлы из своего окна приходят как LazyFile (чтение через Go): в плеер
+      // через postMessage уходит только настоящий File.
+      // Large files from the native window come as LazyFile (read through Go): only a real
+      // File can go to the player through postMessage.
+      if (isLazyBlob(file)) {
+        setPhase('loading');
+        (file as unknown as LazyFile)
+          .toFile()
+          .then((real) => {
+            setRomFile(real);
+            setPhase('starting');
+          })
+          .catch((e) => fail(e instanceof Error ? e.message : String(e)));
         return;
       }
       setRomFile(file);

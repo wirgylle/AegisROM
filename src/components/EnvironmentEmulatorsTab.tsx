@@ -19,7 +19,8 @@ import {
   EXTENDED_CONSOLE_CATALOG,
   type EmulatorOption,
 } from '../data/consoleSteamCatalog';
-import { PortMasterTab } from './PortMasterTab';
+import { PortMasterTab, type InstalledPortInfo } from './PortMasterTab';
+import type { PortInstallResult } from '../utils/portMasterInstall';
 import { BiosCenterPanel } from './BiosCenterPanel';
 import type { PortMasterGame, PortMasterSourceConfig } from '../types/aegis';
 import { useI18n } from '../i18n/translations';
@@ -95,6 +96,8 @@ interface EnvironmentEmulatorsTabProps {
   onToggleBuildPort?: (port: PortMasterGame) => void;
   libraryPortSlugs?: string[];
   onAddPortToLibrary?: (port: PortMasterGame) => void;
+  installedPorts?: Record<string, InstalledPortInfo>;
+  onPortInstalled?: (port: PortMasterGame, res: PortInstallResult, rootName: string) => void;
   libraryPath?: string;
   portMasterSourceConfigs?: Record<string, PortMasterSourceConfig>;
   onUpdatePortMasterSourceConfig?: (slug: string, cfg: PortMasterSourceConfig) => void;
@@ -114,6 +117,8 @@ export const EnvironmentEmulatorsTab: React.FC<EnvironmentEmulatorsTabProps> = (
   onToggleBuildPort,
   libraryPortSlugs = [],
   onAddPortToLibrary,
+  installedPorts,
+  onPortInstalled,
   libraryPath = '',
   portMasterSourceConfigs = {},
   onUpdatePortMasterSourceConfig,
@@ -372,6 +377,8 @@ export const EnvironmentEmulatorsTab: React.FC<EnvironmentEmulatorsTabProps> = (
           onToggleBuildPort={(port) => onToggleBuildPort?.(port)}
           libraryPortSlugs={libraryPortSlugs}
           onAddPortToLibrary={onAddPortToLibrary}
+          installedPorts={installedPorts}
+          onPortInstalled={onPortInstalled}
           isNativeDesktopHost={isNativeDesktopHost}
           emulatorCustomPaths={emulatorCustomPaths}
           libraryPath={libraryPath}
