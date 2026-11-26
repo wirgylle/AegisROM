@@ -1,19 +1,28 @@
 import React, { useMemo, useState } from 'react';
-import { FolderOpen, Loader2, Wand2, X } from 'lucide-react';
+import { Check, FolderOpen, Loader2, Square, Wand2, X } from 'lucide-react';
 import { useI18n } from '../i18n/translations';
 import { checkOrRequestHandlePermission, loadDirectoryHandleRecord } from '../utils/persistentHandles';
+import { type NormAction } from '../utils/mediaNormalize';
+import { GAME_MEDIA_LABELS, type GameMediaKind } from '../utils/gameMediaKinds';
 import {
-  applyConsolePlan,
-  findConsoleDirsWithMedia,
-  planConsoleMedia,
-  type ConsoleNormPlan,
-  type NormAction,
-} from '../utils/mediaNormalize';
+  getTidyRun,
+  hideTidyPanel,
+  isTidyBusy,
+  resetTidyRun,
+  startTidyApply,
+  startTidyPlan,
+  stopTidyRun,
+  useTidyRun,
+  type TidyRunState,
+} from '../utils/mediaTidyRun';
 
-// Окно «Упорядочить медиа»: план переноса media/* Skraper в images/marquees/videos/manuals
-// с переименованием под ром, предпросмотр и применение. Дубли удаляются только по галочке.
-// "Tidy media" window: a plan to move Skraper media/* into images/marquees/videos/manuals,
-// renamed after the ROM, a preview and apply. Duplicates are deleted only when ticked.
+// Окно «Упорядочить медиа»: план переноса media/* Skraper в раскладку проекта
+// (utils/gameMediaKinds.ts) с переименованием под ром, предпросмотр и применение.
+// Дубли удаляются только по галочке. План и применение идут в фоне (utils/mediaTidyRun.ts):
+// окно можно закрыть, прогресс и «Остановить» остаются в плашке в углу (MediaTidyRunPanel).
+// "Tidy media" window: a plan to move Skraper media/* into the project layout, renamed after the
+// ROM, a preview and apply. Duplicates are deleted only when ticked. Both stages run in the
+// background: the window can be closed, progress and Stop stay in a corner panel.
 
 // Строки здесь, а не в общих словарях, чтобы не конфликтовать с параллельными ветками.
 // Strings live here, not in the shared dictionaries, to avoid conflicts with parallel branches.
@@ -21,12 +30,26 @@ const STR: Record<'en' | 'ru', Record<string, string>> = {
   en: {
     title: 'Tidy media (Skraper media/)',
     intro:
-      'Moves files from <console>/media/<kind>/ into images/<ROM>-image, images/<ROM>-thumb, marquees/<ROM>-marquee, videos/<ROM>-video and manuals/<ROM>.pdf, renames them after the ROM and updates gamelist.xml. Nothing changes until you press Apply.',
+      'Moves every Skraper folder from <console>/media/ into the project layout, renames files after the ROM and updates gamelist.xml: box art → images/<ROM>-image, screenshot → -thumb, mix → -mix, fan art → -fanart, maps → -map, cartridge → -cartridge, its scan → -supporttexture, Steam grid → -steamgrid, wheel → marquees/<ROM>-marquee, marquee → -screenmarquee, video → videos/, manual and tips → manuals/. Nothing changes until you press Apply. It runs in the background: you can close this window and keep working.',
     folder: 'Folder: {name}',
     noFolder: 'No library folder saved yet.',
     pick: 'Choose folder…',
     plan: 'Build the plan',
     planning: 'Looking through media folders…',
+    progress: '{done} of {total}',
+    background: 'Continue in the background',
+    stop: 'Stop',
+    stopped: 'Stopped. What was already moved stays moved.',
+    error: 'Error: {err}',
+    kinds: 'By kind:',
+    panelPlan: 'Tidy media: building the plan',
+    panelApply: 'Tidy media: moving files',
+    panelPlanned: 'Tidy media: the plan is ready',
+    panelDone: 'Tidy media: done',
+    panelStopped: 'Tidy media: stopped',
+    panelError: 'Tidy media: error',
+    open: 'Open',
+    hide: 'Hide',
     none: 'No media/ folders with files to move were found.',
     sum: 'Move {move} (renamed {renamed}), identical copies {dup}, conflicts {conflict}, left in place {skip}.',
     dupDelete: 'Delete identical copies ({count})',
@@ -47,12 +70,26 @@ const STR: Record<'en' | 'ru', Record<string, string>> = {
   ru: {
     title: 'Упорядочить медиа (media/ Skraper)',
     intro:
-      'Переносит файлы из <консоль>/media/<вид>/ в images/<ром>-image, images/<ром>-thumb, marquees/<ром>-marquee, videos/<ром>-video и manuals/<ром>.pdf, переименовывает под имя рома и обновляет gamelist.xml. Пока не нажата «Применить», ничего не меняется.',
+      'Переносит все папки Skraper из <консоль>/media/ в раскладку проекта, переименовывает под имя рома и обновляет gamelist.xml: обложка → images/<ром>-image, скриншот → -thumb, микс → -mix, фон → -fanart, карты → -map, картридж → -cartridge, его скан → -supporttexture, Steam grid → -steamgrid, wheel → marquees/<ром>-marquee, маркиза → -screenmarquee, видео → videos/, мануал и советы → manuals/. Пока не нажата «Применить», ничего не меняется. Работает в фоне: окно можно закрыть и продолжать работу.',
     folder: 'Папка: {name}',
     noFolder: 'Папка библиотеки ещё не выбрана.',
     pick: 'Выбрать папку…',
     plan: 'Построить план',
     planning: 'Просматриваю папки media…',
+    progress: '{done} из {total}',
+    background: 'Продолжить в фоне',
+    stop: 'Остановить',
+    stopped: 'Остановлено. Уже перенесённое остаётся на новых местах.',
+    error: 'Ошибка: {err}',
+    kinds: 'По видам:',
+    panelPlan: 'Упорядочить медиа: строю план',
+    panelApply: 'Упорядочить медиа: переношу файлы',
+    panelPlanned: 'Упорядочить медиа: план готов',
+    panelDone: 'Упорядочить медиа: готово',
+    panelStopped: 'Упорядочить медиа: остановлено',
+    panelError: 'Упорядочить медиа: ошибка',
+    open: 'Открыть',
+    hide: 'Скрыть',
     none: 'Папок media/ с файлами для переноса не найдено.',
     sum: 'Переместить {move} (с переименованием {renamed}), одинаковых копий {dup}, конфликтов {conflict}, остаётся на месте {skip}.',
     dupDelete: 'Удалить одинаковые копии ({count})',
@@ -74,6 +111,26 @@ const STR: Record<'en' | 'ru', Record<string, string>> = {
 
 const LIST_LIMIT = 300;
 
+function useTidyStrings() {
+  const { lang } = useI18n();
+  const ru = lang === 'ru';
+  const dict = STR[ru ? 'ru' : 'en'];
+  const s = (key: string, vars: Record<string, string | number> = {}) =>
+    (dict[key] || STR.en[key] || key).replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? ''));
+  return { s, labels: GAME_MEDIA_LABELS[ru ? 'ru' : 'en'] };
+}
+
+const pctOf = (st: TidyRunState) => (st.total > 0 ? Math.min(100, Math.round((st.done / st.total) * 100)) : 0);
+
+const ProgressBar: React.FC<{ st: TidyRunState }> = ({ st }) => (
+  <div className="h-1.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+    <div
+      className={'h-full bg-accent transition-[width] duration-200 ' + (st.total === 0 ? 'w-1/3 animate-pulse' : '')}
+      style={st.total > 0 ? { width: `${pctOf(st)}%` } : undefined}
+    />
+  </div>
+);
+
 interface MediaTidyModalProps {
   onClose: () => void;
   onAddLog?: (msg: string) => void;
@@ -82,27 +139,28 @@ interface MediaTidyModalProps {
 }
 
 export const MediaTidyModal: React.FC<MediaTidyModalProps> = ({ onClose, onAddLog, onApplied }) => {
-  const { lang } = useI18n();
-  const dict = STR[lang === 'ru' ? 'ru' : 'en'];
-  const s = (key: string, vars: Record<string, string | number> = {}) =>
-    (dict[key] || STR.en[key] || key).replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? ''));
+  const { s, labels } = useTidyStrings();
+  const st = useTidyRun();
+  const busy = isTidyBusy(st);
+  const plans = st.phase === 'planned' ? st.plans : null;
 
   const [root, setRoot] = useState<any>(null);
-  const [rootName, setRootName] = useState<string>('');
-  const [busy, setBusy] = useState<'' | 'plan' | 'apply'>('');
-  const [plans, setPlans] = useState<ConsoleNormPlan[] | null>(null);
+  const [rootName, setRootName] = useState<string>(st.rootName);
   const [deleteDup, setDeleteDup] = useState(false);
-  const [result, setResult] = useState<string>('');
+  const [note, setNote] = useState<string>('');
 
   const counts = useMemo(() => {
     const all = (plans || []).flatMap((p) => p.actions);
     const n = (t: NormAction['type']) => all.filter((a) => a.type === t).length;
+    const byKind = new Map<GameMediaKind, number>();
+    for (const a of all) if (a.type === 'move') byKind.set(a.slot, (byKind.get(a.slot) || 0) + 1);
     return {
       move: n('move'),
       renamed: all.filter((a) => a.type === 'move' && a.renamed).length,
       dup: n('duplicate'),
       conflict: n('conflict'),
       skip: n('skip'),
+      byKind: Array.from(byKind.entries()).sort((a, b) => b[1] - a[1]),
     };
   }, [plans]);
 
@@ -126,53 +184,30 @@ export const MediaTidyModal: React.FC<MediaTidyModalProps> = ({ onClose, onAddLo
       const h = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
       setRoot(h);
       setRootName(h.name);
-      setPlans(null);
-      setResult('');
+      resetTidyRun();
+      setNote('');
     } catch {}
   };
 
   const buildPlan = async () => {
-    setResult('');
-    setBusy('plan');
-    try {
-      const r = await getRoot();
-      if (!r) {
-        setResult(s('noFolder'));
-        return;
-      }
-      const consoles = await findConsoleDirsWithMedia(r);
-      const out: ConsoleNormPlan[] = [];
-      for (const c of consoles) {
-        const p = await planConsoleMedia(c.dir as any, c.path || r.name);
-        if (p.actions.length) out.push(p);
-      }
-      setPlans(out);
-    } finally {
-      setBusy('');
+    setNote('');
+    const r = await getRoot();
+    if (!r) {
+      setNote(s('noFolder'));
+      return;
     }
+    // Не ждём: план строится в фоне, окно показывает прогресс. / Not awaited: the plan builds in the background.
+    void startTidyPlan(r);
   };
 
-  const apply = async () => {
-    if (!plans) return;
-    setBusy('apply');
-    let moved = 0;
-    let deleted = 0;
-    let failed = 0;
-    try {
-      for (const p of plans) {
-        const r = await applyConsolePlan(p, { deleteDuplicates: deleteDup });
-        moved += r.moved;
-        deleted += r.deleted;
-        failed += r.failed;
-      }
-      const msg = s('done', { moved, deleted, failed });
-      setResult(msg);
-      onAddLog?.(`🗂 ${msg}`);
-      setPlans(null);
-      onApplied?.();
-    } finally {
-      setBusy('');
-    }
+  const apply = () => {
+    void startTidyApply({
+      deleteDuplicates: deleteDup,
+      onApplied: () => onApplied?.(),
+    }).then(() => {
+      const after = getTidyRun();
+      if (after.result) onAddLog?.(`🗂 ${s('done', after.result)}${after.phase === 'stopped' ? ` (${s('stop')})` : ''}`);
+    });
   };
 
   const describe = (a: NormAction) => {
@@ -188,13 +223,22 @@ export const MediaTidyModal: React.FC<MediaTidyModalProps> = ({ onClose, onAddLo
     ...rows.filter((r) => r.a.type === 'skip'),
   ];
 
+  const resultText =
+    st.phase === 'done' && st.result
+      ? s('done', st.result)
+      : st.phase === 'stopped'
+      ? `${s('stopped')}${st.result ? ' ' + s('done', st.result) : ''}`
+      : st.phase === 'error'
+      ? s('error', { err: st.error })
+      : '';
+
   return (
     <div
       className="fixed inset-0 z-[90] bg-black/60 flex items-stretch sm:items-center justify-center sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-label={s('title')}
-      onClick={busy ? undefined : onClose}
+      onClick={onClose}
     >
       <div
         className="bg-white dark:bg-slate-900 w-full sm:max-w-3xl h-full sm:h-auto sm:max-h-[88vh] sm:rounded-xl shadow-2xl flex flex-col overflow-hidden"
@@ -207,9 +251,8 @@ export const MediaTidyModal: React.FC<MediaTidyModalProps> = ({ onClose, onAddLo
           <button
             type="button"
             onClick={onClose}
-            disabled={Boolean(busy)}
-            title={s('close')}
-            className="w-8 h-8 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 flex items-center justify-center cursor-pointer disabled:opacity-50"
+            title={busy ? s('background') : s('close')}
+            className="w-8 h-8 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 flex items-center justify-center cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -225,7 +268,7 @@ export const MediaTidyModal: React.FC<MediaTidyModalProps> = ({ onClose, onAddLo
               <button
                 type="button"
                 onClick={pickFolder}
-                disabled={Boolean(busy)}
+                disabled={busy}
                 className="h-8 px-3 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold flex items-center gap-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer disabled:opacity-50"
               >
                 <FolderOpen className="w-3.5 h-3.5" />
@@ -235,22 +278,58 @@ export const MediaTidyModal: React.FC<MediaTidyModalProps> = ({ onClose, onAddLo
             <button
               type="button"
               onClick={() => void buildPlan()}
-              disabled={Boolean(busy)}
+              disabled={busy}
               data-testid="media-tidy-plan"
               className="h-8 px-3 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
-              {busy === 'plan' && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-              {busy === 'plan' ? s('planning') : s('plan')}
+              {st.phase === 'planning' && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              {st.phase === 'planning' ? s('planning') : s('plan')}
             </button>
           </div>
 
+          {busy && (
+            <div className="space-y-1.5" data-testid="media-tidy-progress">
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="font-semibold">
+                  {st.phase === 'planning' ? s('planning') : s('applying')}{' '}
+                  {st.total > 0 && <span className="text-slate-500">{s('progress', { done: st.done, total: st.total })}</span>}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="h-7 px-2.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    {s('background')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={stopTidyRun}
+                    className="h-7 px-2.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                  >
+                    {s('stop')}
+                  </button>
+                </span>
+              </div>
+              <ProgressBar st={st} />
+              {st.current && <p className="text-[11px] font-mono text-slate-500 truncate">{st.current}</p>}
+            </div>
+          )}
+
+          {note && <p className="text-xs">{note}</p>}
           {plans && plans.length === 0 && <p className="text-xs">{s('none')}</p>}
 
           {plans && plans.length > 0 && (
             <>
               <p className="text-xs font-semibold" data-testid="media-tidy-summary">
-                {s('sum', counts)}
+                {s('sum', { move: counts.move, renamed: counts.renamed, dup: counts.dup, conflict: counts.conflict, skip: counts.skip })}
               </p>
+              {counts.byKind.length > 0 && (
+                <p className="text-xs text-slate-600 dark:text-slate-300">
+                  {s('kinds')}{' '}
+                  {counts.byKind.map(([k, n]) => `${labels[k] || k} ${n}`).join(' · ')}
+                </p>
+              )}
               <ul className="text-[11px] font-mono border border-slate-200 dark:border-slate-800 rounded-lg divide-y divide-slate-100 dark:divide-slate-800 max-h-[45vh] overflow-y-auto">
                 {ordered.slice(0, LIST_LIMIT).map(({ console: c, a }, i) => (
                   <li
@@ -290,22 +369,103 @@ export const MediaTidyModal: React.FC<MediaTidyModalProps> = ({ onClose, onAddLo
             </>
           )}
 
-          {result && <p className="text-xs font-semibold" data-testid="media-tidy-result">{result}</p>}
+          {resultText && <p className="text-xs font-semibold" data-testid="media-tidy-result">{resultText}</p>}
         </div>
 
         {plans && plans.length > 0 && (
           <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-800 flex justify-end">
             <button
               type="button"
-              onClick={() => void apply()}
-              disabled={Boolean(busy) || counts.move + (deleteDup ? counts.dup : 0) === 0}
+              onClick={apply}
+              disabled={busy || counts.move + (deleteDup ? counts.dup : 0) === 0}
               data-testid="media-tidy-apply"
               className="h-9 px-4 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
-              {busy === 'apply' && <Loader2 className="w-4 h-4 animate-spin" />}
-              {busy === 'apply' ? s('applying') : s('apply')}
+              {s('apply')}
             </button>
           </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Плашка в углу: прогресс фоновой операции, «Остановить», «Открыть» (вернуть окно).
+ * Corner panel: background progress, Stop, Open (bring the window back).
+ */
+export const MediaTidyRunPanel: React.FC<{ windowOpen: boolean; onOpen: () => void }> = ({ windowOpen, onOpen }) => {
+  const { s } = useTidyStrings();
+  const st = useTidyRun();
+  if (windowOpen || st.phase === 'idle' || st.panelHidden) return null;
+  const busy = isTidyBusy(st);
+  const title =
+    st.phase === 'planning'
+      ? s('panelPlan')
+      : st.phase === 'applying'
+      ? s('panelApply')
+      : st.phase === 'planned'
+      ? s('panelPlanned')
+      : st.phase === 'done'
+      ? s('panelDone')
+      : st.phase === 'stopped'
+      ? s('panelStopped')
+      : s('panelError');
+  const detail =
+    st.phase === 'done' && st.result
+      ? s('done', st.result)
+      : st.phase === 'error'
+      ? s('error', { err: st.error })
+      : st.phase === 'stopped'
+      ? s('stopped')
+      : '';
+  return (
+    <div
+      className="fixed z-50 bottom-12 left-4 w-[min(360px,calc(100vw-2rem))] bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-2xl p-3 space-y-2"
+      role="status"
+      aria-live="polite"
+      data-testid="media-tidy-panel"
+    >
+      <div className="flex items-center gap-2 text-sm font-semibold min-w-0">
+        {busy ? (
+          <Loader2 className="w-4 h-4 animate-spin shrink-0 text-accent dark:text-accent-dark" />
+        ) : st.phase === 'done' || st.phase === 'planned' ? (
+          <Check className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+        ) : (
+          <Square className="w-4 h-4 shrink-0 text-slate-500" />
+        )}
+        <span className="truncate flex-1">{title}</span>
+        {busy && st.total > 0 && (
+          <span className="text-xs font-normal text-slate-500 shrink-0">{s('progress', { done: st.done, total: st.total })}</span>
+        )}
+      </div>
+      {busy && <ProgressBar st={st} />}
+      {busy && st.current && <p className="text-[11px] font-mono text-slate-500 truncate">{st.current}</p>}
+      {detail && <p className="text-xs text-slate-600 dark:text-slate-300">{detail}</p>}
+      <div className="flex items-center justify-end gap-1.5">
+        <button
+          type="button"
+          onClick={onOpen}
+          className="h-7 px-2.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+        >
+          {s('open')}
+        </button>
+        {busy ? (
+          <button
+            type="button"
+            onClick={stopTidyRun}
+            className="h-7 px-2.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+          >
+            {s('stop')}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={hideTidyPanel}
+            className="h-7 px-2.5 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+          >
+            {s('hide')}
+          </button>
         )}
       </div>
     </div>

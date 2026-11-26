@@ -115,6 +115,8 @@ import {
   MEDIA_CONTAINER_DIRS,
   renameRomMediaInContainers,
 } from './utils/skraperMedia';
+import { isNonCoverMediaFile, listGameMediaInDir } from './utils/gameMediaKinds';
+import type { GameMediaItem } from './components/GameMediaGallery';
 import {
   findGamelistEntry,
   indexGamelistEntries,
@@ -193,6 +195,7 @@ import {
   findSavedHandleMatchingPath,
   checkOrRequestHandlePermission,
   collectLocalMediaFromHandle,
+  lookupMediaKinds,
   type StoredDirHandleRecord,
   isDeadOrLocalBlobUrl,
 } from './utils/persistentHandles';
@@ -2221,6 +2224,28 @@ export function App() {
     return null;
   };
 
+  // «Медиа игры» в карточке: все файлы рома в images/, marquees/, videos/, manuals/ и media/<вид>/.
+  // Ссылки blob: прошлой игры отзываются при выборе следующей.
+  // "Game media" in the card: every file of the ROM in the layout folders and media/<kind>/.
+  // The previous game's blob: URLs are revoked when the next one is picked.
+  const gameMediaUrlsRef = useRef<string[]>([]);
+  const handleLoadGameMedia = async (row: UnifiedGameRow): Promise<GameMediaItem[] | null> => {
+    for (const u of gameMediaUrlsRef.current) URL.revokeObjectURL(u);
+    gameMediaUrlsRef.current = [];
+    const loc = await resolveRowMediaDir(row).catch(() => null);
+    if (!loc) return null;
+    const stems = Array.from(new Set([...loc.stems, row.title].filter(Boolean)));
+    const found = await listGameMediaInDir<File>(loc.dir, stems);
+    // Большие файлы нативного окна — LazyFile, не Blob: тогда пусть ответит Go (/api/native/fs/game-media).
+    // Large native-window files are LazyFile, not Blob: then Go answers instead.
+    if (found.some((f) => !(f.file instanceof Blob))) return null;
+    return found.map((f) => {
+      const url = URL.createObjectURL(f.file);
+      gameMediaUrlsRef.current.push(url);
+      return { kind: f.kind, name: f.name, url, size: f.file.size };
+    });
+  };
+
   const handleLoadMediaVersions = async (row: UnifiedGameRow): Promise<MediaVersionsView | null> => {
     const loc = await resolveRowMediaDir(row);
     if (!loc) return null;
@@ -2298,7 +2323,7 @@ export function App() {
         });
         if (resp.ok) {
           const data = await resp.json();
-          const map = new Map<string, { boxArtUrl?: string; videoUrl?: string; media?: MediaSet }>();
+          const map = new Map<string, { boxArtUrl?: string; videoUrl?: string; media?: MediaSet; kinds?: string[] }>();
           for (const it of data?.results || []) {
             map.set(it.id, it);
           }
@@ -2312,6 +2337,8 @@ export function App() {
               media,
               boxArtUrl: (m.media ? preferredCoverUrl(media || {}) : undefined) || m.boxArtUrl || row.boxArtUrl,
               videoUrl: m.videoUrl || row.videoUrl,
+              // Виды медиа для фильтра «Медиа» (фон, карты, носитель…). / Media kinds for the "Media" filter.
+              mediaKinds: m.kinds && m.kinds.length ? m.kinds : row.mediaKinds,
             };
           }
         }
@@ -2367,6 +2394,15 @@ export function App() {
               local[kind] = u;
             }
             if (Object.keys(local).length > 0) media = { ...(media || {}), ...local };
+          }
+          // Все виды медиа игры (фон, карты, носитель, Steam grid…) для фильтра «Медиа».
+          // All media kinds of the game (fan art, maps, cartridge, Steam grid…) for the "Media" filter.
+          const foundKinds = lookupMediaKinds(mediaIdx, [...stemKeys, r.title]);
+          if (foundKinds.length) {
+            afterNative[i] = {
+              ...afterNative[i],
+              mediaKinds: Array.from(new Set([...(afterNative[i].mediaKinds || []), ...foundKinds])),
+            };
           }
           // Мануал (PDF) рядом с ромом или в media/manuals. / A manual next to the ROM or in media/manuals.
           if (mediaIdx.manualsByStem.size > 0) {
@@ -3180,7 +3216,7 @@ export function App() {
     const isVid = ['.mp4', '.webm', '.mkv'].includes(ext);
     if (!isImg && !isVid) return;
     // Фон, карты, картридж, мануалы (папки Skraper) — не обложки. / Fan art, maps, cartridges, manuals: not covers.
-    if (isImg && isNonCoverDir(dirName)) return;
+    if (isImg && (isNonCoverDir(dirName) || isNonCoverMediaFile(file.name, dirName))) return;
 
     let stem = file.name.slice(0, dot).trim();
     const suffixes = [
@@ -10201,6 +10237,7 @@ export function App() {
         hasMediaFolderAccess={Boolean(libraryDirHandle || rootDirHandle)}
         onResolveMediaForDbRows={handleResolveMediaForDbRows}
         onLoadMediaVersions={handleLoadMediaVersions}
+        onLoadGameMedia={handleLoadGameMedia}
         onSelectMediaVersion={handleSelectMediaVersion}
         logs={logs}
         onClearLogs={() => setLogs([t('status.cleared')])}

@@ -1,18 +1,27 @@
 // «Упорядочить медиа»: файлы Skraper из <консоль>/media/<вид>/ переезжают в раскладку проекта
-// (images/<ром>-image, images/<ром>-thumb, marquees/<ром>-marquee, videos/<ром>-video,
-// manuals/<ром>.pdf), получают имя рома, пути в gamelist.xml обновляются. Одинаковые копии
-// (байт в байт) можно удалить. Сначала строится план, применяется он отдельно.
+// (см. src/utils/gameMediaKinds.ts: images/<ром>-image, -thumb, -fanart, -map, -cartridge…,
+// marquees/<ром>-marquee, videos/<ром>-video, manuals/<ром>.pdf), получают имя рома, пути в
+// gamelist.xml обновляются. Одинаковые копии (байт в байт) можно удалить. Сначала строится план,
+// применяется он отдельно. Обе стадии сообщают прогресс и останавливаются по AbortSignal.
 //
-// "Tidy media": Skraper files from <console>/media/<kind>/ move into the project layout,
-// get the ROM's name, gamelist.xml paths are updated. Identical copies (byte for byte) can be
-// deleted. A plan is built first and applied separately.
+// "Tidy media": Skraper files from <console>/media/<kind>/ move into the project layout (see
+// gameMediaKinds.ts), get the ROM's name, gamelist.xml paths are updated. Identical copies (byte
+// for byte) can be deleted. A plan is built first and applied separately. Both stages report
+// progress and stop on an AbortSignal.
 //
 // Модуль без импортов приложения, чтобы тесты шли через `node --test`.
 // No app imports, so tests run with `node --test`.
 
-import { MEDIA_CONTAINER_DIRS, NON_COVER_DIRS } from './skraperMedia.ts';
+import { MEDIA_CONTAINER_DIRS } from './skraperMedia.ts';
+import {
+  GAME_MEDIA_DIR_KIND,
+  classifyGameMediaFile,
+  extOfName,
+  gameMediaTargetPath,
+  type GameMediaKind,
+} from './gameMediaKinds.ts';
 
-export type NormSlot = 'boxart' | 'snap' | 'marquee' | 'video' | 'manual';
+export type NormSlot = GameMediaKind;
 
 export interface NormFile {
   kind: 'file';
@@ -45,6 +54,28 @@ export interface ConsoleNormPlan {
   actions: NormAction[];
 }
 
+/** Прогресс: сделано из всего и что сейчас. / Progress: done of total and the current item. */
+export type NormProgress = (p: { done: number; total: number; current?: string }) => void;
+
+export interface NormRunOptions {
+  signal?: AbortSignal;
+  onProgress?: NormProgress;
+}
+
+export class NormAbortedError extends Error {
+  constructor() {
+    super('aborted');
+    this.name = 'AbortError';
+  }
+}
+
+const checkAbort = (signal?: AbortSignal) => {
+  if (signal?.aborted) throw new NormAbortedError();
+};
+
+/** Отдать управление интерфейсу. / Let the UI breathe. */
+const yieldToUi = () => new Promise<void>((r) => setTimeout(r, 0));
+
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif']);
 const VIDEO_EXT = new Set(['.mp4', '.webm', '.mkv', '.avi', '.mov', '.m4v']);
 const NON_ROM_EXT = new Set([
@@ -55,111 +86,61 @@ const NON_ROM_EXT = new Set([
 ]);
 const LAYOUT_DIRS = new Set(['images', 'marquees', 'videos', 'manuals', 'patch', 'hackroms', 'saves', 'states']);
 
-const extOf = (name: string) => {
-  const i = name.lastIndexOf('.');
-  return i < 0 ? '' : name.slice(i).toLowerCase();
-};
+const extOf = extOfName;
 const stemOf = (name: string) => name.replace(/\.[^/.]+$/, '');
 
-/** Слот и приоритет по папке (меньше — лучше). / Slot and priority from the folder (lower wins). */
-const DIR_SLOT: Record<string, [NormSlot, number]> = {
-  box2dfront: ['boxart', 0],
-  boxfront: ['boxart', 0],
-  'box-2d': ['boxart', 0],
-  box2d: ['boxart', 0],
+/**
+ * Основной слот вида и приоритет в нём (меньше — лучше). Микс, 3D-коробка, титульный экран и
+ * маркиза — запасные варианты обложки, скриншота и логотипа: если основной вид есть, они
+ * переносятся под своим именем (-mix, -box3d, -title, -screenmarquee).
+ * The primary slot of a kind and its priority (lower wins). Mix, 3D box, title screen and
+ * marquee stand in for the cover, screenshot and logo; when the main kind exists they move
+ * under their own name.
+ */
+const PRIMARY_SLOT: Partial<Record<GameMediaKind, [GameMediaKind, number]>> = {
   boxart: ['boxart', 0],
-  boxarts: ['boxart', 0],
-  covers: ['boxart', 1],
-  cover: ['boxart', 1],
-  named_boxarts: ['boxart', 1],
-  thumbnails: ['boxart', 2],
-  images: ['boxart', 3],
   image: ['boxart', 3],
-  mix: ['boxart', 4],
-  mixrbv1: ['boxart', 4],
-  mixrbv2: ['boxart', 4],
-  miximages: ['boxart', 4],
   box3d: ['boxart', 5],
-  screenshot: ['snap', 0],
-  screenshots: ['snap', 0],
   snap: ['snap', 0],
-  snaps: ['snap', 0],
-  ss: ['snap', 0],
-  named_snaps: ['snap', 0],
-  screenshottitle: ['snap', 2],
-  'screenshot-title': ['snap', 2],
-  titlescreen: ['snap', 2],
-  titlescreens: ['snap', 2],
-  titles: ['snap', 2],
-  sstitle: ['snap', 2],
-  named_titles: ['snap', 2],
+  title: ['snap', 2],
   marquee: ['marquee', 0],
-  marquees: ['marquee', 0],
-  wheel: ['marquee', 1],
-  wheels: ['marquee', 1],
-  wheelhd: ['marquee', 1],
-  'wheel-hd': ['marquee', 1],
-  wheelcarbon: ['marquee', 2],
-  'wheel-carbon': ['marquee', 2],
-  wheelsteel: ['marquee', 2],
-  'wheel-steel': ['marquee', 2],
-  logos: ['marquee', 1],
-  named_logos: ['marquee', 1],
-  videos: ['video', 0],
-  video: ['video', 0],
-  snapvideos: ['video', 0],
-  'video-snaps': ['video', 0],
-  manuals: ['manual', 0],
-  manual: ['manual', 0],
+  screenmarquee: ['marquee', 3],
 };
 
-const SUFFIX_SLOT: Array<[RegExp, NormSlot]> = [
-  [/-(image|boxart|box|cover)$/i, 'boxart'],
-  [/-(thumb|snap|screenshot|ss|title)$/i, 'snap'],
-  [/-(marquee|wheel|logo)$/i, 'marquee'],
-  [/-(video|snapvideo)$/i, 'video'],
-  [/[-_ ]manual$/i, 'manual'],
-];
+/** Внутри вида: какая папка лучше. / Within a kind: which folder is better. */
+const DIR_PRIORITY: Record<string, number> = {
+  covers: 1,
+  cover: 1,
+  named_boxarts: 1,
+  thumbnails: 2,
+  wheel: 1,
+  wheels: 1,
+  wheelhd: 1,
+  'wheel-hd': 1,
+  logos: 1,
+  named_logos: 1,
+  wheelcarbon: 2,
+  'wheel-carbon': 2,
+  wheelsteel: 2,
+  'wheel-steel': 2,
+};
 
 /** Слот файла из media/<папка>/; null — не переносим. / Slot of a media/<folder>/ file; null: not moved. */
-export function normSlotOf(fileName: string, dirName: string): { slot: NormSlot; priority: number; stem: string } | null {
-  const ext = extOf(fileName);
-  let stem = stemOf(fileName);
-  let bySuffix: NormSlot | null = null;
-  for (const [re, slot] of SUFFIX_SLOT) {
-    if (re.test(stem)) {
-      stem = stem.replace(re, '');
-      bySuffix = slot;
-      break;
-    }
-  }
-  const byDir = DIR_SLOT[dirName.toLowerCase()];
-  let slot: NormSlot | null = byDir ? byDir[0] : bySuffix;
-  const priority = byDir ? byDir[1] : 3;
-  if (bySuffix && bySuffix !== 'manual' && bySuffix !== 'video' && byDir && byDir[0] !== 'video' && byDir[0] !== 'manual') {
-    slot = bySuffix;
-  }
-  if (!slot) return null;
-  if (slot === 'video' && !VIDEO_EXT.has(ext)) return null;
-  if (slot === 'manual' && ext !== '.pdf') return null;
-  if ((slot === 'boxart' || slot === 'snap' || slot === 'marquee') && !IMAGE_EXT.has(ext)) return null;
-  return { slot, priority, stem: stem.trim() };
+export function normSlotOf(
+  fileName: string,
+  dirName: string
+): { slot: NormSlot; own: NormSlot; priority: number; stem: string } | null {
+  // Файлы плана всегда из media/<папка>/. / Plan files always come from media/<folder>/.
+  const c = classifyGameMediaFile(fileName, `media/${dirName}`);
+  if (!c) return null;
+  const [slot, base] = PRIMARY_SLOT[c.kind] || [c.kind, 0];
+  const priority = base + (DIR_PRIORITY[dirName.toLowerCase()] || 0) / 10;
+  return { slot, own: c.kind, priority, stem: c.stem };
 }
 
 /** Целевой путь от папки консоли. / Target path from the console folder. */
 export function normTargetPath(slot: NormSlot, romStem: string, ext: string): string {
-  switch (slot) {
-    case 'boxart':
-      return `images/${romStem}-image${ext}`;
-    case 'snap':
-      return `images/${romStem}-thumb${ext}`;
-    case 'marquee':
-      return `marquees/${romStem}-marquee${ext}`;
-    case 'video':
-      return `videos/${romStem}-video${ext}`;
-    case 'manual':
-      return `manuals/${romStem}${ext}`;
-  }
+  return gameMediaTargetPath(slot, romStem, ext);
 }
 
 export function normKey(name: string): string {
@@ -195,12 +176,29 @@ async function getPath(dir: NormDir, rel: string): Promise<NormFile | null> {
   }
 }
 
-async function sameBytes(a: Blob, b: Blob): Promise<boolean> {
+const CMP_CHUNK = 1 << 20;
+
+async function readBytes(b: any, start: number, end: number): Promise<Uint8Array> {
+  if (typeof b.slice === 'function') return new Uint8Array(await b.slice(start, end).arrayBuffer());
+  // Нативный LazyFile без slice: читаем целиком. / A native LazyFile without slice: read it whole.
+  return new Uint8Array(await b.arrayBuffer()).subarray(start, end);
+}
+
+/**
+ * Совпадают ли файлы байт в байт. Читает кусками по 1 МБ и отдаёт управление интерфейсу,
+ * поэтому видео на сотни мегабайт не вешают окно.
+ * Byte-for-byte equality, read in 1 MB chunks with UI yields, so big videos do not freeze the window.
+ */
+export async function sameBytes(a: Blob, b: Blob, signal?: AbortSignal): Promise<boolean> {
   if (a.size !== b.size) return false;
-  const [x, y] = await Promise.all([a.arrayBuffer(), b.arrayBuffer()]);
-  const u = new Uint8Array(x);
-  const v = new Uint8Array(y);
-  for (let i = 0; i < u.length; i++) if (u[i] !== v[i]) return false;
+  for (let off = 0; off < a.size; off += CMP_CHUNK) {
+    checkAbort(signal);
+    const end = Math.min(a.size, off + CMP_CHUNK);
+    const [u, v] = await Promise.all([readBytes(a, off, end), readBytes(b, off, end)]);
+    if (u.length !== v.length) return false;
+    for (let i = 0; i < u.length; i++) if (u[i] !== v[i]) return false;
+    if (end < a.size) await yieldToUi();
+  }
   return true;
 }
 
@@ -211,7 +209,7 @@ export async function listRomStems(dir: NormDir): Promise<string[]> {
     if (e.name.startsWith('.')) continue;
     const low = e.name.toLowerCase();
     if (e.kind === 'directory') {
-      if (MEDIA_CONTAINER_DIRS.has(low) || LAYOUT_DIRS.has(low) || DIR_SLOT[low] || NON_COVER_DIRS.has(low) || low.startsWith('_')) continue;
+      if (MEDIA_CONTAINER_DIRS.has(low) || LAYOUT_DIRS.has(low) || GAME_MEDIA_DIR_KIND[low] || low.startsWith('_')) continue;
       out.push(e.name);
     } else if (!NON_ROM_EXT.has(extOf(e.name)) && extOf(e.name)) {
       out.push(stemOf(e.name));
@@ -220,24 +218,52 @@ export async function listRomStems(dir: NormDir): Promise<string[]> {
   return Array.from(new Set(out));
 }
 
-/** План для одной папки консоли с media/. / The plan for one console folder with media/. */
-export async function planConsoleMedia(dir: NormDir, path = ''): Promise<ConsoleNormPlan> {
-  const romStems = await listRomStems(dir);
-  const actions: NormAction[] = [];
-  type Cand = { rel: string; ext: string; priority: number; file: NormFile };
-  const best = new Map<string, Cand[]>(); // `${rom}|${slot}` → candidates
+/** Сколько файлов в media/* папки консоли (для прогресса). / Files in a console's media/* (for progress). */
+export async function countConsoleMediaFiles(dir: NormDir, signal?: AbortSignal): Promise<number> {
+  let n = 0;
   for await (const c of dir.values()) {
     if (c.kind !== 'directory' || !MEDIA_CONTAINER_DIRS.has(c.name.toLowerCase())) continue;
     for await (const sub of c.values()) {
       if (sub.kind !== 'directory') continue;
-      const subLow = sub.name.toLowerCase();
+      for await (const f of sub.values()) {
+        if (f.kind === 'file') n++;
+      }
+      checkAbort(signal);
+    }
+  }
+  return n;
+}
+
+/**
+ * План для одной папки консоли с media/. onFile вызывается после каждого просмотренного файла.
+ * The plan for one console folder with media/. onFile is called after every file looked at.
+ */
+export async function planConsoleMedia(
+  dir: NormDir,
+  path = '',
+  opts: { signal?: AbortSignal; onFile?: (rel: string) => void } = {}
+): Promise<ConsoleNormPlan> {
+  const { signal, onFile } = opts;
+  const romStems = await listRomStems(dir);
+  const actions: NormAction[] = [];
+  type Cand = { rel: string; ext: string; priority: number; own: NormSlot; file: NormFile; blob?: Blob };
+  const groups = new Map<string, Cand[]>(); // `${rom}|${slot}` → candidates
+  const push = (key: string, c: Cand) => {
+    const list = groups.get(key) || [];
+    list.push(c);
+    groups.set(key, list);
+  };
+  let seen = 0;
+  for await (const c of dir.values()) {
+    if (c.kind !== 'directory' || !MEDIA_CONTAINER_DIRS.has(c.name.toLowerCase())) continue;
+    for await (const sub of c.values()) {
+      if (sub.kind !== 'directory') continue;
       for await (const f of sub.values()) {
         if (f.kind !== 'file') continue;
+        checkAbort(signal);
         const rel = `${c.name}/${sub.name}/${f.name}`;
-        if (NON_COVER_DIRS.has(subLow) && !DIR_SLOT[subLow]) {
-          actions.push({ type: 'skip', from: rel, reason: 'not-cover' });
-          continue;
-        }
+        onFile?.(rel);
+        if (++seen % 200 === 0) await yieldToUi();
         const s = normSlotOf(f.name, sub.name);
         if (!s) {
           actions.push({ type: 'skip', from: rel, reason: 'unknown' });
@@ -248,32 +274,44 @@ export async function planConsoleMedia(dir: NormDir, path = ''): Promise<Console
           actions.push({ type: 'skip', from: rel, reason: 'no-rom' });
           continue;
         }
-        const key = `${rom}|${s.slot}`;
-        const list = best.get(key) || [];
-        list.push({ rel, ext: extOf(f.name), priority: s.priority, file: f });
-        best.set(key, list);
+        push(`${rom}|${s.slot}`, { rel, ext: extOf(f.name), priority: s.priority, own: s.own, file: f });
       }
     }
   }
-  for (const [key, list] of best) {
+
+  const blobOf = async (c: Cand) => (c.blob ||= await c.file.getFile());
+  // Лучший файл слота едет в цель, остальные — дубли, запасные варианты своего вида или лишние.
+  // The slot's best file goes to the target; the rest are duplicates, stand-ins of their own kind, or extras.
+  const settle = async (key: string, list: Cand[], second: Map<string, Cand[]> | null) => {
     const [rom, slot] = key.split('|') as [string, NormSlot];
     list.sort((a, b) => a.priority - b.priority || a.rel.localeCompare(b.rel));
     const [first, ...rest] = list;
     const to = normTargetPath(slot, rom, first.ext);
     const existing = await getPath(dir, to);
-    const firstBlob = await first.file.getFile();
     if (existing) {
-      const same = await sameBytes(firstBlob, await existing.getFile());
+      const same = await sameBytes(await blobOf(first), await existing.getFile(), signal);
       actions.push(same ? { type: 'duplicate', from: first.rel, to, slot } : { type: 'conflict', from: first.rel, to, slot });
     } else {
       const renamed = stemOf(first.rel.split('/').pop()!).toLowerCase() !== stemOf(to.split('/').pop()!).toLowerCase();
       actions.push({ type: 'move', from: first.rel, to, slot, renamed });
     }
     for (const r of rest) {
-      const same = await sameBytes(firstBlob, await r.file.getFile());
-      actions.push(same ? { type: 'duplicate', from: r.rel, to, slot } : { type: 'skip', from: r.rel, reason: 'extra' });
+      checkAbort(signal);
+      if (await sameBytes(await blobOf(first), await blobOf(r), signal)) {
+        actions.push({ type: 'duplicate', from: r.rel, to, slot });
+      } else if (second && r.own !== slot) {
+        const k2 = `${rom}|${r.own}`;
+        const l2 = second.get(k2) || [];
+        l2.push(r);
+        second.set(k2, l2);
+      } else {
+        actions.push({ type: 'skip', from: r.rel, reason: 'extra' });
+      }
     }
-  }
+  };
+  const second = new Map<string, Cand[]>();
+  for (const [key, list] of groups) await settle(key, list, second);
+  for (const [key, list] of second) await settle(key, list, null);
   return { path, dir, actions };
 }
 
@@ -322,6 +360,8 @@ export interface ApplyResult {
   moved: number;
   deleted: number;
   failed: number;
+  /** Остановлено пользователем. / Stopped by the user. */
+  aborted?: boolean;
 }
 
 async function ensureDir(dir: NormDir, rel: string): Promise<NormDir> {
@@ -336,8 +376,12 @@ async function ensureDir(dir: NormDir, rel: string): Promise<NormDir> {
  * Applies a plan: move (copy + delete), duplicate deletion (when deleteDuplicates),
  * gamelist.xml update and removal of emptied media/* folders.
  */
-export async function applyConsolePlan(plan: ConsoleNormPlan, opts: { deleteDuplicates: boolean }): Promise<ApplyResult> {
+export async function applyConsolePlan(
+  plan: ConsoleNormPlan,
+  opts: { deleteDuplicates: boolean; signal?: AbortSignal; onAction?: (a: NormAction) => void }
+): Promise<ApplyResult> {
   const { dir } = plan;
+  let aborted = false;
   const res: ApplyResult = { moved: 0, deleted: 0, failed: 0 };
   const rewrites: Array<{ from: string; to: string }> = [];
   const removeFile = async (rel: string) => {
@@ -347,7 +391,16 @@ export async function applyConsolePlan(plan: ConsoleNormPlan, opts: { deleteDupl
     for (const p of parts) d = await d.getDirectoryHandle(p);
     await d.removeEntry(name);
   };
+  let step = 0;
   for (const a of plan.actions) {
+    // Остановка между файлами: gamelist.xml ниже всё равно правится под уже перенесённое.
+    // Stop between files: gamelist.xml below is still updated for what was already moved.
+    if (opts.signal?.aborted) {
+      aborted = true;
+      break;
+    }
+    opts.onAction?.(a);
+    if (++step % 25 === 0) await yieldToUi();
     try {
       if (a.type === 'move') {
         const src = await getPath(dir, a.from);
@@ -409,5 +462,6 @@ export async function applyConsolePlan(plan: ConsoleNormPlan, opts: { deleteDupl
       if (empty) await dir.removeEntry(c.name).catch(() => {});
     }
   } catch {}
+  if (aborted) res.aborted = true;
   return res;
 }
