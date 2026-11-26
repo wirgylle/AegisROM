@@ -49,7 +49,7 @@ import { nativeRomQuery } from '../utils/romSaves';
 import type { VersionSlot } from '../utils/mediaVersions';
 import { DatFilesPanel } from './DatFilesPanel';
 import { RomCheckPanel } from './RomCheckPanel';
-import type { RomCheckReport } from '../utils/romCheck';
+import type { RomCheckAction, RomCheckReport } from '../utils/romCheck';
 import { ScrapeReportCard, ScreenScraperPanel } from './ScreenScraperPanel';
 import type { ScrapeReport } from '../utils/scrapeReport';
 import { PatcherPanel } from './PatcherPanel';
@@ -399,6 +399,8 @@ interface FigmaConceptStudioProps {
   romCheckReport?: RomCheckReport | null;
   romCheckRunning?: boolean;
   romCheckProgress?: string;
+  onRomCheckAction?: (action: RomCheckAction, ids: string[]) => Promise<void> | void;
+  romCheckActionBusy?: boolean;
   onScanPhantomFolders?: () => void;
   onRepairSdCard?: (firmwareId?: string) => void;
   sdTargetFolderName?: string;
@@ -794,6 +796,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
   romCheckReport = null,
   romCheckRunning = false,
   romCheckProgress = '',
+  onRomCheckAction,
+  romCheckActionBusy = false,
   onScanPhantomFolders,
   onRepairSdCard,
   sdTargetFolderName = '',
@@ -3096,6 +3100,8 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                     report={romCheckReport}
                     onRun={onCheckRoms ? (deep) => openScope('romCheck', (ids) => onCheckRoms(ids, deep)) : undefined}
                     onStop={onStopRomCheck}
+                    onAction={onRomCheckAction}
+                    actionBusy={romCheckActionBusy}
                   />
 
                   {/* Данные игр: CSV / XML туда и обратно. / Game data: CSV / XML out and back in. */}

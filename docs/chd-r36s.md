@@ -33,7 +33,21 @@ ISO 2048 у PS1 сам по себе с потерями: XA-звук и вид�
 Файлы на месте и читаются; `.cue/.gdi/.ccd/.mds/.m3u` ссылаются на существующие файлы; размеры кратны секторам;
 ZIP/7z/RAR не обрезаны; заголовки NES/GB/GBA/NDS/MD/N64; CHD: обрезан ли, версия, родитель, Zstandard, CD/DVD,
 тип дорожки для PS1; многодисковые: каждый диск и нумерация; BIOS по последней проверке раздела Среда → BIOS.
-Опция «Полная проверка CHD» запускает `chdman verify` (только окно приложения). Отчёт можно сохранить в `.txt`.
+Опция «Полная проверка CHD» запускает `chdman verify`. В окне AegisROM по пути файла, в окне Edge файл копируется
+во временную папку (дольше). Отчёт можно сохранить в `.txt`.
+
+Действия (0.6.3), по одной игре и по выбранным:
+- **Исправить** — только то, что чинится без оригинала: `.cue` со ссылками на пропавшие файлы (регистр букв или
+  переименованные дорожки, если их число однозначно совпадает), `.m3u` (собирается заново из дисков рядом, в том числе
+  из подпапки), `.bin` без `.cue` (пишется `.cue` на одну дорожку), CHD старого формата / с Zstandard / PS1 без сырых
+  секторов / PS1 как DVD (`chdman extractcd|extractdvd` → `createcd`, только в окне AegisROM). Обрезанные файлы, битые
+  архивы и контрольные суммы не чинятся, кнопки нет.
+- **Удалить** — сам файл, дорожки `.cue` и диски многодисковой игры. В окне AegisROM в корзину Windows, в окне Edge
+  насовсем (браузер корзины не знает), с подтверждением.
+- **Открыть в папке** — Проводник с выделенным файлом (окно AegisROM). Если файла нет, открывается ближайшая папка.
+
+Маршруты: `POST /api/native/romcheck/reveal|trash|rebuild-chd` (`aegisapi/romcheck_actions.go`), пути только внутри
+выбранных папок (`ResolveVFSPath`).
 
 ## EN
 
@@ -58,4 +72,17 @@ See the RU list above: `aegiscore.PrepareCDInput`, pinned codecs `cdlz,cdzl,cdfl
 
 Files present and readable; `.cue/.gdi/.ccd/.mds/.m3u` targets exist; sizes match sectors; ZIP/7z/RAR not truncated;
 NES/GB/GBA/NDS/MD/N64 headers; CHD truncation, version, parent, Zstandard, CD/DVD and PS1 track type; multi-disc numbering;
-BIOS from the last Environment → BIOS check. "Full CHD check" runs `chdman verify` (app window only). Report saves as `.txt`.
+BIOS from the last Environment → BIOS check. "Full CHD check" runs `chdman verify`: by path in the AegisROM window, in the
+Edge window the file is copied to a temp folder first (slower). Report saves as `.txt`.
+
+Actions (0.6.3), per game and on the selected ones:
+- **Fix**: only what can be fixed without the original: a `.cue` pointing to missing files (letter case, or renamed tracks
+  when their count matches unambiguously), a `.m3u` (rebuilt from discs next to it, also in a subfolder), a `.bin` without
+  `.cue` (a one-track `.cue` is written), an old / Zstandard / PS1 cooked / PS1-as-DVD CHD (`chdman extractcd|extractdvd`
+  → `createcd`, AegisROM window only). Cut files, broken archives and checksums cannot be fixed: no button.
+- **Delete**: the file, its `.cue` tracks and the discs of a multi-disc game. To the Windows Recycle Bin in the AegisROM
+  window, permanently in the Edge window (the browser has no Recycle Bin), after a confirmation.
+- **Show in folder**: Explorer with the file selected (AegisROM window). A missing file opens the nearest folder.
+
+Routes: `POST /api/native/romcheck/reveal|trash|rebuild-chd` (`aegisapi/romcheck_actions.go`), paths only inside the
+picked folders (`ResolveVFSPath`).

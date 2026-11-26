@@ -575,6 +575,15 @@ func runHybridModernDesktopApp() bool {
 		})
 	})
 
+	// Действия «Проверки ромов»: показать в папке, в корзину, пересобрать CHD (aegisapi/romcheck_actions.go).
+	// ROM check actions: show in folder, Recycle Bin, rebuild CHD (aegisapi/romcheck_actions.go).
+	aegisapi.RegisterRomCheckRoutes(mux, touch, aegisapi.RomCheckOptions{
+		Chdman: findChdmanExecutable,
+		Prep: func(c *exec.Cmd) {
+			c.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		},
+	})
+
 	mux.HandleFunc("/api/native/converter/chd", func(w http.ResponseWriter, r *http.Request) {
 		atomic.StoreInt64(&lastHeartbeatUnix, time.Now().Unix())
 		if r.Method != http.MethodPost {
