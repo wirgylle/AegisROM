@@ -256,6 +256,7 @@ import {
 } from './utils/mediaKinds';
 import { HackMoveModal, type HackMoveCandidate } from './components/HackMoveModal';
 import { SdRepairPlanModal, type SdRepairSelection } from './components/SdRepairPlanModal';
+import { ThemeDownloadModal } from './components/ThemeDownloadModal';
 import {
   applySdRepairPlan,
   buildSdRepairCmd,
@@ -1820,6 +1821,7 @@ export function App() {
   const [isRepairingSd, setIsRepairingSd] = useState(false);
   const [sdRepairPlan, setSdRepairPlan] = useState<SdRepairPlan | null>(null);
   const [sdRepairLoading, setSdRepairLoading] = useState(false);
+  const [themeTarget, setThemeTarget] = useState<{ catalog: 'oga' | 'onion'; dir: any; path: string } | null>(null);
   const [isApplyingXml, setIsApplyingXml] = useState(false);
   // Проверка ромов (Инструменты). / ROM check (Tools).
   const [isCheckingRoms, setIsCheckingRoms] = useState(false);
@@ -5012,6 +5014,33 @@ export function App() {
       addLog(tf('app.sd.repairErrLog', { label: t(`tools.sd.fw.${fw}`), err: String(err) }));
     } finally {
       setSdRepairLoading(false);
+    }
+  };
+
+  // Каталог тем: папку тем находим без учёта регистра, если её нет, создаём (только её).
+  // Theme catalog: find the themes folder case-insensitively, create it (only it) if missing.
+  const handleOpenThemeCatalog = async () => {
+    const profile = getSdFirmwareProfile(sdRepairPlan?.firmware || sdFirmwareId);
+    const activeSdHandle = sdTargetDirHandle || rootDirHandle;
+    if (!profile.themes || !activeSdHandle) return;
+    try {
+      const writer = handleSdWriter(activeSdHandle);
+      await applySdRepairPlan(writer, [profile.themes.dir]);
+      let dir: any = activeSdHandle;
+      for (const seg of profile.themes.dir.split('/')) {
+        let next: any = null;
+        for await (const e of dir.values()) {
+          if (e.kind === 'directory' && String(e.name).toLowerCase() === seg.toLowerCase()) {
+            next = e;
+            break;
+          }
+        }
+        if (!next) throw new Error(`no folder: ${profile.themes.dir}`);
+        dir = next;
+      }
+      setThemeTarget({ catalog: profile.themes.catalog, dir, path: `${activeSdHandle.name}/${profile.themes.dir}` });
+    } catch (err) {
+      addLog(tf('app.sd.repairErrLog', { label: t(`tools.sd.fw.${profile.id}`), err: String(err) }));
     }
   };
 
@@ -10361,7 +10390,22 @@ export function App() {
           busy={isRepairingSd}
           onApply={(sel) => void handleApplySdRepair(sel)}
           onDownloadCmd={handleDownloadSdRepairCmd}
+          onOpenThemes={() => void handleOpenThemeCatalog()}
           onClose={() => setSdRepairPlan(null)}
+        />
+      )}
+
+      {themeTarget && (
+        <ThemeDownloadModal
+          catalog={themeTarget.catalog}
+          themesDir={themeTarget.dir}
+          themesPath={themeTarget.path}
+          onInstalled={(folder, files) => addLog(tf('sd.log.themeInstalled', { folder, files }))}
+          onClose={() => {
+            setThemeTarget(null);
+            // План обновляем: предупреждение о пустых темах должно уйти. / Refresh the plan.
+            if (sdRepairPlan) void handleRepairR36SSDCard(sdRepairPlan.firmware);
+          }}
         />
       )}
 

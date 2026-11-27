@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Download, ExternalLink, FolderPlus, Wrench, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Download, ExternalLink, FolderPlus, Palette, Wrench, X } from 'lucide-react';
 import { useI18n } from '../i18n/translations';
 import { getSdFirmwareProfile, summarizeSdPlan, type SdPlanItem, type SdRepairPlan } from '../utils/sdLayout';
 
@@ -20,6 +20,9 @@ interface SdRepairPlanModalProps {
   busy?: boolean;
   onApply: (sel: SdRepairSelection) => void;
   onDownloadCmd: (paths: string[]) => void;
+  // Открыть каталог тем (есть только у прошивок с подтверждённым источником).
+  // Open the theme catalog (only for firmwares with a confirmed source).
+  onOpenThemes?: () => void;
   onClose: () => void;
 }
 
@@ -29,6 +32,7 @@ export const SdRepairPlanModal: React.FC<SdRepairPlanModalProps> = ({
   busy,
   onApply,
   onDownloadCmd,
+  onOpenThemes,
   onClose,
 }) => {
   const { t, tf } = useI18n();
@@ -59,6 +63,7 @@ export const SdRepairPlanModal: React.FC<SdRepairPlanModalProps> = ({
         ...(consolesOn ? summary.toCreateConsoles.map((i) => i.path) : []),
       ]
     : [];
+  const canThemes = Boolean(plan?.checked && profile?.themes && onOpenThemes);
   const canApply = Boolean(plan?.checked) && !busy && (selectedPaths.length > 0 || rescueRoms || cleanJunk);
 
   const warnText = (i: SdPlanItem) => {
@@ -110,6 +115,11 @@ export const SdRepairPlanModal: React.FC<SdRepairPlanModalProps> = ({
                     <div key={`w-${i.path}`} className="p-2 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40">
                       <div className="font-semibold text-amber-950 dark:text-amber-100 break-all">{warnText(i)}</div>
                       {i.whyKey && <div className="text-amber-800 dark:text-amber-300 mt-0.5">{t(i.whyKey)}</div>}
+                      {i.kind === 'themes' && canThemes && (
+                        <button type="button" onClick={onOpenThemes} className="inline-flex items-center gap-1 mt-1 mr-3 px-2 py-0.5 rounded-md font-bold bg-violet-600 text-white hover:bg-violet-700">
+                          <Palette className="w-3 h-3" /> {t('sd.plan.themesBtn')}
+                        </button>
+                      )}
                       {i.fixUrl && (
                         <a href={i.fixUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 mt-1 text-amber-700 dark:text-amber-300 underline">
                           {t('sd.plan.fix')} <ExternalLink className="w-3 h-3" />
@@ -210,6 +220,15 @@ export const SdRepairPlanModal: React.FC<SdRepairPlanModalProps> = ({
           <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800">
             {t('sd.plan.cancel')}
           </button>
+          {canThemes && (
+            <button
+              disabled={busy}
+              onClick={onOpenThemes}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950/40 disabled:opacity-50 inline-flex items-center gap-1"
+            >
+              <Palette className="w-3.5 h-3.5" /> {t('sd.plan.themesBtn')}
+            </button>
+          )}
           {summary && (
             <button
               disabled={busy || selectedPaths.length === 0}

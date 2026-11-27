@@ -61,8 +61,18 @@ export interface SdSource {
   url: string;
 }
 
+export interface SdThemeSource {
+  // Каталог тем (src/utils/themeCatalog.ts). / Theme catalog.
+  catalog: 'oga' | 'onion';
+  // Папка тем от корня карты. / Themes folder from the card root.
+  dir: string;
+}
+
 export interface SdFirmwareProfile {
   id: SdRepairFirmwareId;
+  // Откуда качать темы прямо из починки; нет — источник не подтверждён.
+  // Where to download themes from the repair tool; absent when no source is confirmed.
+  themes?: SdThemeSource;
   // Подсказка, какую папку выбирать корнем (ключ sd.root.*). / Which folder to pick as root.
   rootKey: string;
   // Папка ромов относительно корня ('' = консоли прямо в корне).
@@ -135,6 +145,7 @@ export const SD_FIRMWARE_PROFILES: Record<SdRepairFirmwareId, SdFirmwareProfile>
   r36s_arkos: {
     id: 'r36s_arkos',
     rootKey: 'sd.root.easyroms',
+    themes: { catalog: 'oga', dir: 'themes' },
     romsDir: '',
     items: [
       dir('bios', 'sd.why.bios'),
@@ -154,6 +165,7 @@ export const SD_FIRMWARE_PROFILES: Record<SdRepairFirmwareId, SdFirmwareProfile>
   r36s_darkos: {
     id: 'r36s_darkos',
     rootKey: 'sd.root.easyroms',
+    themes: { catalog: 'oga', dir: 'themes' },
     romsDir: '',
     items: [
       dir('bios', 'sd.why.bios'),
@@ -171,6 +183,7 @@ export const SD_FIRMWARE_PROFILES: Record<SdRepairFirmwareId, SdFirmwareProfile>
       { label: 'dArkOS: finishing_touches.sh', url: 'https://github.com/christianhaitian/dArkOS/blob/master/finishing_touches.sh' },
       { label: 'dArkOS: game_systems.txt', url: 'https://github.com/christianhaitian/dArkOS/blob/master/game_systems.txt' },
       { label: 'ThemeMaster', url: THEMEMASTER_URL },
+      { label: 'Emulationstation OGA Theme Gallery', url: 'https://github.com/Jetup13/Emulationstation-OGA-Theme-Gallery' },
     ],
   },
   anbernic_muos: {
@@ -252,6 +265,7 @@ export const SD_FIRMWARE_PROFILES: Record<SdRepairFirmwareId, SdFirmwareProfile>
   miyoo_onion: {
     id: 'miyoo_onion',
     rootKey: 'sd.root.cardRoot',
+    themes: { catalog: 'onion', dir: 'Themes' },
     romsDir: 'Roms',
     items: [
       sys('.tmp_update', 'sd.why.tmpUpdate', ONION_RELEASES),
@@ -265,6 +279,7 @@ export const SD_FIRMWARE_PROFILES: Record<SdRepairFirmwareId, SdFirmwareProfile>
     sources: [
       { label: 'Onion: Fresh install', url: 'https://onionui.github.io/docs/installation/fresh' },
       { label: 'Onion: FAQ', url: 'https://onionui.github.io/docs/faq' },
+      { label: 'Onion Themes (How to Install)', url: 'https://github.com/OnionUI/Themes' },
     ],
   },
   miyoo_spruce: {

@@ -39,6 +39,26 @@ export function countZipEntries(zip: Uint8Array): number {
   return eocd < 0 ? 0 : dv.getUint16(eocd + 10, true);
 }
 
+/** Имена записей без распаковки (по центральному каталогу). / Entry names without inflating. */
+export function listZipNames(zip: Uint8Array): string[] {
+  const dv = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+  const eocd = findEocd(dv, zip.byteLength);
+  if (eocd < 0) throw new ZipError(ZIP_ERR_INVALID);
+  const total = dv.getUint16(eocd + 10, true);
+  let cd = dv.getUint32(eocd + 16, true);
+  const dec = new TextDecoder('utf-8');
+  const out: string[] = [];
+  for (let idx = 0; idx < total && cd + 46 <= zip.byteLength; idx++) {
+    if (dv.getUint32(cd, true) !== 0x02014b50) break;
+    const nameLen = dv.getUint16(cd + 28, true);
+    const extraLen = dv.getUint16(cd + 30, true);
+    const commentLen = dv.getUint16(cd + 32, true);
+    out.push(dec.decode(zip.subarray(cd + 46, cd + 46 + nameLen)));
+    cd += 46 + nameLen + extraLen + commentLen;
+  }
+  return out;
+}
+
 function findEocd(dv: DataView, len: number): number {
   const searchStart = Math.max(0, len - 65558);
   for (let i = len - 22; i >= searchStart; i--) {

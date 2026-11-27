@@ -43,6 +43,23 @@ dArkOS при сборке образа делает `/etc/emulationstation/them
 | CrossMix OS | корень SD | `BIOS`, `Roms`, `Imgs` | — | `PSP`, `PANASONIC`, `PICO` | [Installation](https://github.com/cizia64/CrossMix-OS/wiki/Installation) |
 | MinUI | корень SD | `Bios`, `Roms`, `Saves`, `Bios/FC`, `Bios/GB`, `Bios/GBA`, `Bios/GBC`, `Bios/MD`, `Bios/PS` | — | — | [README.txt](https://github.com/shauninman/MinUI/blob/main/skeleton/BASE/README.txt) |
 
+### Скачивание тем
+
+В плане есть кнопка «Скачать темы» (и в предупреждении о пустой папке тем). Она есть только у прошивок с подтверждённым источником:
+
+| Прошивка | Каталог | Что качается | Куда | Источник |
+|---|---|---|---|---|
+| ArkOS, dArkOS | [Emulationstation OGA Theme Gallery](https://github.com/Jetup13/Emulationstation-OGA-Theme-Gallery): тот же README, что читает ThemeMaster на устройстве | архив репозитория автора темы (`codeload.github.com/<автор>/<репо>/zip/HEAD`) | `themes/<репо>/` | ThemeMaster (`UpdateGalleryDB`), галерея |
+| Onion OS | [OnionUI/Themes](https://github.com/OnionUI/Themes), раздел Originals (постранично) | готовый zip из `release/` | `Themes/` как в архиве («Extract the downloaded theme to the Themes folder») | README OnionUI/Themes |
+
+- Галерея OGA отмечает, на каком экране тема проверена. По умолчанию фильтр 640x480 (R36S): сначала «работает», потом «не проверена», «нет» скрыто.
+- Каталог и архивы качает Go (`/api/themes/catalog`, `/api/themes/download`, `aegisapi/themes.go`): у архивов GitHub нет CORS. Адреса строго ограничены: два каталога, `codeload.github.com/<a>/<b>/zip/HEAD` и `raw.githubusercontent.com/OnionUI/Themes/main/release/*.zip`.
+- Распаковка в окне (`src/utils/themeCatalog.ts`). Тема ставится только в новые папки: если хоть одна папка темы уже есть (без учёта регистра), ничего не пишется. Пак Onion из нескольких тем ставится каждой темой в свою папку. Пути с `..` и абсолютные пропускаются.
+- Превью грузятся напрямую с raw.githubusercontent.com / user-images.githubusercontent.com.
+- Лицензии: AegisROM темы не хранит и не распространяет, а качает с репозиториев авторов, как ThemeMaster. Условия у каждой темы свои (ссылка на страницу темы в карточке).
+- Не включено: KNULLI и Batocera (у них свой загрузчик тем на устройстве, источник списка не проверял), muOS (путь установки тем в доках не сходится), spruceOS, CrossMix, ROCKNIX и EmuELEC (темы не на разделе с играми).
+- Проверка: каталог OGA и Onion загружаются, тема Onion (пак из 3 тем) скачана и распакована в OPFS-папку. Скачивание тем OGA проверено юнит-тестом и запросом к codeload (200, zip); в моём контейнере codeload закрыт прокси, поэтому полный прогон в окне для OGA не делал.
+
 ### Что не подтвердилось и не включено
 
 - **Файлы с шаблонным содержимым.** Ни для одной прошивки не нашлось файла, содержимое которого известно и не зависит от версии. Поэтому файлы не создаются, только проверяются (ThemeMaster, `batocera.conf`) со ссылкой, где их взять.
@@ -58,7 +75,7 @@ dArkOS при сборке образа делает `/etc/emulationstation/them
 
 ### Скриншоты
 
-`node scripts/sd-repair-screenshots.cjs docs/screenshots ru` (и `en`) при запущенном `npx vite --port 5179`. Флешку изображает папка OPFS с частью раскладки dArkOS.
+`npm run dev:api` (после `vite build`), затем `AEGIS_URL=http://127.0.0.1:38471/ node scripts/sd-repair-screenshots.cjs docs/screenshots ru` (и `en`). Для каталога тем нужен Go API и интернет. Флешку изображает папка OPFS с частью раскладки dArkOS.
 
 ## EN
 
@@ -74,6 +91,10 @@ dArkOS при сборке образа делает `/etc/emulationstation/them
 4. With no folder selected nothing is checked, but a Windows `.cmd` with the same `mkdir` steps can be downloaded. The `.cmd` no longer runs `chkdsk` or `del`.
 
 Names are compared case-insensitively (FAT/exFAT ignore case). The phantom-folder cleanup never offers to delete a system folder of any firmware from these profiles.
+
+### Theme downloads
+
+The plan has a "Download themes" button for firmwares with a confirmed source: ArkOS/dArkOS use the Emulationstation OGA Theme Gallery (the README ThemeMaster reads; a theme is the author's repository archive, installed into `themes/<repo>/`, filtered by screen, 640x480 for R36S by default); Onion uses the official OnionUI/Themes repository (packaged zips extracted into `Themes/` as is, a pack installs each theme in its own folder). Go fetches the catalogs and archives from a strict URL list (`aegisapi/themes.go`); unpacking happens in the window (`src/utils/themeCatalog.ts`). A theme goes only into new folders: if any of its folders exists, nothing is written. AegisROM does not host themes; each theme keeps its author's terms.
 
 ### Profiles
 

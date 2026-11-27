@@ -1,7 +1,7 @@
 // RU: Скриншоты окна «Починка флешки» (план). Флешку изображает папка OPFS с частью папок dArkOS.
-//     npx vite --port 5179, затем node scripts/sd-repair-screenshots.cjs [папка] [ru|en]
+//     npm run dev:api и npx vite --port 5179 (или AEGIS_URL=http://127.0.0.1:38471/ после vite build), затем node scripts/sd-repair-screenshots.cjs [папка] [ru|en]
 // EN: Screenshots of the "Flash drive repair" plan. The card is an OPFS folder with part of
-//     the dArkOS layout. Run Vite on port 5179, then this script.
+//     the dArkOS layout. Run the Go API and Vite on port 5179, then this script.
 const { chromium } = require('playwright');
 const out = process.argv[2] || 'docs/screenshots';
 const lang = process.argv[3] || 'ru';
@@ -22,7 +22,7 @@ const lang = process.argv[3] || 'ru';
     };
   }, lang);
   const p = await ctx.newPage();
-  await p.goto('http://localhost:5179/', { waitUntil: 'networkidle' });
+  await p.goto(process.env.AEGIS_URL || 'http://localhost:5179/', { waitUntil: 'load' });
   await p.waitForTimeout(3000);
   const tools = lang === 'ru' ? /^Инструменты/ : /^Tools/;
   await p.getByRole('button', { name: tools }).first().click();
@@ -31,7 +31,7 @@ const lang = process.argv[3] || 'ru';
   await p.waitForTimeout(600);
   await p.getByRole('button', { name: lang === 'ru' ? /Выбрать флешку/ : /Select|Choose|Pick/ }).first().click();
   await p.waitForTimeout(1500);
-  await p.locator('select').filter({ has: p.locator('option[value="r36s_darkos"]') }).first().selectOption('r36s_darkos');
+  await p.locator('select').filter({ has: p.locator('option[value="r36s_darkos"]') }).first().selectOption(process.env.FW || 'r36s_darkos');
   await p.waitForTimeout(400);
   const card = p.locator('[data-tool="sdRepair"]').first();
   await card.scrollIntoViewIfNeeded();
@@ -40,6 +40,11 @@ const lang = process.argv[3] || 'ru';
   await p.waitForSelector('[data-modal="sd-repair"] h3');
   await p.waitForTimeout(800);
   await p.locator('[data-modal="sd-repair"] > div').screenshot({ path: `${out}/sd-repair-plan-${lang}.png` });
+  // Каталог тем (нужен Go API: npm run dev:api). / Theme catalog (needs the Go API).
+  await p.locator('[data-modal="sd-repair"] button', { hasText: lang === 'ru' ? 'Скачать темы' : 'Download themes' }).last().click();
+  await p.waitForSelector('[data-modal="themes"] img', { timeout: 30000 });
+  await p.waitForTimeout(6000);
+  await p.locator('[data-modal="themes"] > div').screenshot({ path: `${out}/sd-repair-themes-${lang}.png` });
   console.log('ok');
   await b.close();
 })().catch((e) => { console.error(e.message); process.exit(1); });
