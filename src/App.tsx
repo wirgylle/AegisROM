@@ -255,6 +255,18 @@ import {
   type MediaSet,
 } from './utils/mediaKinds';
 import { HackMoveModal, type HackMoveCandidate } from './components/HackMoveModal';
+import { SdRepairPlanModal, type SdRepairSelection } from './components/SdRepairPlanModal';
+import {
+  applySdRepairPlan,
+  buildSdRepairCmd,
+  buildSdRepairPlan,
+  getSdFirmwareProfile,
+  handleSdWriter,
+  sdSystemFolderNames,
+  summarizeSdPlan,
+  type SdRepairFirmwareId,
+  type SdRepairPlan,
+} from './utils/sdLayout';
 
 interface ConsoleMeta {
   code: string;
@@ -822,6 +834,10 @@ const NOISE_WORDS = new Set([
 const OFFICIAL_R36S_MEDIA_DIRS = new Set(['images', 'marquees', 'videos']);
 
 // Защищённые системные и консольные папки флешки R36S (EASYROMS), удаление которых ломает монтирование ArkOS / DarkOS
+// Плюс системные папки всех прошивок из профилей починки флешки.
+// Plus the system folders of every firmware from the card repair profiles.
+const SD_SYSTEM_FOLDER_NAMES = sdSystemFolderNames();
+
 const PROTECTED_R36S_DIRS = new Set([
   'bios',
   'tools',
@@ -1802,6 +1818,8 @@ export function App() {
   const [isCleaningMedia, setIsCleaningMedia] = useState(false);
   const [isScanningPhantoms, setIsScanningPhantoms] = useState(false);
   const [isRepairingSd, setIsRepairingSd] = useState(false);
+  const [sdRepairPlan, setSdRepairPlan] = useState<SdRepairPlan | null>(null);
+  const [sdRepairLoading, setSdRepairLoading] = useState(false);
   const [isApplyingXml, setIsApplyingXml] = useState(false);
   // Проверка ромов (Инструменты). / ROM check (Tools).
   const [isCheckingRoms, setIsCheckingRoms] = useState(false);
@@ -1825,9 +1843,7 @@ export function App() {
 
   const [sdTargetDirHandle, setSdTargetDirHandle] = useState<any>(null);
   const [sdTargetFolderName, setSdTargetFolderName] = useState<string>('');
-  const [sdFirmwareId, setSdFirmwareId] = useState<
-    'r36s_arkos' | 'anbernic_muos' | 'anbernic_knulli' | 'rocknix' | 'miyoo_onion' | 'trimui_crossmix'
-  >(() => loadAppSettings().sdFirmwareId);
+  const [sdFirmwareId, setSdFirmwareId] = useState<SdRepairFirmwareId>(() => loadAppSettings().sdFirmwareId);
 
   const [bufferDirHandle, setBufferDirHandle] = useState<any>(null);
   const [bufferFolderName, setBufferFolderName] = useState<string>('');
@@ -4971,163 +4987,67 @@ export function App() {
     );
   };
 
-  const handleRepairR36SSDCard = async (
-    firmwareOverride?:
-      | 'r36s_arkos'
-      | 'anbernic_muos'
-      | 'anbernic_knulli'
-      | 'rocknix'
-      | 'miyoo_onion'
-      | 'trimui_crossmix'
-  ) => {
-    const fw = firmwareOverride || sdFirmwareId;
+  const handleRepairR36SSDCard = async (firmwareOverride?: string) => {
+    const fw = (firmwareOverride || sdFirmwareId) as SdRepairFirmwareId;
     if (isRepairingSd || isScanning || isOrganizing) return;
+    const profile = getSdFirmwareProfile(fw);
+    const activeSdHandle = sdTargetDirHandle || rootDirHandle;
+    setSdRepairLoading(true);
+    setSdRepairPlan(null);
+    try {
+      const plan = await buildSdRepairPlan(profile, activeSdHandle ? handleSdWriter(activeSdHandle) : null);
+      setSdRepairPlan(plan);
+      if (plan.checked) {
+        const sum = summarizeSdPlan(plan);
+        addLog(
+          tf('sd.log.planned', {
+            fw: t(`tools.sd.fw.${fw}`),
+            create: sum.toCreateSystem.length + sum.toCreateConsoles.length,
+            warn: sum.warnings.length,
+            ok: sum.okCount,
+          })
+        );
+      }
+    } catch (err) {
+      addLog(tf('app.sd.repairErrLog', { label: t(`tools.sd.fw.${fw}`), err: String(err) }));
+    } finally {
+      setSdRepairLoading(false);
+    }
+  };
+
+  const handleDownloadSdRepairCmd = (paths: string[]) => {
+    const fw = sdRepairPlan?.firmware || sdFirmwareId;
+    const fwName = t(`tools.sd.fw.${fw}`);
+    const text = buildSdRepairCmd(paths, {
+      title: tf('sd.cmd.title', { fw: fwName }),
+      promptDrive: t('app.sd.cmdPromptDrive'),
+      step: t('sd.cmd.step'),
+      done: t('app.sd.cmdDone'),
+    });
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Repair_SD_${fw}.cmd`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2500);
+  };
+
+  const handleApplySdRepair = async (sel: SdRepairSelection) => {
+    const plan = sdRepairPlan;
+    const activeSdHandle = sdTargetDirHandle || rootDirHandle;
+    if (!plan || !activeSdHandle || isRepairingSd) return;
+    const profile = getSdFirmwareProfile(plan.firmware);
+    const fwName = t(`tools.sd.fw.${plan.firmware}`);
     setIsRepairingSd(true);
     setProgressPct(15);
-
-    const fwProfiles: Record<
-      string,
-      { label: string; romsPrefix: string; dirs: string[]; mediaDirs: string[] }
-    > = {
-      r36s_arkos: {
-        label: 'R36S / Powkiddy (ArkOS / DarkOS — EASYROMS)',
-        romsPrefix: '',
-        dirs: [
-          'bios',
-          'tools',
-          'themes',
-          'ports',
-          'launchimages',
-          'bgmusic',
-          'backup',
-          'saves',
-          'savestates',
-          'nes',
-          'snes',
-          'gb',
-          'gbc',
-          'gba',
-          'nds',
-          'n64',
-          'megadrive',
-          'mastersystem',
-          'gamegear',
-          'pcengine',
-          'psx',
-          'psp',
-          'arcade',
-        ],
-        mediaDirs: ['images', 'marquees', 'videos'],
-      },
-      anbernic_muos: {
-        label: 'Anbernic XX / H700 (muOS — SD2:/ROMS)',
-        romsPrefix: '',
-        dirs: [
-          'MUOS/bios',
-          'MUOS/save',
-          'MUOS/info/catalogue',
-          'ports',
-          'nes',
-          'snes',
-          'gb',
-          'gbc',
-          'gba',
-          'nds',
-          'megadrive',
-          'psx',
-          'psp',
-          'arcade',
-        ],
-        mediaDirs: ['images', 'videos'],
-      },
-      anbernic_knulli: {
-        label: 'Anbernic / TrimUI (KNULLI / Batocera — roms/)',
-        romsPrefix: 'roms',
-        dirs: [
-          'bios',
-          'saves',
-          'themes',
-          'roms/nes',
-          'roms/snes',
-          'roms/gb',
-          'roms/gbc',
-          'roms/gba',
-          'roms/nds',
-          'roms/n64',
-          'roms/megadrive',
-          'roms/psx',
-          'roms/psp',
-          'roms/ports',
-          'roms/fbneo',
-        ],
-        mediaDirs: ['images', 'videos', 'marquees'],
-      },
-      rocknix: {
-        label: 'ROCKNIX / JELOS (Powkiddy / Anbernic / Odin)',
-        romsPrefix: 'roms',
-        dirs: [
-          'roms/bios',
-          'roms/ports',
-          'roms/nes',
-          'roms/snes',
-          'roms/gba',
-          'roms/nds',
-          'roms/n64',
-          'roms/megadrive',
-          'roms/psx',
-          'roms/psp',
-          'roms/arcade',
-        ],
-        mediaDirs: ['images', 'videos', 'marquees'],
-      },
-      miyoo_onion: {
-        label: 'Miyoo Mini / Plus (OnionOS — Roms/ + Imgs/)',
-        romsPrefix: 'Roms',
-        dirs: [
-          'BIOS',
-          'Saves',
-          'Roms/FC',
-          'Roms/SFC',
-          'Roms/GB',
-          'Roms/GBC',
-          'Roms/GBA',
-          'Roms/MD',
-          'Roms/PS',
-          'Roms/ARCADE',
-          'Roms/PORTS',
-        ],
-        mediaDirs: ['Imgs'],
-      },
-      trimui_crossmix: {
-        label: 'TrimUI Smart Pro / Brick (CrossMix OS)',
-        romsPrefix: 'Roms',
-        dirs: [
-          'BIOS',
-          'Imgs',
-          'Roms/FC',
-          'Roms/SFC',
-          'Roms/GB',
-          'Roms/GBC',
-          'Roms/GBA',
-          'Roms/MD',
-          'Roms/PS',
-          'Roms/PSP',
-          'Roms/N64',
-          'Roms/NDS',
-          'Roms/PORTS',
-        ],
-        mediaDirs: ['Imgs'],
-      },
-    };
-
-    const profile = fwProfiles[fw] || fwProfiles.r36s_arkos;
-    setCurrentActionText(tf('app.sd.repairStartStatus', { label: profile.label }));
-    addLog(tf('app.sd.repairStartLog', { label: profile.label }));
+    setCurrentActionText(tf('app.sd.repairStartStatus', { label: fwName }));
+    addLog(tf('app.sd.repairStartLog', { label: fwName }));
 
     let restoredRoms = 0;
-    let recreatedDirs = 0;
     let cleanedWinJunk = 0;
-    const activeSdHandle = sdTargetDirHandle || rootDirHandle;
 
     const ensureNestedDir = async (base: any, relPath: string) => {
       let cur = base;
@@ -5138,93 +5058,73 @@ export function App() {
     };
 
     try {
-      if (activeSdHandle) {
-        const rootLower = activeSdHandle.name.toLowerCase();
-        const isSingleConsoleRoot = Boolean(CONSOLE_CATALOG[rootLower]);
+      // 1. Недостающие папки: только создание. / Missing folders: create only.
+      if (sel.paths.length > 0) {
+        const res = await applySdRepairPlan(handleSdWriter(activeSdHandle), sel.paths);
+        for (const f of res.failed) addLog(tf('sd.log.failed', { path: f.path, err: f.error }));
+        addLog(
+          tf('sd.log.done', {
+            fw: fwName,
+            created: res.created.length,
+            skipped: res.skipped.length,
+            failed: res.failed.length,
+          })
+        );
+      }
+      setProgressPct(50);
 
-        if (!isSingleConsoleRoot) {
-          for (const dName of profile.dirs) {
-            try {
-              const dh = await ensureNestedDir(activeSdHandle, dName);
-              recreatedDirs++;
-              const leaf = dName.split('/').pop()?.toLowerCase() || '';
-              if (
-                CONSOLE_CATALOG[leaf] ||
-                ['megadrive', 'ps', 'fc', 'sfc', 'md', 'fbneo'].includes(leaf)
-              ) {
-                for (const mDir of profile.mediaDirs) {
-                  await dh.getDirectoryHandle(mDir, { create: true });
+      // 2. Старые шаги, только по галочке. / Old steps, only when ticked.
+      const isSingleConsoleRoot = Boolean(CONSOLE_CATALOG[activeSdHandle.name.toLowerCase()]);
+      const wrapperPrefixes = ['organized', '1_8bit', '2_16bit', '3_portable', '4_32_64bit', '_duplicates_1g1r'];
+
+      async function rescueFromWrapperDir(dirHandle: any, relPrefix: string) {
+        for await (const entry of dirHandle.values()) {
+          const rel = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
+          if (entry.kind === 'directory') {
+            await rescueFromWrapperDir(entry, rel);
+          } else if (entry.kind === 'file') {
+            const dot = entry.name.lastIndexOf('.');
+            const ext = dot !== -1 ? entry.name.slice(dot).toLowerCase() : '';
+            if (EXT_TO_DEFAULT_CONSOLE[ext]) {
+              try {
+                const consoleCode = detectConsoleFromPathAndExt(rel, ext);
+                const destRel = profile.romsDir ? `${profile.romsDir}/${consoleCode}` : consoleCode;
+                const destConsoleHandle = isSingleConsoleRoot
+                  ? activeSdHandle
+                  : await ensureNestedDir(activeSdHandle, destRel);
+                if (typeof entry.move === 'function') {
+                  await entry.move(destConsoleHandle, entry.name);
+                } else {
+                  const f = await entry.getFile();
+                  const newFh = await destConsoleHandle.getFileHandle(entry.name, { create: true });
+                  const w = await newFh.createWritable();
+                  await w.write(await f.arrayBuffer());
+                  await w.close();
+                  await dirHandle.removeEntry(entry.name);
                 }
-              }
-            } catch {}
-          }
-        } else {
-          for (const mDir of profile.mediaDirs) {
-            await activeSdHandle.getDirectoryHandle(mDir, { create: true });
-            recreatedDirs++;
-          }
-        }
-
-        const wrapperPrefixes = [
-          'organized',
-          '1_8bit',
-          '2_16bit',
-          '3_portable',
-          '4_32_64bit',
-          '_duplicates_1g1r',
-        ];
-
-        async function rescueFromWrapperDir(dirHandle: any, relPrefix: string) {
-          for await (const entry of dirHandle.values()) {
-            const rel = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
-            if (entry.kind === 'directory') {
-              await rescueFromWrapperDir(entry, rel);
-            } else if (entry.kind === 'file') {
-              const dot = entry.name.lastIndexOf('.');
-              const ext = dot !== -1 ? entry.name.slice(dot).toLowerCase() : '';
-              if (EXT_TO_DEFAULT_CONSOLE[ext]) {
-                try {
-                  const consoleCode = detectConsoleFromPathAndExt(rel, ext);
-                  const destRel = profile.romsPrefix ? `${profile.romsPrefix}/${consoleCode}` : consoleCode;
-                  const destConsoleHandle = isSingleConsoleRoot
-                    ? activeSdHandle
-                    : await ensureNestedDir(activeSdHandle, destRel);
-                  if (typeof entry.move === 'function') {
-                    await entry.move(destConsoleHandle, entry.name);
-                  } else {
-                    const f = await entry.getFile();
-                    const newFh = await destConsoleHandle.getFileHandle(entry.name, { create: true });
-                    const w = await newFh.createWritable();
-                    if (typeof f.stream === 'function' && typeof w.getWriter !== 'function') {
-                      await f.stream().pipeTo(w);
-                    } else {
-                      await w.write(await f.arrayBuffer());
-                      await w.close();
-                    }
-                    await dirHandle.removeEntry(entry.name);
-                  }
-                  restoredRoms++;
-                } catch {}
-              }
+                restoredRoms++;
+              } catch {}
             }
           }
         }
+      }
 
+      if (sel.rescueRoms || sel.cleanJunk) {
         for await (const entry of activeSdHandle.values()) {
           const lower = entry.name.toLowerCase();
           if (entry.kind === 'directory') {
-            if (wrapperPrefixes.some((p) => lower.startsWith(p))) {
+            if (sel.rescueRoms && wrapperPrefixes.some((p) => lower.startsWith(p))) {
               await rescueFromWrapperDir(entry, entry.name);
               try {
                 await activeSdHandle.removeEntry(entry.name, { recursive: true });
               } catch {}
-            } else if (lower === 'system volume information' || lower === '$recycle.bin') {
+            } else if (sel.cleanJunk && (lower === 'system volume information' || lower === '$recycle.bin')) {
               try {
                 await activeSdHandle.removeEntry(entry.name, { recursive: true });
                 cleanedWinJunk++;
               } catch {}
             }
-          } else if (entry.kind === 'file') {
+          } else if (entry.kind === 'file' && sel.cleanJunk) {
             if (['thumbs.db', 'desktop.ini', 'indexervolumeguid', '._.ds_store', '.ds_store'].includes(lower)) {
               try {
                 await activeSdHandle.removeEntry(entry.name);
@@ -5233,51 +5133,24 @@ export function App() {
             }
           }
         }
+        const doneMsg = tf('app.sd.repairDoneMsg', {
+          label: fwName,
+          dirs: sel.paths.length,
+          roms: restoredRoms,
+          junk: cleanedWinJunk,
+        });
+        setCurrentActionText(doneMsg);
+        addLog(doneMsg);
+      } else {
+        setCurrentActionText(tf('sd.log.done', { fw: fwName, created: sel.paths.length, skipped: 0, failed: 0 }));
       }
 
-      // Generate portable exFAT/FAT32 Dirty-Bit + directory repair helper for the selected handheld OS
-      const batLines = [
-        '@echo off',
-        'chcp 65001 >nul',
-        'echo ============================================================================',
-        `echo  ${tf('app.sd.cmdTitle', { label: profile.label })}`,
-        'echo ============================================================================',
-        `set /p DRIVE="${t('app.sd.cmdPromptDrive')}"`,
-        'set DRIVE=%DRIVE:~0,1%',
-        `echo ${t('app.sd.cmdStep1')}`,
-        'chkdsk %DRIVE%: /f',
-        `echo ${t('app.sd.cmdStep2')}`,
-        ...profile.dirs.map((d) => `if not exist "%DRIVE%:\\${d.replace(/\//g, '\\')}" mkdir "%DRIVE%:\\${d.replace(/\//g, '\\')}"`),
-        `echo ${t('app.sd.cmdStep3')}`,
-        'del /s /q /f "%DRIVE%:\\Thumbs.db" "%DRIVE%:\\desktop.ini" 2>nul',
-        `echo ${t('app.sd.cmdDone')}`,
-        'pause',
-      ];
-
-      const blob = new Blob([batLines.join('\r\n')], { type: 'text/plain;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `Repair_SD_${fw}.cmd`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 2500);
-
-      const doneMsg = tf('app.sd.repairDoneMsg', {
-        label: profile.label,
-        dirs: recreatedDirs,
-        roms: restoredRoms,
-        junk: cleanedWinJunk,
-      });
-      setCurrentActionText(doneMsg);
-      addLog(doneMsg);
-
-      if (activeSdHandle) {
+      setSdRepairPlan(null);
+      if (restoredRoms > 0) {
         await scanDirectoryHandleRecursively(activeSdHandle, 'replace');
       }
     } catch (err) {
-      addLog(tf('app.sd.repairErrLog', { label: profile.label, err: String(err) }));
+      addLog(tf('app.sd.repairErrLog', { label: fwName, err: String(err) }));
     } finally {
       setIsRepairingSd(false);
       setProgressPct(100);
@@ -5368,7 +5241,7 @@ export function App() {
         }
 
         // Никогда не предлагаем удалить системные и консольные папки R36S (даже если они пустые!)
-        if (PROTECTED_R36S_DIRS.has(lower)) {
+        if (PROTECTED_R36S_DIRS.has(lower) || SD_SYSTEM_FOLDER_NAMES.has(lower)) {
           await walkPhantomDirs(entry, rel);
           continue;
         }
@@ -10419,7 +10292,7 @@ export function App() {
         onRomCheckAction={handleRomCheckAction}
         romCheckActionBusy={romCheckActionBusy}
         onScanPhantomFolders={() => void runWithSessionRoms('handleScanPhantomFolders')}
-        onRepairSdCard={(fw) => handleRepairR36SSDCard(fw as any)}
+        onRepairSdCard={(fw) => handleRepairR36SSDCard(fw)}
         sdTargetFolderName={sdTargetFolderName}
         onSelectSdFolder={handleSelectSdFolder}
         onScanSdFolder={handleScanSdFolder}
@@ -10480,6 +10353,17 @@ export function App() {
           }));
         }}
       />
+
+      {(sdRepairLoading || sdRepairPlan) && (
+        <SdRepairPlanModal
+          plan={sdRepairPlan}
+          loading={sdRepairLoading}
+          busy={isRepairingSd}
+          onApply={(sel) => void handleApplySdRepair(sel)}
+          onDownloadCmd={handleDownloadSdRepairCmd}
+          onClose={() => setSdRepairPlan(null)}
+        />
+      )}
 
       <HackMoveModal
         candidates={hackMoveCandidates}

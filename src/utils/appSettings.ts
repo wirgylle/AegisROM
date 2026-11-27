@@ -1,3 +1,4 @@
+import { SD_REPAIR_FIRMWARE_IDS, type SdRepairFirmwareId } from './sdLayout.ts';
 /**
  * Настройки приложения по умолчанию / App default settings.
  *
@@ -23,13 +24,7 @@ export type SidebarGroupBy = 'console' | 'bitness' | 'genre' | 'age' | 'studio';
 export type CatalogMode = 'gen_then_console' | 'r36s_gen_direct' | 'r36s_flat_console';
 export type PriorityPreset = 'rus_first' | 'usa_first' | 'eur_first' | 'jpn_first';
 export type CombineMoveMode = 'move' | 'copy';
-export type SdFirmwareId =
-  | 'r36s_arkos'
-  | 'anbernic_muos'
-  | 'anbernic_knulli'
-  | 'rocknix'
-  | 'miyoo_onion'
-  | 'trimui_crossmix';
+export type SdFirmwareId = SdRepairFirmwareId;
 
 export interface AppSettings {
   // Общие / General
@@ -88,14 +83,7 @@ export const APP_SETTINGS_CHOICES = {
   catalogMode: ['r36s_flat_console', 'gen_then_console', 'r36s_gen_direct'],
   priorityPreset: ['rus_first', 'usa_first', 'eur_first', 'jpn_first'],
   combineMoveMode: ['move', 'copy'],
-  sdFirmwareId: [
-    'r36s_arkos',
-    'anbernic_muos',
-    'anbernic_knulli',
-    'rocknix',
-    'miyoo_onion',
-    'trimui_crossmix',
-  ],
+  sdFirmwareId: SD_REPAIR_FIRMWARE_IDS,
 } as const satisfies { [K in keyof AppSettings]?: readonly AppSettings[K][] };
 
 /**
