@@ -179,6 +179,45 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
     setPage(1);
   }, [searchQuery, rtrFilter, consoleFilter]);
 
+  const resultsTopRef = useRef<HTMLDivElement | null>(null);
+
+  // Смена страницы: если начало списка ушло вверх, прокручиваем к нему.
+  // Page change: if the list start is above the viewport, scroll back to it.
+  const goToPage = (next: number) => {
+    const target = Math.min(totalPages, Math.max(1, next));
+    if (target === safePage) return;
+    setPage(target);
+    requestAnimationFrame(() => {
+      const el = resultsTopRef.current;
+      if (el && el.getBoundingClientRect().top < 0) {
+        el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }
+    });
+  };
+
+  const renderPager = (large = false) => {
+    if (totalPages <= 1) return null;
+    const btn = `${large ? 'px-3 py-2 sm:py-1.5 text-xs' : 'px-2 py-1'} rounded bg-slate-100 dark:bg-slate-800 font-bold disabled:opacity-40 disabled:cursor-default cursor-pointer`;
+    return (
+      <div className="flex items-center gap-1.5">
+        <button type="button" disabled={safePage <= 1} onClick={() => goToPage(safePage - 1)} className={btn}>
+          ← {t('pm.prevPage')}
+        </button>
+        <span className={`font-mono font-bold ${large ? 'text-xs px-1' : ''}`}>
+          {safePage} / {totalPages}
+        </span>
+        <button
+          type="button"
+          disabled={safePage >= totalPages}
+          onClick={() => goToPage(safePage + 1)}
+          className={large ? btn.replace('bg-slate-100 dark:bg-slate-800', 'bg-indigo-600 text-white hover:bg-indigo-700') : btn}
+        >
+          {t('pm.nextPage')} →
+        </button>
+      </div>
+    );
+  };
+
   const setPortProgress = (slug: string, p: PortInstallProgress | null) =>
     setInstallState((prev) => {
       const next = { ...prev };
@@ -537,35 +576,16 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
       )}
 
       {/* Results Header & Pagination */}
-      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+      <div
+        ref={resultsTopRef}
+        className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400 scroll-mt-3"
+      >
         <span>
           {tf('pm.pageInfo', { page: safePage, total: totalPages, count: filteredGames.length })} ·{' '}
           {t('pm.inBuildCount')}{' '}
           <strong className="text-emerald-600 dark:text-emerald-400">{portMasterBuildSlugs.length}</strong>
         </span>
-        {totalPages > 1 && (
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              disabled={safePage <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              className="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 font-bold disabled:opacity-40 cursor-pointer"
-            >
-              ← {t('pm.prevPage')}
-            </button>
-            <span className="font-mono font-bold">
-              {safePage} / {totalPages}
-            </span>
-            <button
-              type="button"
-              disabled={safePage >= totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              className="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 font-bold disabled:opacity-40 cursor-pointer"
-            >
-              {t('pm.nextPage')} →
-            </button>
-          </div>
-        )}
+        {renderPager()}
       </div>
 
       {/* PortMaster Games List */}
@@ -850,6 +870,15 @@ export const PortMasterTab: React.FC<PortMasterTabProps> = ({
               </div>
             );
           })}
+          {/* Нижняя пагинация: листать дальше без подъёма наверх / Bottom pager: next page without scrolling up */}
+          {totalPages > 1 && pageGames.length > 0 && (
+            <div className="flex flex-wrap items-center justify-center sm:justify-between gap-2 pt-2 text-[11px] text-slate-500 dark:text-slate-400">
+              <span className="hidden sm:inline">
+                {tf('pm.pageInfo', { page: safePage, total: totalPages, count: filteredGames.length })}
+              </span>
+              {renderPager(true)}
+            </div>
+          )}
         </div>
       )}
 
