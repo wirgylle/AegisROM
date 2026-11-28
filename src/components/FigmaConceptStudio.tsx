@@ -46,6 +46,7 @@ import { MediaVersionsPanel, type MediaVersionsView } from './MediaVersionsPanel
 import { GameMediaGallery, type GameMediaItem } from './GameMediaGallery';
 import { GAME_MEDIA_KINDS, GAME_MEDIA_LABELS, type GameMediaKind } from '../utils/gameMediaKinds';
 import { nativeRomQuery } from '../utils/romSaves';
+import { SD_REPAIR_FIRMWARE_IDS } from '../utils/sdLayout';
 import type { VersionSlot } from '../utils/mediaVersions';
 import { DatFilesPanel } from './DatFilesPanel';
 import { RomCheckPanel } from './RomCheckPanel';
@@ -3560,19 +3561,16 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                         onChange={(e) => onChangeSdFirmwareId?.(e.target.value)}
                         className="w-full bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 rounded-lg px-3 py-2 font-bold text-slate-900 dark:text-slate-100"
                       >
-                        <option value="r36s_arkos">{t('tools.sd.fw.r36s_arkos')}</option>
-                        <option value="anbernic_muos">{t('tools.sd.fw.anbernic_muos')}</option>
-                        <option value="anbernic_knulli">{t('tools.sd.fw.anbernic_knulli')}</option>
-                        <option value="rocknix">{t('tools.sd.fw.rocknix')}</option>
-                        <option value="miyoo_onion">{t('tools.sd.fw.miyoo_onion')}</option>
-                        <option value="trimui_crossmix">{t('tools.sd.fw.trimui_crossmix')}</option>
+                        {SD_REPAIR_FIRMWARE_IDS.map((id) => (
+                          <option key={id} value={id}>{t(`tools.sd.fw.${id}`)}</option>
+                        ))}
                       </select>
                     </div>
 
                     <button data-tool="sdRepair"
                       type="button"
                       onClick={() => {
-                        if (onRepairSdCard && (canRunOps || sdTargetFolderName)) {
+                        if (onRepairSdCard) {
                           onRepairSdCard(sdFirmwareId);
                         } else {
                           startSimulatedProgressTask(`${t('tools.sd.repairTitle')} (${sdFirmwareId})`, [
@@ -3588,6 +3586,7 @@ export const FigmaConceptStudio: React.FC<FigmaConceptStudioProps> = ({
                       <Wrench className="w-4 h-4 shrink-0" />
                       <span>{t('tools.sd.repairBtn')}</span>
                     </button>
+                    <p className="text-xs text-amber-900/80 dark:text-amber-200/80">{t('tools.sd.repairHint')}</p>
                   </div>
                 </div>
               )}

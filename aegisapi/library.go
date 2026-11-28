@@ -135,6 +135,7 @@ func RegisterLibraryRoutes(mux *http.ServeMux, appDir string, touch func()) {
 	})
 
 	RegisterPortMasterInstallRoutes(mux, touch, nil)
+	RegisterThemeRoutes(mux, touch, nil)
 
 	mux.HandleFunc("/api/portmaster/download", func(w http.ResponseWriter, r *http.Request) {
 		targetURL := r.URL.Query().Get("url")

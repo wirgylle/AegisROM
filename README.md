@@ -70,12 +70,17 @@ The app scans your collection and identifies games by checksums and disc serial 
 - **Hacks and translations** `beta`: detected by name tags (`[T+Rus]`, `[h1]`, `(Hack)`), by DAT hash and by patches in `patch/`. 1G1R doesn't delete them as duplicates but offers to move them to `hackroms/`. The game card shows how a ROM differs from the original. Status filter and sort, "Russian translations only" and "No hacks" builds.
 - **ROM patcher** `beta`: IPS, UPS, BPS and xdelta. Adds a `[T+Rus]` or `[Hack]` tag, puts the result in `hackroms/` and the patch in `patch/`. Details: [docs/hacks.en.md](docs/hacks.en.md) · [Русский](docs/hacks.md).
 - **Cleanup** of junk: `._*` files, stray images, empty service folders.
-- **SD card repair** for your firmware: restores the folder structure and clears the Dirty Bit flag for **ArkOS, AmberELEC, ROCKNIX, OnionOS, GarlicOS, muOS, Batocera / Knulli, EmuELEC, RetroDeck**.
+- **SD card repair** for your firmware: checks the folders the firmware needs (BIOS, themes, Tools, saves, music…) and the console folders, shows a plan and creates only what is missing. Nothing is deleted or overwritten. Warns when firmware parts are gone (for example ThemeMaster on dArkOS, `.tmp_update` on Onion) and links to where to get them. Profiles: **ArkOS, dArkOS, muOS, KNULLI, Batocera, ROCKNIX, AmberELEC, EmuELEC, Onion OS, spruceOS, CrossMix OS, MinUI**. Themes can be downloaded right there: the ThemeMaster gallery for ArkOS/dArkOS (filtered for the R36S screen) and the official Onion theme repository, each theme into its own new folder. Details: [docs/sd-repair.md](docs/sd-repair.md).
 - **Combine**: drop new ROMs into a buffer folder, and the app identifies, renames and sorts them into console folders by itself.
 
 <p align="center"><img src="docs/screenshots/tools.png" alt="Tools" width="900" /></p>
 
 <p align="center"><img src="docs/screenshots/scope-scraper.png" alt="Scraper: scope, sources and media types" width="900" /></p>
+
+| Repair plan | Download themes |
+|---|---|
+| <img src="docs/screenshots/sd-repair-plan-en.png" alt="SD card repair: plan for dArkOS" /> | <img src="docs/screenshots/sd-repair-themes-en.png" alt="Downloading themes for ArkOS / dArkOS" /> |
+
 
 ### 📦 Builds
 - Ready-made themed collections: by age (6+, 10+, 14+, 18+), by mood, by genre and bitness. Or your own build via filters.
@@ -144,7 +149,7 @@ You can uninstall the app via "Settings → Apps" or the uninstaller in the inst
 3. **Rename files** with the file name builder if you want consistent naming.
 4. **Run the scraper** to download box art and videos.
 5. **Build your SD card.** "Builds" → create a build for your card size, add games with the `+` button in the library and export to the SD card.
-6. If the console doesn't see the card or reports errors, use **"SD card repair"** with your firmware's profile.
+6. If the console lost themes, the Tools menu or settings, or doesn't see your games, run **"SD card repair"** with your firmware's profile.
 
 ## FAQ
 
